@@ -13,18 +13,18 @@ type WhatsAppSendResult = {
 export class WhatsAppCloudClient {
   private readonly token?: string;
   private readonly phoneNumberId?: string;
-  private readonly graphVersion: string;
+  private readonly graphVersion?: string;
   private readonly sendEnabled: boolean;
 
   constructor() {
     this.token = process.env.WHATSAPP_ACCESS_TOKEN;
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    this.graphVersion = process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0';
+    this.graphVersion = process.env.WHATSAPP_GRAPH_VERSION;
     this.sendEnabled = process.env.WHATSAPP_SEND_ENABLED === 'true';
   }
 
   isConfigured(): boolean {
-    return Boolean(this.token && this.phoneNumberId);
+    return Boolean(this.token && this.phoneNumberId && this.graphVersion);
   }
 
   isSendEnabled(): boolean {
@@ -45,8 +45,10 @@ export class WhatsAppCloudClient {
       };
     }
 
-    if (!this.token || !this.phoneNumberId) {
-      throw new Error('WhatsApp Cloud API não configurada. Defina WHATSAPP_ACCESS_TOKEN e WHATSAPP_PHONE_NUMBER_ID.');
+    if (!this.token || !this.phoneNumberId || !this.graphVersion) {
+      throw new Error(
+        'WhatsApp Cloud API não configurada. Defina WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_GRAPH_VERSION.',
+      );
     }
 
     const payload: Record<string, unknown> = {
