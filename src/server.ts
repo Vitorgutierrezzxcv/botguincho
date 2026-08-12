@@ -2,6 +2,7 @@ import express from 'express';
 import { z } from 'zod';
 import { parseServiceRequest } from './domain/parser.js';
 import { decideRequest } from './domain/decision.js';
+import { GConnectBrowserProvider } from './integrations/gconnectBrowser.js';
 import { GoogleRoutesClient, roundEtaToOperationalMinutes } from './integrations/googleRoutes.js';
 import { WhatsAppCloudClient } from './integrations/whatsapp.js';
 
@@ -10,6 +11,7 @@ app.use(express.json());
 
 const googleRoutes = new GoogleRoutesClient();
 const whatsapp = new WhatsAppCloudClient();
+const gconnect = new GConnectBrowserProvider();
 
 app.get('/health', (_req, res) => {
   res.json({
@@ -19,6 +21,7 @@ app.get('/health', (_req, res) => {
       googleRoutes: googleRoutes.isConfigured(),
       whatsapp: whatsapp.isConfigured(),
       whatsappSendEnabled: whatsapp.isSendEnabled(),
+      gconnect: gconnect.isConfigured(),
     },
   });
 });
@@ -62,10 +65,7 @@ app.post('/api/eta/test', async (req, res) => {
     });
 
     const rawMinutes = route.durationSeconds / 60;
-    const suggestedMinutes = roundEtaToOperationalMinutes(
-      route.durationSeconds,
-      parsedBody.data.roundToMinutes,
-    );
+    const suggestedMinutes = roundEtaToOperationalMinutes(route.durationSeconds, parsedBody.data.roundToMinutes);
 
     return res.json({
       route,
@@ -82,7 +82,67 @@ app.post('/api/eta/test', async (req, res) => {
   }
 });
 
+const gconnectTestSchema = z.object({
+  vehicleId: z.string().min(1).optional(),
+});
+
+app.post('/api/gconnect/position', async (req, res) => {
+  const parsedBody = gconnectTestSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({ error: 'invalid_request', details: parsedBody.error.flatten() });
+  }
+
+  const vehicleId = parsedBody.data.vehicleId ?? process.env.GCONNECT_DEFAULT_VEHICLE ?? 'GSWOH17';
+
+  try {
+    const position = await gconnect.getCurrentPosition(vehicleId);
+    return res.json({ vehicleId, position });
+  } catch (error) {
+    return res.status(502).json({
+      error: 'gconnect_error',
+      message: error instanceof Error ? error.message : 'Erro desconhecido ao consultar GConnect.',
+    });
+  }
+});
+
+const liveEtaSchema = z.object({
+  vehicleId: z.string().min(1).optional(),
+  destinationAddress: z.string().min(3),
+  roundToMinutes: z.number().int().positive().max(60).default(10),
+});
+
+app.post('/api/eta/live', async (req, res) => {
+  const parsedBody = liveEtaSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ error: 'invalid_request', details: parsedBody.error.flatten() });
+  }
+
+  const vehicleId = parsedBody.data.vehicleId ?? process.env.GCONNECT_DEFAULT_VEHICLE ?? 'GSWOH17';
+
+  try {
+    const position = await gconnect.getCurrentPosition(vehicleId);
+    const route = await googleRoutes.computeEta({ origin: position, destinationAddress: parsedBody.data.destinationAddress });
+    const rawMinutes = route.durationSeconds / 60;
+    const suggestedMinutes = roundEtaToOperationalMinutes(route.durationSeconds, parsedBody.data.roundToMinutes);
+
+    return res.json({
+      vehicleId,
+      position,
+      route,
+      distanceKm: Number((route.distanceMeters / 1000).toFixed(1)),
+      rawEtaMinutes: Number(rawMinutes.toFixed(1)),
+      suggestedEtaMinutes: suggestedMinutes,
+      suggestedReply: `${suggestedMinutes} minutos ou menos`,
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: 'live_eta_error',
+      message: error instanceof Error ? error.message : 'Erro ao consultar posição e ETA.',
+    });
+  }
+});
+
 const port = Number(process.env.PORT ?? 3000);
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`botguincho listening on port ${port}`);
 });
