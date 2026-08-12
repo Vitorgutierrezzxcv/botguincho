@@ -16,7 +16,7 @@ Automatizar o fluxo inicial de despacho:
 
 ## Estratégia técnica
 
-O projeto começa desacoplado das integrações reais para que WhatsApp, ENGESP e Google Maps possam ser conectados progressivamente sem travar o desenvolvimento.
+O projeto é desacoplado das integrações reais para que WhatsApp, ENGESP e Google Maps possam ser conectados progressivamente sem travar o desenvolvimento.
 
 ### Integrações previstas
 
@@ -25,10 +25,57 @@ O projeto começa desacoplado das integrações reais para que WhatsApp, ENGESP 
 - Google Maps Routes API
 - Banco PostgreSQL/Supabase
 
+## WhatsApp POC
+
+A primeira POC de webhook da Meta já está implementada.
+
+Endpoints:
+
+- `GET /webhooks/whatsapp` — validação do webhook pela Meta.
+- `POST /webhooks/whatsapp` — recebimento e processamento de eventos.
+- `POST /api/poc/whatsapp-webhook` — simulação local de payload em desenvolvimento.
+- `POST /api/requests/parse` — teste direto do parser de solicitações.
+- `GET /health` — estado básico do serviço e das configurações do WhatsApp.
+
+A validação de `X-Hub-Signature-256` usa `META_APP_SECRET`. Em produção, essa variável é obrigatória.
+
+`WHATSAPP_SEND_ENABLED=false` mantém a integração em dry-run. Só habilite envio real depois de validar número, token, versão da Graph API e comportamento da conta.
+
+### Atenção: grupos existentes das seguradoras
+
+A Groups API oficial da Meta possui um ciclo próprio de criação/convite de participantes. Portanto, o projeto **não assume** que um número Cloud API possa simplesmente ser adicionado a qualquer grupo convencional já criado por uma seguradora. Eventos onde um `groupId` for detectado são processados, mas a resposta ao grupo fica em dry-run até validarmos a conta habilitada e o fluxo oficial aplicável.
+
+Isso é deliberado para impedir que a automação responda para o destino errado ou dependa de um comportamento não confirmado da plataforma.
+
 ## Regras de segurança operacional
 
 O sistema não aceita todos os chamados cegamente. Solicitações com restrições como rua estreita, garagem, altura limitada, veículo pesado ou outras exceções devem poder exigir aprovação humana.
 
+## Configuração
+
+Copie `.env.example` para `.env` e preencha as credenciais necessárias.
+
+```bash
+npm install
+npm run dev
+```
+
+Para build de produção:
+
+```bash
+npm run build
+npm start
+```
+
 ## Estado atual
 
-Estrutura inicial do backend, parser de ocorrências e contratos das integrações.
+- backend Node.js + TypeScript;
+- parser inicial de ocorrências;
+- motor inicial de decisão;
+- webhook Meta/WhatsApp;
+- validação de assinatura do webhook;
+- cliente Cloud API para mensagens individuais;
+- processamento em dry-run para grupos;
+- contratos para rastreador e rotas.
+
+Próximas etapas: validar o cenário real de grupos das seguradoras, integrar ENGESP e conectar Google Routes para cálculo de ETA.
