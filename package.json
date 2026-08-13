@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "wa:admin": "node tools/wa-admin.mjs"
+    "wa:admin": "node tools/wa-admin-v2.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",
