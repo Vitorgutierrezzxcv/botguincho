@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import QRCode from 'qrcode';
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 
 export type WhatsAppWebSessionStatus = 'idle' | 'starting' | 'qr' | 'ready' | 'authenticated' | 'disconnected' | 'error';
@@ -14,7 +13,7 @@ export type WhatsAppGroup = {
 type SessionState = {
   client: Client;
   status: WhatsAppWebSessionStatus;
-  qrDataUrl?: string;
+  qr?: string;
   lastError?: string;
 };
 
@@ -69,10 +68,7 @@ export class WhatsAppWebManager {
     }
 
     const client = new Client({
-      authStrategy: new LocalAuth({
-        clientId,
-        dataPath: this.sessionDir,
-      }),
+      authStrategy: new LocalAuth({ clientId, dataPath: this.sessionDir }),
       puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
@@ -82,20 +78,20 @@ export class WhatsAppWebManager {
     const state: SessionState = { client, status: 'starting' };
     this.sessions.set(clientId, state);
 
-    client.on('qr', async (qr) => {
+    client.on('qr', (qr) => {
       state.status = 'qr';
-      state.qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 360 });
+      state.qr = qr;
       state.lastError = undefined;
     });
 
     client.on('authenticated', () => {
       state.status = 'authenticated';
-      state.qrDataUrl = undefined;
+      state.qr = undefined;
     });
 
     client.on('ready', () => {
       state.status = 'ready';
-      state.qrDataUrl = undefined;
+      state.qr = undefined;
       state.lastError = undefined;
       console.log(`[whatsapp-web:${clientId}] pronto`);
     });
@@ -103,13 +99,11 @@ export class WhatsAppWebManager {
     client.on('auth_failure', (message) => {
       state.status = 'error';
       state.lastError = String(message);
-      console.error(`[whatsapp-web:${clientId}] falha de autenticação`, message);
     });
 
     client.on('disconnected', (reason) => {
       state.status = 'disconnected';
       state.lastError = String(reason);
-      console.warn(`[whatsapp-web:${clientId}] desconectado`, reason);
     });
 
     client.on('message', (message) => {
@@ -119,33 +113,25 @@ export class WhatsAppWebManager {
     void client.initialize().catch((error) => {
       state.status = 'error';
       state.lastError = error instanceof Error ? error.message : String(error);
-      console.error(`[whatsapp-web:${clientId}] erro ao iniciar`, error);
     });
 
     return state.status;
   }
 
-  getStatus(clientId: string): {
-    status: WhatsAppWebSessionStatus;
-    qrDataUrl?: string;
-    lastError?: string;
-  } {
+  getStatus(clientId: string): { status: WhatsAppWebSessionStatus; qr?: string; lastError?: string } {
     this.assertClientId(clientId);
     const state = this.sessions.get(clientId);
     if (!state) return { status: 'idle' };
-    return { status: state.status, qrDataUrl: state.qrDataUrl, lastError: state.lastError };
+    return { status: state.status, qr: state.qr, lastError: state.lastError };
   }
 
   async listGroups(clientId: string): Promise<WhatsAppGroup[]> {
     this.assertClientId(clientId);
     const state = this.sessions.get(clientId);
-    if (!state || state.status !== 'ready') {
-      throw new Error('WhatsApp ainda não está pronto para listar grupos.');
-    }
+    if (!state || state.status !== 'ready') throw new Error('WhatsApp ainda não está pronto para listar grupos.');
 
     const allowed = await this.readAllowedGroups(clientId);
     const chats = await state.client.getChats();
-
     return chats
       .filter((chat) => chat.isGroup)
       .map((chat) => ({
@@ -159,16 +145,11 @@ export class WhatsAppWebManager {
   async setAllowedGroups(clientId: string, groupIds: string[]): Promise<void> {
     this.assertClientId(clientId);
     const state = this.sessions.get(clientId);
-    if (!state || state.status !== 'ready') {
-      throw new Error('WhatsApp ainda não está pronto para configurar grupos.');
-    }
+    if (!state || state.status !== 'ready') throw new Error('WhatsApp ainda não está pronto para configurar grupos.');
 
     const available = new Set((await this.listGroups(clientId)).map((group) => group.id));
     const invalid = groupIds.filter((id) => !available.has(id));
-    if (invalid.length > 0) {
-      throw new Error(`Há grupos inválidos ou indisponíveis: ${invalid.join(', ')}`);
-    }
-
+    if (invalid.length > 0) throw new Error(`Há grupos inválidos ou indisponíveis: ${invalid.join(', ')}`);
     await this.writeAllowedGroups(clientId, groupIds);
   }
 
@@ -185,7 +166,7 @@ export class WhatsAppWebManager {
 
       const testCommand = (process.env.WHATSAPP_WEB_TEST_COMMAND ?? '!ping').trim().toLowerCase();
       if (testCommand && text.toLowerCase() === testCommand) {
-        const reply = process.env.WHATSAPP_WEB_TEST_REPLY ?? '🏓 PONG — Bot Guincho funcionando!';
+        const reply = process.env.WHATSAPP_WEB_TEST_REPLY ?? 'PONG - Bot Guincho funcionando!';
         await message.reply(reply);
       }
     } catch (error) {
