@@ -4,5 +4,9 @@ dist/
 .env.*
 !.env.example
 playwright/.auth/
+.wwebjs_auth/
+.wwebjs_config/
+whatsapp-sessions/
+whatsapp-config/
 *.log
 .DS_Store
