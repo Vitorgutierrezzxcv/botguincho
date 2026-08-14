@@ -9,7 +9,9 @@ on:
     paths:
       - '.github/workflows/worker-keeper.yml'
       - 'api/worker/maintain.js'
+      - 'api/worker/reload.js'
       - 'lib/sandbox-runtime.js'
+      - 'tools/vercel-whatsapp-worker.mjs'
 
 permissions:
   contents: read
@@ -22,7 +24,7 @@ concurrency:
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Aguardar deployment da Vercel
         if: github.event_name == 'push'
@@ -80,3 +82,35 @@ jobs:
             sleep 8
           done
           exit 1
+
+      - name: Detectar frame quebrado e recuperar sessão
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -sS -L --max-time 45 \
+            -H "Accept: application/json" \
+            https://botguincho.vercel.app/api/worker/diagnostics \
+            -o /tmp/diag.json || true
+
+          NEED_RELOAD=0
+          if grep -qiE 'detached Frame|Attempted to use detached|Target closed|Session closed|Execution context was destroyed' /tmp/diag.json 2>/dev/null; then
+            NEED_RELOAD=1
+          fi
+
+          if [ "$NEED_RELOAD" = "0" ]; then
+            echo "Sessão do WhatsApp saudável; nenhum reload necessário."
+            exit 0
+          fi
+
+          echo "Sessão degradada detectada. Reiniciando worker preservando login e grupos..."
+          CODE=$(curl -sS -L --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/json" \
+            -o /tmp/reload.json \
+            -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload || true)
+          cat /tmp/reload.json 2>/dev/null || true
+          echo
+          test "$CODE" = "200"
