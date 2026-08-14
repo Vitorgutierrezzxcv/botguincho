@@ -1,21 +1,30 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "echo \"Bot Guincho: frontend estatico + API serverless + Vercel Sandbox\"",
-  "outputDirectory": "public",
+  "buildCommand": "echo \"Bot Guincho: frontend estatico + API serverless\"",
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   },
   "headers": [
     {
-      "source": "/(.*)",
+      "source": "/",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0" }
+      ]
+    },
+    {
+      "source": "/index.html",
       "headers": [
         { "key": "Cache-Control", "value": "no-store, max-age=0" }
       ]
     }
   ],
   "rewrites": [
+    {
+      "source": "/",
+      "destination": "/index.html"
+    },
     {
       "source": "/health",
       "destination": "/api/health"
