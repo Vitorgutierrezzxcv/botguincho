@@ -1,0 +1,42 @@
+name: Production Smoke Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Aguardar deployment da Vercel
+        run: sleep 35
+
+      - name: Validar painel publicado
+        run: |
+          set -e
+          curl -fsSL --retry 5 --retry-delay 4 --max-time 30 \
+            https://botguincho-vitorgutierrezzxcvs-projects.vercel.app/ \
+            | grep -q 'WhatsApp e IA em um só painel'
+
+      - name: Validar worker e geração da sessão
+        run: |
+          set +e
+          URL='https://botguincho-vitorgutierrezzxcvs-projects.vercel.app/api/worker/status'
+          for i in $(seq 1 10); do
+            echo "Tentativa $i/10"
+            rm -f /tmp/body.json
+            CODE=$(curl -sS -L --max-time 58 -o /tmp/body.json -w '%{http_code}' "$URL")
+            CURL_EXIT=$?
+            echo "curl_exit=$CURL_EXIT http=$CODE"
+            cat /tmp/body.json 2>/dev/null || true
+            echo
+            if [ "$CURL_EXIT" = "0" ] && [ "$CODE" = "200" ]; then
+              node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('/tmp/body.json','utf8'));if(!x.whatsapp||!x.whatsapp.status)process.exit(1);console.log('WhatsApp status:',x.whatsapp.status);console.log('AI configured:',x.ai?.configured);"
+              exit $?
+            fi
+            sleep 10
+          done
+          echo 'Worker não ficou disponível.' >&2
+          exit 1
