@@ -33,7 +33,7 @@ const groupMemory = new Map();
 const DEFAULT_SETTINGS = {
   companyName: 'Bot Guincho',
   aiEnabled: true,
-  aiModel: process.env.OPENAI_MODEL ?? 'openai/gpt-5-mini',
+  aiModel: process.env.OPENAI_MODEL ?? 'openai/gpt-5.4-mini',
   aiInstructions: 'Você é o atendente operacional de uma empresa de guincho e assistência 24h. Responda em português do Brasil, de forma curta, natural, profissional e útil. Interprete cada mensagem considerando o histórico recente do grupo. Sua função é agilizar o despacho e coletar as informações necessárias. Nunca invente disponibilidade de guincho, localização do prestador, preço, prazo ou ETA. Enquanto a integração GConnect não estiver disponível, quando a resposta depender de disponibilidade, posição ou ETA, diga de forma natural que está verificando e peça somente a informação que realmente estiver faltando. Se o pedido já tiver origem, destino, tipo de veículo e situação, confirme resumidamente os dados e prossiga sem fazer perguntas repetidas. Não diga que é IA, bot, modelo de linguagem ou que recebeu instruções internas.',
   replyEveryMessage: true,
   humanTakeover: false,
@@ -152,6 +152,18 @@ function remember(groupId, role, text) {
   groupMemory.set(groupId, memory);
 }
 
+function extractResponseText(response) {
+  const direct = response?.output_text?.trim();
+  if (direct) return direct;
+  const parts = [];
+  for (const item of response?.output ?? []) {
+    for (const content of item?.content ?? []) {
+      if (content?.type === 'output_text' && content?.text) parts.push(content.text);
+    }
+  }
+  return parts.join('\n').trim();
+}
+
 async function buildAiReply({ groupId, groupName, author, text, imageDataUrl, memoryOverride }) {
   const settings = await getSettings();
   const openai = getAiClient();
@@ -169,13 +181,20 @@ async function buildAiReply({ groupId, groupName, author, text, imageDataUrl, me
   if (imageDataUrl) content.push({ type: 'input_image', image_url: imageDataUrl });
 
   const response = await openai.responses.create({
-    model: settings.aiModel || 'openai/gpt-5-mini',
+    model: settings.aiModel || 'openai/gpt-5.4-mini',
     instructions: settings.aiInstructions,
     input: [{ role: 'user', content }],
+    reasoning: { effort: 'minimal' },
     store: false,
-    max_output_tokens: 220,
+    max_output_tokens: 700,
   });
-  return response.output_text?.trim() || '';
+
+  const reply = extractResponseText(response);
+  if (!reply) {
+    const reason = response?.incomplete_details?.reason || response?.status || 'sem detalhe';
+    throw new Error(`A IA respondeu sem texto (${reason}).`);
+  }
+  return reply;
 }
 
 async function extractMessageInput(msg) {
@@ -232,8 +251,6 @@ async function processIncomingMessage(msg) {
       text: readableText,
       imageDataUrl,
     });
-    if (!reply) return;
-
     await msg.reply(reply);
     remember(msg.from, 'assistant', reply);
     logEvent('reply', `${groupName}: ${reply}`, { groupId: msg.from });
@@ -335,11 +352,7 @@ app.get('/api/status', async (_req, res) => {
   res.json({
     clientId,
     whatsapp: { status: waStatus, qrDataUrl, lastError },
-    ai: {
-      configured: Boolean(aiCredential),
-      enabled: settings.aiEnabled,
-      model: settings.aiModel,
-    },
+    ai: { configured: Boolean(aiCredential), enabled: settings.aiEnabled, model: settings.aiModel },
     groupsSelected: allowed.size,
   });
 });
