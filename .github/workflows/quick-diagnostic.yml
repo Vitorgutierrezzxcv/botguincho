@@ -8,23 +8,25 @@ on:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Aguardar alias de produção
         run: sleep 20
-      - name: Consultar status do worker
+      - name: Consultar status e diagnóstico do worker
         run: |
           set +e
-          URL='https://botguincho.vercel.app/api/worker/status'
-          echo "GET $URL"
-          START=$(date +%s)
-          CODE=$(curl -sS -L --max-time 20 -D /tmp/headers.txt -o /tmp/body.txt -w '%{http_code}' "$URL")
-          EXIT=$?
-          END=$(date +%s)
-          echo "curl_exit=$EXIT http=$CODE elapsed=$((END-START))s"
-          echo '--- headers ---'
-          cat /tmp/headers.txt 2>/dev/null || true
-          echo '--- body ---'
-          cat /tmp/body.txt 2>/dev/null || true
-          echo
+          for PATHNAME in status diagnostics; do
+            URL="https://botguincho.vercel.app/api/worker/$PATHNAME"
+            echo "===== GET $URL ====="
+            START=$(date +%s)
+            CODE=$(curl -sS -L --max-time 30 -D "/tmp/$PATHNAME-headers.txt" -o "/tmp/$PATHNAME-body.txt" -w '%{http_code}' "$URL")
+            EXIT=$?
+            END=$(date +%s)
+            echo "curl_exit=$EXIT http=$CODE elapsed=$((END-START))s"
+            echo '--- headers ---'
+            cat "/tmp/$PATHNAME-headers.txt" 2>/dev/null || true
+            echo '--- body ---'
+            cat "/tmp/$PATHNAME-body.txt" 2>/dev/null || true
+            echo
+          done
           exit 0
