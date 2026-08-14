@@ -1,5 +1,5 @@
 import { Sandbox } from '@vercel/sandbox';
-import { requestCredential } from '../../lib/sandbox-runtime.js';
+import { applyWwebjsPatch, requestCredential } from '../../lib/sandbox-runtime.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
 const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
@@ -54,7 +54,7 @@ async function processCounts(sandbox) {
 async function readWorkerLog(sandbox) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', 'tail -120 /vercel/sandbox/worker.log 2>/dev/null || true'],
+    args: ['-lc', 'tail -160 /vercel/sandbox/worker.log 2>/dev/null || true'],
     signal: AbortSignal.timeout(5000),
   });
   return commandOutput(result);
@@ -110,6 +110,10 @@ export default async function handler(req, res) {
       throw new Error(`Falha ao atualizar worker: ${stderr || synced.exitCode}`);
     }
     const sourceState = await commandOutput(synced);
+
+    // Corrige o bug upstream de getChats() causado pelos novos IDs @lid do WhatsApp Web.
+    // O patch é o PR #201850 do whatsapp-web.js e é idempotente.
+    const patchState = await applyWwebjsPatch(sandbox);
 
     // Encerra Node e Chromium vinculados especificamente ao Bot Guincho.
     // Não apaga nenhum arquivo da sessão.
@@ -196,7 +200,7 @@ export default async function handler(req, res) {
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const response = await fetch(`${sandbox.domain(PORT)}/api/groups`, {
             cache: 'no-store',
-            signal: AbortSignal.timeout(25000),
+            signal: AbortSignal.timeout(30000),
           });
           if (response.ok) groups = (await response.json()).groups || [];
           if (groups.length) break;
@@ -208,6 +212,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       sourceState,
+      patchState,
       stopReport,
       workerProcessCount: running.workers,
       chromiumProcessCount: running.chromiums,
