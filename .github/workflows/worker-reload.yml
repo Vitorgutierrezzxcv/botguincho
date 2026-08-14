@@ -1,0 +1,96 @@
+name: WhatsApp Worker Reload
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/vercel-whatsapp-worker.mjs'
+      - 'api/worker/reload.js'
+      - '.github/workflows/worker-reload.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+concurrency:
+  group: botguincho-worker-reload
+  cancel-in-progress: true
+
+jobs:
+  reload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Aguardar deployment da Vercel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          REPO="${GITHUB_REPOSITORY}"
+          SHA="${GITHUB_SHA}"
+          for i in $(seq 1 48); do
+            DEPLOYS=$(curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/deployments?sha=$SHA")
+            STATUS_URL=$(printf '%s' "$DEPLOYS" | jq -r '.[0].statuses_url // empty')
+            if [ -n "$STATUS_URL" ]; then
+              STATUSES=$(curl -fsSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "$STATUS_URL")
+              STATE=$(printf '%s' "$STATUSES" | jq -r '.[0].state // empty')
+              echo "Vercel state=$STATE"
+              if [ "$STATE" = "success" ]; then sleep 5; exit 0; fi
+              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then exit 1; fi
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Atualizar worker preservando sessão
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 120 \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -o /tmp/reload.json \
+            -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          echo "HTTP $CODE"
+          cat /tmp/reload.json
+          echo
+          test "$CODE" = "200"
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/reload.json', 'utf8'));
+          if (!x.ok) process.exit(1);
+          if (x.whatsappStatus !== 'pronto') {
+            console.error('WhatsApp não voltou pronto:', x.whatsappStatus);
+            process.exit(1);
+          }
+          if (!Number.isFinite(x.groupsFound) || x.groupsFound < 1) {
+            console.error('Nenhum grupo encontrado após a correção.');
+            process.exit(1);
+          }
+          console.log(`WhatsApp pronto; ${x.groupsFound} grupo(s) encontrado(s); sessão preservada=${x.sessionPreserved}`);
+          NODE
+
+      - name: Validar grupos pela API pública
+        run: |
+          set -e
+          curl -fsSL --retry 4 --retry-delay 3 --max-time 30 \
+            https://botguincho.vercel.app/api/worker/groups \
+            -o /tmp/groups.json
+          cat /tmp/groups.json
+          echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/groups.json', 'utf8'));
+          if (!Array.isArray(x.groups) || x.groups.length < 1) process.exit(1);
+          console.log(`API pública: ${x.groups.length} grupo(s).`);
+          NODE
