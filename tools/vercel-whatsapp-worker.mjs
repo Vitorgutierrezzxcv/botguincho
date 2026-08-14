@@ -22,13 +22,7 @@ const settingsFile = path.join(clientDir, 'settings.json');
 const groupsFile = path.join(clientDir, 'groups.json');
 const registryFile = path.join(clientDir, 'group-registry.json');
 
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL || undefined,
-    })
-  : null;
-
+let aiCredential = process.env.OPENAI_API_KEY ?? '';
 let waClient = null;
 let waStatus = 'iniciando';
 let qrDataUrl = null;
@@ -44,6 +38,14 @@ const DEFAULT_SETTINGS = {
   replyEveryMessage: true,
   humanTakeover: false,
 };
+
+function getAiClient() {
+  if (!aiCredential) return null;
+  return new OpenAI({
+    apiKey: aiCredential,
+    baseURL: 'https://ai-gateway.vercel.sh/v1',
+  });
+}
 
 function logEvent(type, message, meta = {}) {
   activity.unshift({ id: Date.now() + Math.random(), at: new Date().toISOString(), type, message, meta });
@@ -150,34 +152,16 @@ function remember(groupId, role, text) {
   groupMemory.set(groupId, memory);
 }
 
-async function buildAiReply({ groupId, groupName, author, text, imageDataUrl }) {
+async function buildAiReply({ groupId, groupName, author, text, imageDataUrl, memoryOverride }) {
   const settings = await getSettings();
+  const openai = getAiClient();
+  if (!openai) throw new Error('Credencial OIDC da IA ainda não sincronizada.');
 
-  if (process.env.BOTGUINCHO_AI_ENDPOINT) {
-    const response = await fetch(process.env.BOTGUINCHO_AI_ENDPOINT, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        groupId,
-        groupName,
-        author,
-        text,
-        imageDataUrl,
-        memory: groupMemory.get(groupId) ?? [],
-        instructions: settings.aiInstructions,
-        model: settings.aiModel,
-      }),
-      signal: AbortSignal.timeout(20000),
-    });
-    if (!response.ok) throw new Error(`IA HTTP ${response.status}`);
-    const data = await response.json();
-    return String(data.reply || '').trim();
-  }
+  const memory = memoryOverride ?? groupMemory.get(groupId) ?? [];
+  const context = memory
+    .map((item) => `${item.role === 'assistant' ? 'Atendente' : 'Pessoa'}: ${item.text}`)
+    .join('\n');
 
-  if (!openai) throw new Error('IA ainda não configurada no servidor.');
-
-  const memory = groupMemory.get(groupId) ?? [];
-  const context = memory.map((item) => `${item.role === 'assistant' ? 'Atendente' : 'Pessoa'}: ${item.text}`).join('\n');
   const content = [{
     type: 'input_text',
     text: `Grupo: ${groupName || groupId}\nAutor: ${author || 'participante'}\nHistórico recente:\n${context || '(sem histórico)'}\n\nMensagem atual:\n${text || '[mensagem sem texto]'}`,
@@ -320,6 +304,31 @@ async function startWhatsApp() {
   });
 }
 
+app.post('/api/internal/credential', (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ ok: false, error: 'missing_token' });
+  aiCredential = token;
+  return res.json({ ok: true, configured: true });
+});
+
+app.post('/api/ai-test', async (req, res) => {
+  try {
+    const reply = await buildAiReply({
+      groupId: 'teste@g.us',
+      groupName: 'Teste operacional',
+      author: 'seguradora',
+      text: typeof req.body?.text === 'string'
+        ? req.body.text
+        : 'Preciso de um guincho para um carro parado. O que você precisa saber?',
+      imageDataUrl: null,
+      memoryOverride: [],
+    });
+    res.json({ ok: true, reply, model: (await getSettings()).aiModel });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 app.get('/api/status', async (_req, res) => {
   const settings = await getSettings();
   const allowed = await getAllowedGroupIds();
@@ -327,7 +336,7 @@ app.get('/api/status', async (_req, res) => {
     clientId,
     whatsapp: { status: waStatus, qrDataUrl, lastError },
     ai: {
-      configured: Boolean(process.env.BOTGUINCHO_AI_ENDPOINT || openai),
+      configured: Boolean(aiCredential),
       enabled: settings.aiEnabled,
       model: settings.aiModel,
     },
@@ -346,10 +355,7 @@ app.post('/api/groups', async (req, res) => {
 });
 
 app.get('/api/settings', async (_req, res) => {
-  res.json({
-    ...await getSettings(),
-    apiKeyConfigured: Boolean(process.env.BOTGUINCHO_AI_ENDPOINT || openai),
-  });
+  res.json({ ...await getSettings(), apiKeyConfigured: Boolean(aiCredential) });
 });
 
 app.post('/api/settings', async (req, res) => {
@@ -366,7 +372,7 @@ app.post('/api/settings', async (req, res) => {
 });
 
 app.get('/api/activity', (_req, res) => res.json({ activity: activity.slice(0, 50) }));
-app.get('/health', (_req, res) => res.json({ ok: true, status: waStatus }));
+app.get('/health', (_req, res) => res.json({ ok: true, status: waStatus, aiConfigured: Boolean(aiCredential) }));
 
 await ensureDir();
 await startWhatsApp();
