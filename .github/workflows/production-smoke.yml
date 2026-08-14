@@ -5,27 +5,64 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  deployments: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Aguardar deployment da Vercel
-        run: sleep 35
+      - name: Localizar deployment exato da Vercel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          REPO="${GITHUB_REPOSITORY}"
+          SHA="${GITHUB_SHA}"
+          for i in $(seq 1 30); do
+            echo "Procurando deployment do commit $SHA ($i/30)..."
+            DEPLOYS=$(curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/deployments?sha=$SHA")
+            STATUS_URL=$(printf '%s' "$DEPLOYS" | jq -r '.[0].statuses_url // empty')
+            if [ -n "$STATUS_URL" ]; then
+              STATUSES=$(curl -fsSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "$STATUS_URL")
+              STATE=$(printf '%s' "$STATUSES" | jq -r '.[0].state // empty')
+              DEPLOY_URL=$(printf '%s' "$STATUSES" | jq -r '.[0].environment_url // .[0].target_url // empty')
+              echo "Vercel state=$STATE url=$DEPLOY_URL"
+              if [ "$STATE" = "success" ] && [ -n "$DEPLOY_URL" ]; then
+                echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+                exit 0
+              fi
+              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then
+                echo "Deployment da Vercel falhou." >&2
+                exit 1
+              fi
+            fi
+            sleep 5
+          done
+          echo "Não encontrei deployment concluído da Vercel para este commit." >&2
+          exit 1
 
       - name: Validar painel publicado
         run: |
           set -e
-          curl -fsSL --retry 5 --retry-delay 4 --max-time 30 \
-            https://botguincho-vitorgutierrezzxcvs-projects.vercel.app/ \
+          echo "Testando $DEPLOY_URL"
+          curl -fsSL --retry 5 --retry-delay 3 --max-time 30 "$DEPLOY_URL/" \
             | grep -q 'WhatsApp e IA em um só painel'
 
       - name: Validar worker e geração da sessão
         run: |
           set +e
-          URL='https://botguincho-vitorgutierrezzxcvs-projects.vercel.app/api/worker/status'
-          for i in $(seq 1 10); do
-            echo "Tentativa $i/10"
+          URL="$DEPLOY_URL/api/worker/status"
+          for i in $(seq 1 8); do
+            echo "Tentativa $i/8 em $URL"
             rm -f /tmp/body.json
             CODE=$(curl -sS -L --max-time 58 -o /tmp/body.json -w '%{http_code}' "$URL")
             CURL_EXIT=$?
@@ -36,7 +73,7 @@ jobs:
               node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('/tmp/body.json','utf8'));if(!x.whatsapp||!x.whatsapp.status)process.exit(1);console.log('WhatsApp status:',x.whatsapp.status);console.log('AI configured:',x.ai?.configured);"
               exit $?
             fi
-            sleep 10
+            sleep 8
           done
           echo 'Worker não ficou disponível.' >&2
           exit 1
