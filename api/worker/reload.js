@@ -32,6 +32,25 @@ async function commandOutput(result) {
   try { return (await result.stdout()).trim(); } catch { return ''; }
 }
 
+async function workerProcessCount(sandbox) {
+  const result = await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', "ps -eo comm=,args= | awk '$1 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {n++} END {print n+0}'"],
+    signal: AbortSignal.timeout(5000),
+  });
+  const value = Number(await commandOutput(result));
+  return Number.isFinite(value) ? value : -1;
+}
+
+async function readWorkerLog(sandbox) {
+  const result = await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', 'tail -80 /vercel/sandbox/worker.log 2>/dev/null || true'],
+    signal: AbortSignal.timeout(5000),
+  });
+  return commandOutput(result);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
   res.setHeader('cache-control', 'no-store');
@@ -85,13 +104,30 @@ export default async function handler(req, res) {
     }
     const sourceState = await commandOutput(synced);
 
-    await sandbox.runCommand({
+    // Mata de forma determinística TODOS os workers antigos. O pkill anterior
+    // podia deixar um processo antigo vivo e a porta 3001 continuava servindo
+    // o código anterior, mascarando a sincronização dos grupos.
+    const stopped = await sandbox.runCommand({
       cmd: 'bash',
-      args: ['-lc', "pkill -f '[n]ode tools/vercel-whatsapp-worker.mjs' >/dev/null 2>&1 || true; rm -rf /vercel/sandbox/.whatsapp-worker-lock"],
-      signal: AbortSignal.timeout(8000),
+      args: ['-lc', [
+        "PIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
+        'echo "before=${PIDS:-none}"',
+        'if [ -n "$PIDS" ]; then kill $PIDS >/dev/null 2>&1 || true; fi',
+        'sleep 2',
+        "PIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
+        'if [ -n "$PIDS2" ]; then kill -9 $PIDS2 >/dev/null 2>&1 || true; fi',
+        'sleep 1',
+        "LEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
+        'echo "after=${LEFT:-none}"',
+        'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
+      ].join('\n')],
+      signal: AbortSignal.timeout(12000),
     });
-
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    const stopReport = await commandOutput(stopped);
+    const afterStopCount = await workerProcessCount(sandbox);
+    if (afterStopCount !== 0) {
+      throw new Error(`Ainda existem ${afterStopCount} workers antigos após a parada. ${stopReport}`);
+    }
 
     await sandbox.runCommand({
       cmd: 'bash',
@@ -120,7 +156,7 @@ export default async function handler(req, res) {
     });
 
     let status = null;
-    for (let i = 0; i < 24; i += 1) {
+    for (let i = 0; i < 45; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       try {
         const response = await fetch(`${sandbox.domain(PORT)}/api/status`, {
@@ -129,31 +165,45 @@ export default async function handler(req, res) {
         });
         if (response.ok) {
           status = await response.json();
-          if (['pronto', 'qr', 'autenticado'].includes(status?.whatsapp?.status)) break;
+          if (['pronto', 'qr'].includes(status?.whatsapp?.status)) break;
         }
       } catch {}
     }
 
     if (!status) throw new Error('Worker reiniciado, mas ainda não respondeu ao status.');
 
+    const processCount = await workerProcessCount(sandbox);
+    if (processCount !== 1) {
+      throw new Error(`Esperado exatamente 1 worker, encontrado(s) ${processCount}.`);
+    }
+
     let groups = [];
     if (status?.whatsapp?.status === 'pronto') {
       try {
-        const response = await fetch(`${sandbox.domain(PORT)}/api/groups`, {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(15000),
-        });
-        if (response.ok) groups = (await response.json()).groups || [];
+        // Duas leituras dão tempo para o WhatsApp Web hidratar a coleção de chats
+        // após a restauração da sessão.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const response = await fetch(`${sandbox.domain(PORT)}/api/groups`, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(20000),
+          });
+          if (response.ok) groups = (await response.json()).groups || [];
+          if (groups.length) break;
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
       } catch {}
     }
 
     return res.status(200).json({
       ok: true,
       sourceState,
+      stopReport,
+      workerProcessCount: processCount,
       whatsappStatus: status?.whatsapp?.status,
       groupsFound: groups.length,
       groups: groups.slice(0, 100),
       sessionPreserved: status?.whatsapp?.status !== 'qr',
+      workerLog: await readWorkerLog(sandbox),
     });
   } catch (error) {
     return res.status(500).json({
