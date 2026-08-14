@@ -1,0 +1,43 @@
+name: Force WhatsApp Reload Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/force-reload-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  reload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Aguardar Vercel e reiniciar worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          sleep 15
+          CODE=$(curl -sS -L --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/json" \
+            -o /tmp/reload.json \
+            -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload || true)
+          cat /tmp/reload.json
+          echo
+          test "$CODE" = "200"
+
+          echo '=== STATUS ==='
+          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/status
+          echo
+          echo '=== AI TEST ==='
+          curl -sS --fail-with-body -X POST https://botguincho.vercel.app/api/worker/ai-test \
+            -H 'content-type: application/json' \
+            -d '{"text":"Responda apenas: IA OK"}'
+          echo
