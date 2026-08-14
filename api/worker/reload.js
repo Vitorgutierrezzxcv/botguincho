@@ -6,7 +6,6 @@ const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
 const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
 const RAW_WORKER_URL = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho/main/tools/vercel-whatsapp-worker.mjs';
 const PORT = 3001;
-const SESSION_PROCESS_MARKER = 'whatsapp-session/session-cliente-teste';
 
 async function isGitHubActionsToken(req) {
   const auth = String(req.headers.authorization || '');
@@ -37,23 +36,25 @@ async function processCounts(sandbox) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
     args: ['-lc', [
-      "W=$(ps -eo comm=,args= | awk '$1 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {n++} END {print n+0}')",
-      `C=$(ps -eo comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {n++} END {print n+0}')`,
+      "W=$(ps -eo comm=,args= | awk '$1 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {n++} END {print n+0}')",
+      "C=$(ps -eo comm=,args= | awk '$1 == \"chromium\" && index($0, \"session-cliente-teste\") {n++} END {print n+0}')",
       'echo "$W $C"',
     ].join('\n')],
     signal: AbortSignal.timeout(5000),
   });
-  const [workers, chromiums] = (await commandOutput(result)).split(/\s+/).map(Number);
+  const output = await commandOutput(result);
+  const [workers, chromiums] = output.split(/\s+/).map(Number);
   return {
     workers: Number.isFinite(workers) ? workers : -1,
     chromiums: Number.isFinite(chromiums) ? chromiums : -1,
+    raw: output,
   };
 }
 
 async function readWorkerLog(sandbox) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', 'tail -100 /vercel/sandbox/worker.log 2>/dev/null || true'],
+    args: ['-lc', 'tail -120 /vercel/sandbox/worker.log 2>/dev/null || true'],
     signal: AbortSignal.timeout(5000),
   });
   return commandOutput(result);
@@ -83,7 +84,6 @@ export default async function handler(req, res) {
       resume: true,
     });
 
-    // Atualiza só o código. A autenticação fica preservada fora do repositório.
     const syncScript = `
       const fs = require('fs');
       const file = '/vercel/sandbox/tools/vercel-whatsapp-worker.mjs';
@@ -111,26 +111,25 @@ export default async function handler(req, res) {
     }
     const sourceState = await commandOutput(synced);
 
-    // Encerra TODOS os processos que usam a sessão antes de iniciar novamente.
-    // Isso inclui o Chromium órfão, que pode manter o perfil bloqueado mesmo
-    // depois que o processo Node antigo já morreu.
+    // Encerra Node e Chromium vinculados especificamente ao Bot Guincho.
+    // Não apaga nenhum arquivo da sessão.
     const stopped = await sandbox.runCommand({
       cmd: 'bash',
       args: ['-lc', [
-        "WPIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
-        `CPIDS=$(ps -eo pid=,comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {print $1}')`,
+        "WPIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+        "CPIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"chromium\" && index($0, \"session-cliente-teste\") {print $1}')",
         'echo "workers_before=${WPIDS:-none}"',
         'echo "chromium_before=${CPIDS:-none}"',
         'ALL="$WPIDS $CPIDS"',
         'if [ -n "$(echo $ALL | xargs)" ]; then kill $ALL >/dev/null 2>&1 || true; fi',
         'sleep 3',
-        "WPIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
-        `CPIDS2=$(ps -eo pid=,comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {print $1}')`,
+        "WPIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+        "CPIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"chromium\" && index($0, \"session-cliente-teste\") {print $1}')",
         'ALL2="$WPIDS2 $CPIDS2"',
         'if [ -n "$(echo $ALL2 | xargs)" ]; then kill -9 $ALL2 >/dev/null 2>&1 || true; fi',
         'sleep 2',
-        "WLEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
-        `CLEFT=$(ps -eo pid=,comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {print $1}')`,
+        "WLEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+        "CLEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"chromium\" && index($0, \"session-cliente-teste\") {print $1}')",
         'echo "workers_after=${WLEFT:-none}"',
         'echo "chromium_after=${CLEFT:-none}"',
         'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
@@ -140,7 +139,7 @@ export default async function handler(req, res) {
     const stopReport = await commandOutput(stopped);
     const afterStop = await processCounts(sandbox);
     if (afterStop.workers !== 0 || afterStop.chromiums !== 0) {
-      throw new Error(`Processos antigos ainda ativos: workers=${afterStop.workers}, chromium=${afterStop.chromiums}. ${stopReport}`);
+      throw new Error(`Processos antigos ainda ativos: workers=${afterStop.workers}, chromium=${afterStop.chromiums}, raw=${afterStop.raw}. ${stopReport}`);
     }
 
     await sandbox.runCommand({
@@ -188,7 +187,7 @@ export default async function handler(req, res) {
 
     const running = await processCounts(sandbox);
     if (running.workers !== 1 || running.chromiums !== 1) {
-      throw new Error(`Esperado 1 worker e 1 Chromium, encontrados workers=${running.workers}, chromium=${running.chromiums}.`);
+      throw new Error(`Esperado 1 worker e 1 Chromium, encontrados workers=${running.workers}, chromium=${running.chromiums}, raw=${running.raw}.`);
     }
 
     let groups = [];
