@@ -5,13 +5,36 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  deployments: read
+
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
-      - name: Aguardar alias de produção
-        run: sleep 20
+      - name: Aguardar deployment da Vercel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          REPO="$GITHUB_REPOSITORY"
+          SHA="$GITHUB_SHA"
+          for i in $(seq 1 36); do
+            DEPLOYS=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/deployments?sha=$SHA")
+            STATUS_URL=$(printf '%s' "$DEPLOYS" | jq -r '.[0].statuses_url // empty')
+            if [ -n "$STATUS_URL" ]; then
+              STATUSES=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$STATUS_URL")
+              STATE=$(printf '%s' "$STATUSES" | jq -r '.[0].state // empty')
+              echo "Vercel state=$STATE"
+              if [ "$STATE" = "success" ]; then sleep 8; exit 0; fi
+              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then exit 1; fi
+            fi
+            sleep 5
+          done
+          exit 1
+
       - name: Consultar status e diagnóstico do worker
         run: |
           set +e
