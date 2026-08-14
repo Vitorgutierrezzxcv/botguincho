@@ -6,6 +6,7 @@ const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
 const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
 const RAW_WORKER_URL = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho/main/tools/vercel-whatsapp-worker.mjs';
 const PORT = 3001;
+const SESSION_PROCESS_MARKER = 'whatsapp-session/session-cliente-teste';
 
 async function isGitHubActionsToken(req) {
   const auth = String(req.headers.authorization || '');
@@ -32,20 +33,27 @@ async function commandOutput(result) {
   try { return (await result.stdout()).trim(); } catch { return ''; }
 }
 
-async function workerProcessCount(sandbox) {
+async function processCounts(sandbox) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', "ps -eo comm=,args= | awk '$1 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {n++} END {print n+0}'"],
+    args: ['-lc', [
+      "W=$(ps -eo comm=,args= | awk '$1 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {n++} END {print n+0}')",
+      `C=$(ps -eo comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {n++} END {print n+0}')`,
+      'echo "$W $C"',
+    ].join('\n')],
     signal: AbortSignal.timeout(5000),
   });
-  const value = Number(await commandOutput(result));
-  return Number.isFinite(value) ? value : -1;
+  const [workers, chromiums] = (await commandOutput(result)).split(/\s+/).map(Number);
+  return {
+    workers: Number.isFinite(workers) ? workers : -1,
+    chromiums: Number.isFinite(chromiums) ? chromiums : -1,
+  };
 }
 
 async function readWorkerLog(sandbox) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', 'tail -80 /vercel/sandbox/worker.log 2>/dev/null || true'],
+    args: ['-lc', 'tail -100 /vercel/sandbox/worker.log 2>/dev/null || true'],
     signal: AbortSignal.timeout(5000),
   });
   return commandOutput(result);
@@ -75,8 +83,7 @@ export default async function handler(req, res) {
       resume: true,
     });
 
-    // Atualiza apenas o código do worker. A sessão fica fora do repositório em
-    // /vercel/sandbox/.botguincho-data e portanto não é apagada.
+    // Atualiza só o código. A autenticação fica preservada fora do repositório.
     const syncScript = `
       const fs = require('fs');
       const file = '/vercel/sandbox/tools/vercel-whatsapp-worker.mjs';
@@ -104,29 +111,36 @@ export default async function handler(req, res) {
     }
     const sourceState = await commandOutput(synced);
 
-    // Mata de forma determinística TODOS os workers antigos. O pkill anterior
-    // podia deixar um processo antigo vivo e a porta 3001 continuava servindo
-    // o código anterior, mascarando a sincronização dos grupos.
+    // Encerra TODOS os processos que usam a sessão antes de iniciar novamente.
+    // Isso inclui o Chromium órfão, que pode manter o perfil bloqueado mesmo
+    // depois que o processo Node antigo já morreu.
     const stopped = await sandbox.runCommand({
       cmd: 'bash',
       args: ['-lc', [
-        "PIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
-        'echo "before=${PIDS:-none}"',
-        'if [ -n "$PIDS" ]; then kill $PIDS >/dev/null 2>&1 || true; fi',
+        "WPIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
+        `CPIDS=$(ps -eo pid=,comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {print $1}')`,
+        'echo "workers_before=${WPIDS:-none}"',
+        'echo "chromium_before=${CPIDS:-none}"',
+        'ALL="$WPIDS $CPIDS"',
+        'if [ -n "$(echo $ALL | xargs)" ]; then kill $ALL >/dev/null 2>&1 || true; fi',
+        'sleep 3',
+        "WPIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
+        `CPIDS2=$(ps -eo pid=,comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {print $1}')`,
+        'ALL2="$WPIDS2 $CPIDS2"',
+        'if [ -n "$(echo $ALL2 | xargs)" ]; then kill -9 $ALL2 >/dev/null 2>&1 || true; fi',
         'sleep 2',
-        "PIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
-        'if [ -n "$PIDS2" ]; then kill -9 $PIDS2 >/dev/null 2>&1 || true; fi',
-        'sleep 1',
-        "LEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
-        'echo "after=${LEFT:-none}"',
+        "WLEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && $0 ~ /tools\\/vercel-whatsapp-worker\\.mjs/ {print $1}')",
+        `CLEFT=$(ps -eo pid=,comm=,args= | awk '$0 ~ /\/tmp\/chromium/ && $0 ~ /${SESSION_PROCESS_MARKER.replaceAll('/', '\\/')}/ {print $1}')`,
+        'echo "workers_after=${WLEFT:-none}"',
+        'echo "chromium_after=${CLEFT:-none}"',
         'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
       ].join('\n')],
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(16000),
     });
     const stopReport = await commandOutput(stopped);
-    const afterStopCount = await workerProcessCount(sandbox);
-    if (afterStopCount !== 0) {
-      throw new Error(`Ainda existem ${afterStopCount} workers antigos após a parada. ${stopReport}`);
+    const afterStop = await processCounts(sandbox);
+    if (afterStop.workers !== 0 || afterStop.chromiums !== 0) {
+      throw new Error(`Processos antigos ainda ativos: workers=${afterStop.workers}, chromium=${afterStop.chromiums}. ${stopReport}`);
     }
 
     await sandbox.runCommand({
@@ -156,7 +170,7 @@ export default async function handler(req, res) {
     });
 
     let status = null;
-    for (let i = 0; i < 45; i += 1) {
+    for (let i = 0; i < 90; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       try {
         const response = await fetch(`${sandbox.domain(PORT)}/api/status`, {
@@ -172,24 +186,22 @@ export default async function handler(req, res) {
 
     if (!status) throw new Error('Worker reiniciado, mas ainda não respondeu ao status.');
 
-    const processCount = await workerProcessCount(sandbox);
-    if (processCount !== 1) {
-      throw new Error(`Esperado exatamente 1 worker, encontrado(s) ${processCount}.`);
+    const running = await processCounts(sandbox);
+    if (running.workers !== 1 || running.chromiums !== 1) {
+      throw new Error(`Esperado 1 worker e 1 Chromium, encontrados workers=${running.workers}, chromium=${running.chromiums}.`);
     }
 
     let groups = [];
     if (status?.whatsapp?.status === 'pronto') {
       try {
-        // Duas leituras dão tempo para o WhatsApp Web hidratar a coleção de chats
-        // após a restauração da sessão.
-        for (let attempt = 0; attempt < 2; attempt += 1) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
           const response = await fetch(`${sandbox.domain(PORT)}/api/groups`, {
             cache: 'no-store',
-            signal: AbortSignal.timeout(20000),
+            signal: AbortSignal.timeout(25000),
           });
           if (response.ok) groups = (await response.json()).groups || [];
           if (groups.length) break;
-          await new Promise((resolve) => setTimeout(resolve, 2500));
+          await new Promise((resolve) => setTimeout(resolve, 3000));
         }
       } catch {}
     }
@@ -198,7 +210,8 @@ export default async function handler(req, res) {
       ok: true,
       sourceState,
       stopReport,
-      workerProcessCount: processCount,
+      workerProcessCount: running.workers,
+      chromiumProcessCount: running.chromiums,
       whatsappStatus: status?.whatsapp?.status,
       groupsFound: groups.length,
       groups: groups.slice(0, 100),
