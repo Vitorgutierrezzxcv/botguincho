@@ -13,8 +13,10 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      PUBLIC_URL: https://botguincho.vercel.app
     steps:
-      - name: Localizar deployment exato da Vercel
+      - name: Aguardar deployment da Vercel
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -22,7 +24,6 @@ jobs:
           REPO="${GITHUB_REPOSITORY}"
           SHA="${GITHUB_SHA}"
           for i in $(seq 1 30); do
-            echo "Procurando deployment do commit $SHA ($i/30)..."
             DEPLOYS=$(curl -fsSL \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
@@ -34,60 +35,53 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 "$STATUS_URL")
               STATE=$(printf '%s' "$STATUSES" | jq -r '.[0].state // empty')
-              DEPLOY_URL=$(printf '%s' "$STATUSES" | jq -r '.[0].environment_url // .[0].target_url // empty')
-              echo "Vercel state=$STATE url=$DEPLOY_URL"
-              if [ "$STATE" = "success" ] && [ -n "$DEPLOY_URL" ]; then
-                echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
-                exit 0
-              fi
-              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then
-                echo "Deployment da Vercel falhou." >&2
-                exit 1
-              fi
+              echo "Vercel state=$STATE"
+              if [ "$STATE" = "success" ]; then sleep 8; exit 0; fi
+              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then exit 1; fi
             fi
             sleep 5
           done
-          echo "Não encontrei deployment concluído da Vercel para este commit." >&2
           exit 1
 
-      - name: Inspecionar painel publicado
+      - name: Validar painel público
         run: |
-          set +e
-          echo "Testando $DEPLOY_URL"
-          curl -sS -L --max-time 30 -D /tmp/root-headers.txt "$DEPLOY_URL/" -o /tmp/root.html
-          CURL_EXIT=$?
-          echo "curl_exit=$CURL_EXIT"
-          echo "--- HEADERS ---"
-          sed -n '1,30p' /tmp/root-headers.txt 2>/dev/null || true
-          echo "--- BODY INICIAL ---"
-          sed -n '1,40p' /tmp/root.html 2>/dev/null || true
-          echo "--- FIM ---"
-          if grep -q 'WhatsApp e IA em um só painel' /tmp/root.html 2>/dev/null; then
-            echo 'Painel novo confirmado.'
-          else
-            echo 'Painel novo não pôde ser confirmado externamente; continuando para testar a API.'
-          fi
-          exit 0
+          set -e
+          curl -fsSL --retry 5 --retry-delay 3 --max-time 30 "$PUBLIC_URL/" -o /tmp/root.html
+          grep -q 'WhatsApp e IA em um só painel' /tmp/root.html
+          echo 'Painel novo: OK'
 
-      - name: Validar worker e geração da sessão
+      - name: Validar status sem bloqueio e aguardar QR
         run: |
-          set +e
-          URL="$DEPLOY_URL/api/worker/status"
-          for i in $(seq 1 8); do
-            echo "Tentativa $i/8 em $URL"
-            rm -f /tmp/body.json /tmp/api-headers.txt
-            CODE=$(curl -sS -L --max-time 58 -D /tmp/api-headers.txt -o /tmp/body.json -w '%{http_code}' "$URL")
-            CURL_EXIT=$?
-            echo "curl_exit=$CURL_EXIT http=$CODE"
-            sed -n '1,25p' /tmp/api-headers.txt 2>/dev/null || true
-            cat /tmp/body.json 2>/dev/null || true
+          set -e
+          URL="$PUBLIC_URL/api/worker/status"
+          SAW_FAST_RESPONSE=0
+          for i in $(seq 1 24); do
+            START=$(date +%s)
+            CODE=$(curl -sS -L --max-time 25 -o /tmp/status.json -w '%{http_code}' "$URL")
+            END=$(date +%s)
+            ELAPSED=$((END-START))
+            echo "Tentativa $i/24: HTTP $CODE em ${ELAPSED}s"
+            cat /tmp/status.json || true
             echo
-            if [ "$CURL_EXIT" = "0" ] && [ "$CODE" = "200" ]; then
-              node -e "const fs=require('fs');const raw=fs.readFileSync('/tmp/body.json','utf8');let x;try{x=JSON.parse(raw)}catch{process.exit(2)};if(!x.whatsapp||!x.whatsapp.status)process.exit(1);console.log('WhatsApp status:',x.whatsapp.status);console.log('AI configured:',x.ai?.configured);"
-              RESULT=$?
-              if [ "$RESULT" = "0" ]; then exit 0; fi
+            if [ "$CODE" != "200" ]; then sleep 5; continue; fi
+            SAW_FAST_RESPONSE=1
+            STATUS=$(node -e "const x=require('/tmp/status.json');console.log(x.whatsapp?.status||'')")
+            AI=$(node -e "const x=require('/tmp/status.json');console.log(Boolean(x.ai?.configured))")
+            echo "whatsapp=$STATUS aiConfigured=$AI"
+            if [ "$STATUS" = "qr" ] || [ "$STATUS" = "autenticado" ] || [ "$STATUS" = "pronto" ]; then
+              echo 'Worker WhatsApp operacional: OK'
+              exit 0
             fi
-            sleep 8
+            if [ "$STATUS" = "erro" ]; then
+              echo 'Worker reportou erro:' >&2
+              cat /tmp/status.json >&2
+              exit 1
+            fi
+            sleep 10
           done
-          echo 'Worker não ficou disponível.' >&2
+          if [ "$SAW_FAST_RESPONSE" = "0" ]; then
+            echo 'API de status continuou bloqueando.' >&2
+          else
+            echo 'API responde, mas WhatsApp não chegou ao QR no tempo esperado.' >&2
+          fi
           exit 1
