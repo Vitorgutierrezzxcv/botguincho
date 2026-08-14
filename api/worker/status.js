@@ -1,6 +1,8 @@
-import { proxyWorker } from '../../lib/sandbox-runtime.js';
+import { getWorkerStatus } from '../../lib/sandbox-runtime.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
-  return proxyWorker(req, res, '/api/status');
+  res.setHeader('cache-control', 'no-store');
+  const status = await getWorkerStatus();
+  return res.status(200).json(status);
 }
