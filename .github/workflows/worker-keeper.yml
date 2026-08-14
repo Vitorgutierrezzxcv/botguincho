@@ -1,0 +1,53 @@
+name: WhatsApp Worker Keeper
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/worker-keeper.yml'
+      - 'api/worker/maintain.js'
+      - 'lib/sandbox-runtime.js'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: botguincho-worker-keeper
+  cancel-in-progress: true
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Manter WhatsApp ativo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: https://botguincho.vercel.app/api/worker/maintain
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            CODE=$(curl -sS -L --max-time 90 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/json" \
+              -o /tmp/maintain.json \
+              -w '%{http_code}' \
+              "$URL" || true)
+            echo "Tentativa $attempt: HTTP $CODE"
+            cat /tmp/maintain.json 2>/dev/null || true
+            echo
+            if [ "$CODE" = "200" ]; then
+              node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/maintain.json', 'utf8'));
+          if (!x.ok) process.exit(1);
+          console.log(`worker=${x.ready ? 'online' : 'iniciando'} whatsapp=${x.whatsappStatus} rotated=${Boolean(x.rotated)}`);
+          NODE
+              exit 0
+            fi
+            sleep 8
+          done
+          exit 1
