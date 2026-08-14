@@ -1,0 +1,30 @@
+name: Live Production Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-diagnostic.yml'
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check production worker
+        run: |
+          set -e
+          echo '=== STATUS ==='
+          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/status || true
+          echo
+          echo '=== SETTINGS ==='
+          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/settings || true
+          echo
+          echo '=== ACTIVITY ==='
+          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/activity || true
+          echo
+          echo '=== AI TEST ==='
+          curl -sS --fail-with-body -X POST https://botguincho.vercel.app/api/worker/ai-test \
+            -H 'content-type: application/json' \
+            -d '{"text":"Responda apenas: teste de IA funcionando"}' || true
+          echo
