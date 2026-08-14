@@ -54,10 +54,38 @@ async function processCounts(sandbox) {
 async function readWorkerLog(sandbox) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', 'tail -160 /vercel/sandbox/worker.log 2>/dev/null || true'],
+    args: ['-lc', 'tail -200 /vercel/sandbox/worker.log 2>/dev/null || true'],
     signal: AbortSignal.timeout(5000),
   });
   return commandOutput(result);
+}
+
+async function launchWorker(sandbox, credential) {
+  await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', [
+      'LOCK=/vercel/sandbox/.whatsapp-worker-lock',
+      'rm -rf "$LOCK"',
+      'mkdir "$LOCK" 2>/dev/null || exit 0',
+      'echo $$ > "$LOCK/launcher-pid"',
+      'rm -f /vercel/sandbox/worker.log',
+      'node tools/vercel-whatsapp-worker.mjs >> /vercel/sandbox/worker.log 2>&1',
+      'CODE=$?',
+      'rm -rf "$LOCK"',
+      'exit $CODE',
+    ].join('\n')],
+    env: {
+      BOTGUINCHO_DATA_DIR: '/vercel/sandbox/.botguincho-data',
+      BOTGUINCHO_PLATFORM_PORT: String(PORT),
+      WHATSAPP_CLIENT_ID: 'cliente-teste',
+      PUPPETEER_SKIP_DOWNLOAD: 'true',
+      OPENAI_API_KEY: credential || '',
+      OPENAI_BASE_URL: 'https://ai-gateway.vercel.sh/v1',
+      OPENAI_MODEL: 'openai/gpt-5.4-mini',
+      VERCEL: '1',
+    },
+    detached: true,
+  });
 }
 
 export default async function handler(req, res) {
@@ -111,12 +139,11 @@ export default async function handler(req, res) {
     }
     const sourceState = await commandOutput(synced);
 
-    // Corrige o bug upstream de getChats() causado pelos novos IDs @lid do WhatsApp Web.
-    // O patch é o PR #201850 do whatsapp-web.js e é idempotente.
     const patchState = await applyWwebjsPatch(sandbox);
 
-    // Encerra Node e Chromium vinculados especificamente ao Bot Guincho.
-    // Não apaga nenhum arquivo da sessão.
+    // Para a instância anterior. Outro health-check pode perceber a parada e
+    // iniciar automaticamente uma instância nova. Como o patch já está no disco,
+    // essa instância concorrente também nasce com a biblioteca corrigida.
     const stopped = await sandbox.runCommand({
       cmd: 'bash',
       args: ['-lc', [
@@ -130,47 +157,37 @@ export default async function handler(req, res) {
         "WPIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
         "CPIDS2=$(ps -eo pid=,comm=,args= | awk '$2 == \"chromium\" && index($0, \"session-cliente-teste\") {print $1}')",
         'ALL2="$WPIDS2 $CPIDS2"',
-        'if [ -n "$(echo $ALL2 | xargs)" ]; then kill -9 $ALL2 >/dev/null 2>&1 || true; fi',
+        'if [ -n "$(echo $ALL2 | xargs)" ] && [ "$(echo $WPIDS2 | wc -w)" -gt 1 ]; then kill -9 $ALL2 >/dev/null 2>&1 || true; fi',
         'sleep 2',
         "WLEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
         "CLEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"chromium\" && index($0, \"session-cliente-teste\") {print $1}')",
         'echo "workers_after=${WLEFT:-none}"',
         'echo "chromium_after=${CLEFT:-none}"',
-        'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
       ].join('\n')],
       signal: AbortSignal.timeout(16000),
     });
     const stopReport = await commandOutput(stopped);
-    const afterStop = await processCounts(sandbox);
-    if (afterStop.workers !== 0 || afterStop.chromiums !== 0) {
-      throw new Error(`Processos antigos ainda ativos: workers=${afterStop.workers}, chromium=${afterStop.chromiums}, raw=${afterStop.raw}. ${stopReport}`);
+    let afterStop = await processCounts(sandbox);
+    let restartMode = 'manual';
+
+    if (afterStop.workers === 0 && afterStop.chromiums > 0) {
+      // Chromium órfão sem worker: encerra só esse perfil e parte de uma base limpa.
+      await sandbox.runCommand({
+        cmd: 'bash',
+        args: ['-lc', "PIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"chromium\" && index($0, \"session-cliente-teste\") {print $1}'); [ -z \"$PIDS\" ] || kill -9 $PIDS >/dev/null 2>&1 || true; sleep 1"],
+        signal: AbortSignal.timeout(7000),
+      });
+      afterStop = await processCounts(sandbox);
     }
 
-    await sandbox.runCommand({
-      cmd: 'bash',
-      args: ['-lc', [
-        'LOCK=/vercel/sandbox/.whatsapp-worker-lock',
-        'rm -rf "$LOCK"',
-        'mkdir "$LOCK" 2>/dev/null || exit 0',
-        'echo $$ > "$LOCK/launcher-pid"',
-        'rm -f /vercel/sandbox/worker.log',
-        'node tools/vercel-whatsapp-worker.mjs >> /vercel/sandbox/worker.log 2>&1',
-        'CODE=$?',
-        'rm -rf "$LOCK"',
-        'exit $CODE',
-      ].join('\n')],
-      env: {
-        BOTGUINCHO_DATA_DIR: '/vercel/sandbox/.botguincho-data',
-        BOTGUINCHO_PLATFORM_PORT: String(PORT),
-        WHATSAPP_CLIENT_ID: 'cliente-teste',
-        PUPPETEER_SKIP_DOWNLOAD: 'true',
-        OPENAI_API_KEY: credential || '',
-        OPENAI_BASE_URL: 'https://ai-gateway.vercel.sh/v1',
-        OPENAI_MODEL: 'openai/gpt-5.4-mini',
-        VERCEL: '1',
-      },
-      detached: true,
-    });
+    if (afterStop.workers === 0) {
+      await launchWorker(sandbox, credential);
+      restartMode = 'manual';
+    } else if (afterStop.workers === 1 && afterStop.chromiums <= 1) {
+      restartMode = 'adopted-auto-restart';
+    } else {
+      throw new Error(`Estado ambíguo após reinício: workers=${afterStop.workers}, chromium=${afterStop.chromiums}, raw=${afterStop.raw}. ${stopReport}`);
+    }
 
     let status = null;
     for (let i = 0; i < 90; i += 1) {
@@ -213,6 +230,7 @@ export default async function handler(req, res) {
       ok: true,
       sourceState,
       patchState,
+      restartMode,
       stopReport,
       workerProcessCount: running.workers,
       chromiumProcessCount: running.chromiums,
