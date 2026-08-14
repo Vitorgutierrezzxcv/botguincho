@@ -12,7 +12,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Aguardar deployment da Vercel
         env:
@@ -21,7 +21,7 @@ jobs:
           set -e
           REPO="$GITHUB_REPOSITORY"
           SHA="$GITHUB_SHA"
-          for i in $(seq 1 36); do
+          for i in $(seq 1 48); do
             DEPLOYS=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/deployments?sha=$SHA")
             STATUS_URL=$(printf '%s' "$DEPLOYS" | jq -r '.[0].statuses_url // empty')
             if [ -n "$STATUS_URL" ]; then
@@ -35,21 +35,52 @@ jobs:
           done
           exit 1
 
-      - name: Consultar status e diagnóstico do worker
+      - name: Aguardar QR do WhatsApp
+        run: |
+          set -e
+          URL='https://botguincho.vercel.app/api/worker/status'
+          for i in $(seq 1 24); do
+            CODE=$(curl -sS -L --max-time 25 -o /tmp/status.json -w '%{http_code}' "$URL")
+            echo "status tentativa $i: HTTP $CODE"
+            cat /tmp/status.json || true
+            echo
+            if [ "$CODE" = "200" ]; then
+              STATUS=$(node -e "const x=require('/tmp/status.json');console.log(x.whatsapp?.status||'')")
+              AI=$(node -e "const x=require('/tmp/status.json');console.log(Boolean(x.ai?.configured))")
+              echo "whatsapp=$STATUS aiConfigured=$AI"
+              if [ "$STATUS" = "qr" ] || [ "$STATUS" = "autenticado" ] || [ "$STATUS" = "pronto" ]; then
+                test "$AI" = "true"
+                exit 0
+              fi
+              if [ "$STATUS" = "erro" ]; then exit 1; fi
+            fi
+            sleep 8
+          done
+          exit 1
+
+      - name: Testar interpretação da IA
+        run: |
+          set -e
+          URL='https://botguincho.vercel.app/api/worker/ai-test'
+          for i in $(seq 1 6); do
+            CODE=$(curl -sS -L --max-time 40 \
+              -H 'content-type: application/json' \
+              -d '{"text":"Bom dia, preciso de um guincho. Meu carro parou na BR-381 perto de Betim. O que você precisa para seguir?"}' \
+              -o /tmp/ai.json -w '%{http_code}' "$URL")
+            echo "IA tentativa $i: HTTP $CODE"
+            cat /tmp/ai.json || true
+            echo
+            if [ "$CODE" = "200" ]; then
+              node -e "const x=require('/tmp/ai.json'); if(!x.ok || !x.reply || x.reply.length < 5) process.exit(1); console.log('Resposta IA:', x.reply);"
+              exit 0
+            fi
+            sleep 6
+          done
+          exit 1
+
+      - name: Diagnóstico final
+        if: always()
         run: |
           set +e
-          for PATHNAME in status diagnostics; do
-            URL="https://botguincho.vercel.app/api/worker/$PATHNAME"
-            echo "===== GET $URL ====="
-            START=$(date +%s)
-            CODE=$(curl -sS -L --max-time 30 -D "/tmp/$PATHNAME-headers.txt" -o "/tmp/$PATHNAME-body.txt" -w '%{http_code}' "$URL")
-            EXIT=$?
-            END=$(date +%s)
-            echo "curl_exit=$EXIT http=$CODE elapsed=$((END-START))s"
-            echo '--- headers ---'
-            cat "/tmp/$PATHNAME-headers.txt" 2>/dev/null || true
-            echo '--- body ---'
-            cat "/tmp/$PATHNAME-body.txt" 2>/dev/null || true
-            echo
-          done
-          exit 0
+          curl -sS -L --max-time 30 https://botguincho.vercel.app/api/worker/diagnostics
+          echo
