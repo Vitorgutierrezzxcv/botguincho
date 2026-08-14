@@ -1,8 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "echo \"Bot Guincho: frontend estatico + API serverless\"",
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   },
   "rewrites": [
