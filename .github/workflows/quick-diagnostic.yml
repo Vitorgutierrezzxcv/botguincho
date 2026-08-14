@@ -58,6 +58,19 @@ jobs:
           done
           exit 1
 
+      - name: Configurar GPT-5 para atendimento
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 25 \
+            -H 'content-type: application/json' \
+            -d '{"aiEnabled":true,"aiModel":"openai/gpt-5","replyEveryMessage":true,"humanTakeover":false}' \
+            -o /tmp/settings.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/settings)
+          echo "settings HTTP $CODE"
+          cat /tmp/settings.json
+          echo
+          test "$CODE" = "200"
+
       - name: Testar interpretação da IA
         run: |
           set -e
