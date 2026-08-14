@@ -113,26 +113,86 @@ async function discoverGroups() {
   const allowed = await getAllowedGroupIds();
 
   if (waClient && waStatus === 'pronto') {
-    try {
-      const discovered = await waClient.pupPage.evaluate(() => {
-        const chats = window.Store?.Chat?.getModelsArray?.() ?? [];
-        return chats
-          .filter((chat) => chat?.id?._serialized?.endsWith('@g.us'))
-          .map((chat) => ({
-            id: chat.id._serialized,
-            name: chat.formattedTitle || chat.name || 'Grupo do WhatsApp',
-          }));
+    const discovered = new Map();
+    const addGroup = (id, name) => {
+      if (typeof id !== 'string' || !id.endsWith('@g.us')) return;
+      discovered.set(id, {
+        id,
+        name: String(name || registry[id]?.name || 'Grupo do WhatsApp'),
       });
-      for (const group of discovered) {
-        registry[group.id] = {
-          id: group.id,
-          name: group.name,
-          lastSeenAt: registry[group.id]?.lastSeenAt ?? null,
-        };
+    };
+
+    // Caminho principal: API pública do whatsapp-web.js.
+    // Evita depender diretamente das coleções internas do WhatsApp Web,
+    // que mudam com frequência e podem retornar uma lista vazia.
+    try {
+      const chats = await waClient.getChats();
+      for (const chat of chats ?? []) {
+        const id = chat?.id?._serialized || '';
+        if (chat?.isGroup || id.endsWith('@g.us')) {
+          addGroup(id, chat?.name || chat?.formattedTitle);
+        }
       }
-      await writeJson(registryFile, registry);
     } catch (error) {
-      logEvent('warning', 'Não foi possível sincronizar todos os grupos.', { error: String(error) });
+      logEvent('warning', 'getChats não conseguiu listar os grupos.', { error: String(error) });
+    }
+
+    // Em algumas sessões recém-conectadas a lista de chats ainda não foi
+    // hidratada, mas os grupos já aparecem na coleção de contatos.
+    if (!discovered.size) {
+      try {
+        const contacts = await waClient.getContacts();
+        for (const contact of contacts ?? []) {
+          const id = contact?.id?._serialized || '';
+          if (contact?.isGroup || id.endsWith('@g.us')) {
+            addGroup(id, contact?.name || contact?.pushname || contact?.shortName);
+          }
+        }
+      } catch (error) {
+        logEvent('warning', 'getContacts não conseguiu listar os grupos.', { error: String(error) });
+      }
+    }
+
+    // Último fallback usando os helpers injetados pela própria biblioteca.
+    if (!discovered.size) {
+      try {
+        const fallback = await waClient.pupPage.evaluate(async () => {
+          let chats = [];
+          try {
+            chats = await window.WWebJS?.getChats?.();
+          } catch {}
+          if (!Array.isArray(chats) || !chats.length) {
+            try {
+              chats = window.require?.('WAWebCollections')?.Chat?.getModelsArray?.() ?? [];
+            } catch {}
+          }
+          return (chats ?? [])
+            .map((chat) => ({
+              id: chat?.id?._serialized || '',
+              name: chat?.formattedTitle || chat?.name || 'Grupo do WhatsApp',
+              isGroup: Boolean(chat?.isGroup),
+            }))
+            .filter((chat) => chat.isGroup || chat.id.endsWith('@g.us'));
+        });
+        for (const group of fallback) addGroup(group.id, group.name);
+      } catch (error) {
+        logEvent('warning', 'Fallback do WhatsApp Web não conseguiu listar os grupos.', { error: String(error) });
+      }
+    }
+
+    for (const group of discovered.values()) {
+      registry[group.id] = {
+        id: group.id,
+        name: group.name,
+        lastSeenAt: registry[group.id]?.lastSeenAt ?? null,
+      };
+    }
+
+    if (discovered.size) {
+      await writeJson(registryFile, registry);
+      logEvent('system', `${discovered.size} grupo(s) sincronizado(s) do WhatsApp.`);
+    } else {
+      logEvent('warning', 'WhatsApp conectado, mas nenhuma coleção retornou grupos nesta sincronização.');
     }
   }
 
