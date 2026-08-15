@@ -1,0 +1,42 @@
+name: Validate PWA Management Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/validate-pwa-management-once.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check frontend syntax
+        run: |
+          node --check app.js
+          test -f manifest.webmanifest
+          test -f sw.js
+          grep -q 'display.*standalone' manifest.webmanifest
+      - name: Wait production deploy
+        run: sleep 35
+      - name: Check PWA assets
+        run: |
+          curl -fsSL https://botguincho.vercel.app/ -o /tmp/index.html
+          curl -fsSL https://botguincho.vercel.app/app.js -o /tmp/app.js
+          curl -fsSL https://botguincho.vercel.app/app.css -o /tmp/app.css
+          curl -fsSL https://botguincho.vercel.app/manifest.webmanifest -o /tmp/manifest.json
+          grep -q 'manifest.webmanifest' /tmp/index.html
+          grep -q 'Central operacional' /tmp/index.html
+          node --check /tmp/app.js
+          jq -e '.display == "standalone" and .name == "Bot Guincho"' /tmp/manifest.json >/dev/null
+      - name: Check management backend
+        run: |
+          curl -fsSL --max-time 90 https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt.json
+          cat /tmp/mgmt.json; echo
+          jq -e '.ok == true and (.data.calls|arrays) and (.data.clients|arrays) and (.data.finance|arrays) and (.data.fleet|arrays) and (.data.automations|arrays)' /tmp/mgmt.json >/dev/null
+      - name: Check operational stack
+        run: |
+          curl -fsSL --max-time 90 https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json; echo
+          jq -e '.whatsapp.status == "pronto" and .tracker.connected == true' /tmp/status.json >/dev/null
