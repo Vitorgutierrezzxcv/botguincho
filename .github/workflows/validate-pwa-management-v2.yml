@@ -1,0 +1,29 @@
+name: Validate PWA Management V2
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/validate-pwa-management-v2.yml']
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check URLs
+        run: |
+          set -e
+          for URL in / /app.js /app.css /manifest.webmanifest /sw.js /icon.svg /api/worker/management /api/worker/status; do
+            CODE=$(curl -sSL --max-time 90 -o /tmp/out -w '%{http_code}' "https://botguincho.vercel.app$URL")
+            echo "$URL -> $CODE"
+            test "$CODE" = "200"
+          done
+      - name: Validate PWA and backend
+        run: |
+          curl -fsSL https://botguincho.vercel.app/ -o /tmp/index
+          curl -fsSL https://botguincho.vercel.app/app.js -o /tmp/app.js
+          curl -fsSL https://botguincho.vercel.app/manifest.webmanifest -o /tmp/manifest
+          curl -fsSL https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt
+          curl -fsSL https://botguincho.vercel.app/api/worker/status -o /tmp/status
+          grep -q 'manifest.webmanifest' /tmp/index
+          node --check /tmp/app.js
+          jq -e '.display=="standalone"' /tmp/manifest >/dev/null
+          jq -e '.ok==true and (.data.finance|arrays)' /tmp/mgmt >/dev/null
+          jq -e '.whatsapp.status=="pronto" and .tracker.connected==true' /tmp/status >/dev/null
