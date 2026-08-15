@@ -1,0 +1,21 @@
+name: Diagnose Address Providers
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-address-providers.yml'
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test providers
+        run: |
+          set +e
+          echo '=== VIACEP Mitu ==='
+          curl -sS --max-time 20 'https://viacep.com.br/ws/MG/Betim/Mitu/json/' | head -c 3000; echo
+          echo '=== VIACEP Rua Mitu ==='
+          curl -sS --max-time 20 'https://viacep.com.br/ws/MG/Betim/Rua%20Mitu/json/' | head -c 3000; echo
+          echo '=== NOMINATIM ==='
+          curl -sS --max-time 20 -A 'BotGuincho/1.3' 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=br&q=Rua%20Mitu%2C%2015%2C%20Icaivera%2C%20Betim%2C%20MG%2C%20Brasil' | head -c 5000; echo
+          echo '=== PHOTON ==='
+          curl -sS --max-time 20 -A 'BotGuincho/1.3' 'https://photon.komoot.io/api/?limit=5&lang=pt&q=Rua%20Mitu%2C%2015%2C%20Icaivera%2C%20Betim%2C%20MG%2C%20Brasil' | head -c 5000; echo
