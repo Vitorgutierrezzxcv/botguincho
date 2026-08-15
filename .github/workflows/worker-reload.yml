@@ -46,6 +46,15 @@ jobs:
           done
           exit 1
 
+      - name: Validar arquivos do agente Android
+        run: |
+          set -e
+          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/tools/gconnect-emulator-agent.mjs" -o /tmp/gconnect-agent.mjs
+          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/tools/install-gconnect-agent.sh" -o /tmp/install-gconnect-agent.sh
+          node --check /tmp/gconnect-agent.mjs
+          bash -n /tmp/install-gconnect-agent.sh
+          echo "Agente Node e instalador Bash: sintaxe OK."
+
       - name: Atualizar worker preservando sessão
         env:
           GH_TOKEN: ${{ github.token }}
@@ -108,7 +117,6 @@ jobs:
           console.log('POST do Android chegou ao worker corretamente.');
           NODE
 
-          # Remove a leitura sintética imediatamente para a IA nunca tratá-la como posição real.
           curl -fsSL --max-time 30 -X POST -H 'Content-Type: application/json' \
             -d '{"action":"clear"}' https://botguincho.vercel.app/api/worker/tracker >/tmp/clear.json
           node - <<'NODE'
