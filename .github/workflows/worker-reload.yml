@@ -77,14 +77,44 @@ jobs:
 
       - name: Validar bridge GConnect Android
         run: |
+          set -e
           curl -fsSL --retry 4 --retry-delay 3 --max-time 30 https://botguincho.vercel.app/api/worker/tracker -o /tmp/tracker.json
-          cat /tmp/tracker.json
-          echo
+          PAIR=$(jq -r '.pairCode // empty' /tmp/tracker.json)
+          test -n "$PAIR"
+
+          cat >/tmp/reading.json <<'JSON'
+          {"provider":"gconnect-emulator","plate":"GSW0H17","ignition":"on","speedKph":17,"odometerKm":20908.9,"batteryVoltage":14.5,"address":"VALIDACAO AUTOMATICA DO BRIDGE","lastUpdateText":"teste automatizado"}
+          JSON
+
+          CODE=$(curl -sS -L --max-time 30 -X POST \
+            -H 'Content-Type: application/json' \
+            -H "X-BotGuincho-Pair-Code: $PAIR" \
+            -H 'X-BotGuincho-Agent: workflow-smoke-test' \
+            --data-binary @/tmp/reading.json \
+            -o /tmp/post.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/tracker-bridge)
+          cat /tmp/post.json; echo
+          test "$CODE" = "200"
+
+          curl -fsSL --max-time 30 https://botguincho.vercel.app/api/worker/tracker -o /tmp/after.json
           node - <<'NODE'
           const fs = require('fs');
-          const x = JSON.parse(fs.readFileSync('/tmp/tracker.json', 'utf8'));
+          const x = JSON.parse(fs.readFileSync('/tmp/after.json', 'utf8'));
           if (x.provider !== 'gconnect-emulator') process.exit(1);
           if (x.mode !== 'android-ui-automation') process.exit(1);
+          if (!x.connected) process.exit(1);
+          if (x.lastLocation?.plate !== 'GSW0H17') process.exit(1);
+          if (x.lastLocation?.address !== 'VALIDACAO AUTOMATICA DO BRIDGE') process.exit(1);
+          console.log('POST do Android chegou ao worker corretamente.');
+          NODE
+
+          # Remove a leitura sintética imediatamente para a IA nunca tratá-la como posição real.
+          curl -fsSL --max-time 30 -X POST -H 'Content-Type: application/json' \
+            -d '{"action":"clear"}' https://botguincho.vercel.app/api/worker/tracker >/tmp/clear.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/clear.json', 'utf8'));
+          if (x.lastLocation) process.exit(1);
           if (!/^[A-Z0-9]{8}$/.test(x.pairCode || '')) process.exit(1);
-          console.log(`Bridge GConnect OK; conectado=${Boolean(x.connected)}; pareamento disponível.`);
+          console.log('Bridge validado e leitura de teste removida.');
           NODE
