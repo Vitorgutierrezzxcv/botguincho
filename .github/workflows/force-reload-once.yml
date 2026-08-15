@@ -16,12 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Aguardar Vercel e reiniciar worker
+      - name: Atualizar worker persistente imediatamente
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          sleep 15
           CODE=$(curl -sS -L --max-time 180 \
             -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -29,15 +28,45 @@ jobs:
             -o /tmp/reload.json \
             -w '%{http_code}' \
             https://botguincho.vercel.app/api/worker/reload || true)
+          echo "HTTP $CODE"
           cat /tmp/reload.json
           echo
           test "$CODE" = "200"
 
-          echo '=== STATUS ==='
-          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/status
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/reload.json', 'utf8'));
+          if (!x.ok) process.exit(1);
+          if (x.whatsappStatus !== 'pronto') process.exit(1);
+          if (x.workerProcessCount !== 1) process.exit(1);
+          if (!Number.isFinite(x.groupsFound) || x.groupsFound < 1) process.exit(1);
+          console.log(`Worker atualizado: WhatsApp=${x.whatsappStatus}; grupos=${x.groupsFound}; sessão preservada=${x.sessionPreserved}`);
+          NODE
+
+      - name: Conferir status e GConnect
+        run: |
+          set -e
+          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json
           echo
-          echo '=== AI TEST ==='
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/status.json', 'utf8'));
+          if (x.whatsapp?.status !== 'pronto') process.exit(1);
+          if (!x.tracker?.connected) process.exit(1);
+          console.log(`Status OK; GConnect=${x.tracker.lastLocation?.address || 'online'}`);
+          NODE
+
+      - name: Conferir inteligência operacional
+        run: |
+          set -e
           curl -sS --fail-with-body -X POST https://botguincho.vercel.app/api/worker/ai-test \
             -H 'content-type: application/json' \
-            -d '{"text":"Responda apenas: IA OK"}'
+            -d '{"text":"A rua é estreita e precisa de um caminhão menor."}'
+          echo
+
+      - name: Mostrar atividade recente do worker
+        if: always()
+        run: |
+          curl -sS https://botguincho.vercel.app/api/worker/activity || true
           echo
