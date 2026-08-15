@@ -1081,17 +1081,19 @@ function extractInlineRouteTarget(text = '') {
   return null;
 }
 
-async function resolveRouteQuestionTarget(groupId, readableText) {
+async function resolveRouteQuestionTarget(groupId, readableText, quotedText = '') {
   const inlineAddress = extractInlineRouteTarget(readableText);
+  const quotedAddress = inlineAddress ? null : extractInlineRouteTarget(quotedText);
+  const explicitAddress = inlineAddress || quotedAddress || null;
   let state = await getDispatchState(groupId);
-  const shared = inlineAddress ? null : await getRecentSharedLocation(groupId, state);
+  const shared = explicitAddress ? null : await getRecentSharedLocation(groupId, state);
   const originAt = new Date(state?.originUpdatedAt || state?.createdAt || 0).getTime();
   const stateHasOrigin = Boolean(state?.originAddress || state?.originCoordinates);
   const sharedIsNewer = shared && (!stateHasOrigin || !Number.isFinite(originAt) || shared.at >= originAt);
 
-  if (inlineAddress) {
+  if (explicitAddress) {
     state = await setDispatchState(groupId, {
-      originAddress: inlineAddress,
+      originAddress: explicitAddress,
       originCoordinates: null,
       originUpdatedAt: new Date().toISOString(),
     });
@@ -1106,14 +1108,21 @@ async function resolveRouteQuestionTarget(groupId, readableText) {
   return {
     state,
     inlineAddress,
-    targetAddress: inlineAddress || state?.originAddress || null,
-    targetCoordinates: inlineAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || null),
-    source: inlineAddress ? 'inline-address' : sharedIsNewer ? shared.source : 'dispatch-state',
+    quotedAddress,
+    targetAddress: explicitAddress || state?.originAddress || null,
+    targetCoordinates: explicitAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || null),
+    source: inlineAddress
+      ? 'inline-address'
+      : quotedAddress
+        ? 'quoted-address'
+        : sharedIsNewer
+          ? shared.source
+          : 'dispatch-state',
   };
 }
 
-async function handleEtaQuestion(msg, groupName, readableText) {
-  const target = await resolveRouteQuestionTarget(msg.from, readableText);
+async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') {
+  const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);
   if (!target.targetAddress && !target.targetCoordinates) {
     logEvent('ignored', `${groupName}: pergunta de ETA sem destino identificável ignorada.`, { groupId: msg.from });
     return;
@@ -1149,8 +1158,8 @@ async function handleEtaQuestion(msg, groupName, readableText) {
   });
 }
 
-async function handleDistanceQuestion(msg, groupName, readableText) {
-  const target = await resolveRouteQuestionTarget(msg.from, readableText);
+async function handleDistanceQuestion(msg, groupName, readableText, quotedText = '') {
+  const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);
   if (!target.targetAddress && !target.targetCoordinates) {
     logEvent('ignored', `${groupName}: pergunta de distância sem destino identificável ignorada.`, { groupId: msg.from });
     return;
@@ -1250,12 +1259,12 @@ async function processIncomingMessage(msg) {
     }
 
     if (asksEta(readableText)) {
-      await handleEtaQuestion(msg, groupName, readableText);
+      await handleEtaQuestion(msg, groupName, readableText, quotedText);
       return;
     }
 
     if (asksDistance(readableText)) {
-      await handleDistanceQuestion(msg, groupName, readableText);
+      await handleDistanceQuestion(msg, groupName, readableText, quotedText);
       return;
     }
 
