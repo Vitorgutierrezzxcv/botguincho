@@ -17,14 +17,12 @@ jobs:
           echo '=== STATUS ==='
           curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/status || true
           echo
-          echo '=== SETTINGS ==='
-          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/settings || true
-          echo
           echo '=== ACTIVITY ==='
           curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/activity || true
           echo
-          echo '=== AI TEST ==='
-          curl -sS --fail-with-body -X POST https://botguincho.vercel.app/api/worker/ai-test \
+          echo '=== ROUTE TEST ==='
+          curl -sS --fail-with-body -X POST https://botguincho.vercel.app/api/worker/route-test \
             -H 'content-type: application/json' \
-            -d '{"text":"Responda apenas: teste de IA funcionando"}' || true
+            -d '{"from":"Rua das Rosas, 310, São Salvador, Betim - Minas Gerais","to":"RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG"}' || true
           echo
+          # diagnóstico solicitado em 2026-08-15 15:29 BRT
