@@ -448,6 +448,104 @@ async function scheduleNominatim(task) {
   return run;
 }
 
+function parseBrazilAddress(address = '') {
+  const query = cleanAddressQuery(address);
+  const parts = query.split(',').map((part) => part.trim()).filter(Boolean);
+  const street = parts[0] || '';
+  let number = '';
+  let district = '';
+  let city = '';
+  let state = '';
+
+  if (parts.length > 1 && /^\d+[A-Za-z0-9/-]*$/.test(parts[1].replace(/\s+/g, ''))) {
+    number = parts[1];
+  }
+
+  const tail = parts.at(-1) || '';
+  const cityState = tail.match(/^(.*?)(?:\s*-\s*(MG|Minas Gerais|SP|São Paulo|RJ|Rio de Janeiro))?$/i);
+  city = (cityState?.[1] || tail).trim();
+  state = (cityState?.[2] || '').trim();
+  if (/^minas gerais$/i.test(state)) state = 'MG';
+  if (/^s[aã]o paulo$/i.test(state)) state = 'SP';
+  if (/^rio de janeiro$/i.test(state)) state = 'RJ';
+
+  const middle = parts.slice(number ? 2 : 1, -1);
+  district = middle.join(', ').trim();
+
+  return { query, street, number, district, city, state };
+}
+
+function uniqueQueries(values) {
+  const seen = new Set();
+  return values.map((v) => String(v || '').replace(/\s+/g, ' ').trim()).filter((v) => {
+    const key = normalizeForIntent(v);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function nominatimLookup(params) {
+  return scheduleNominatim(async () => {
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, String(value));
+    }
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('countrycodes', 'br');
+    url.searchParams.set('addressdetails', '1');
+
+    const response = await fetch(url, {
+      headers: {
+        'user-agent': 'BotGuincho/1.1 (operacao-guincho; https://botguincho.vercel.app/)',
+        referer: 'https://botguincho.vercel.app/',
+        'accept-language': 'pt-BR,pt;q=0.9',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) throw new Error(`Geocodificação HTTP ${response.status}`);
+    const results = await response.json();
+    const first = Array.isArray(results) ? results[0] : null;
+    if (!first || !validCoordinates(first.lat, first.lon)) return null;
+    return {
+      latitude: Number(first.lat),
+      longitude: Number(first.lon),
+      displayName: first.display_name || '',
+      postcode: first.address?.postcode || null,
+    };
+  });
+}
+
+async function findCepByAddress(parts) {
+  if (!parts.state || !parts.city || !parts.street || parts.street.length < 3) return null;
+  const state = encodeURIComponent(parts.state);
+  const city = encodeURIComponent(parts.city);
+  const street = encodeURIComponent(parts.street.replace(/^(rua|avenida|av\.?|travessa|rodovia)\s+/i, '').trim());
+  const url = `https://viacep.com.br/ws/${state}/${city}/${street}/json/`;
+  const response = await fetch(url, {
+    headers: { 'user-agent': 'BotGuincho/1.1' },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!response.ok) return null;
+  const items = await response.json();
+  if (!Array.isArray(items) || !items.length) return null;
+  const districtKey = normalizeForIntent(parts.district);
+  const streetKey = normalizeForIntent(parts.street);
+  const ranked = items.map((item) => {
+    let score = 0;
+    const itemStreet = normalizeForIntent(item.logradouro || '');
+    const itemDistrict = normalizeForIntent(item.bairro || '');
+    if (itemStreet === streetKey) score += 5;
+    else if (itemStreet.includes(streetKey) || streetKey.includes(itemStreet)) score += 3;
+    if (districtKey && itemDistrict === districtKey) score += 5;
+    else if (districtKey && (itemDistrict.includes(districtKey) || districtKey.includes(itemDistrict))) score += 2;
+    return { item, score };
+  }).sort((a, b) => b.score - a.score);
+  return ranked[0]?.item || null;
+}
+
 async function geocodeAddress(address) {
   const query = cleanAddressQuery(address);
   if (!query) return null;
@@ -460,38 +558,74 @@ async function geocodeAddress(address) {
     return { latitude: Number(cached.latitude), longitude: Number(cached.longitude), displayName: cached.displayName || query };
   }
 
-  return scheduleNominatim(async () => {
-    const url = new URL('https://nominatim.openstreetmap.org/search');
-    url.searchParams.set('q', `${query}, Brasil`);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('limit', '1');
-    url.searchParams.set('countrycodes', 'br');
-    url.searchParams.set('addressdetails', '0');
-
-    const response = await fetch(url, {
-      headers: {
-        'user-agent': 'BotGuincho/1.0 (+https://botguincho.vercel.app/)',
-        referer: 'https://botguincho.vercel.app/',
-        'accept-language': 'pt-BR,pt;q=0.9',
-      },
-      signal: AbortSignal.timeout(9000),
-    });
-
-    if (!response.ok) throw new Error(`Geocodificação HTTP ${response.status}`);
-    const results = await response.json();
-    const first = Array.isArray(results) ? results[0] : null;
-    if (!first || !validCoordinates(first.lat, first.lon)) return null;
-
-    const result = {
-      latitude: Number(first.lat),
-      longitude: Number(first.lon),
-      displayName: first.display_name || query,
-      cachedAt: new Date().toISOString(),
-    };
+  const parts = parseBrazilAddress(query);
+  const save = async (found, source) => {
+    if (!found) return null;
+    const result = { ...found, source, cachedAt: new Date().toISOString() };
     cache[key] = result;
     await saveGeocodeCache(cache);
+    logEvent('geocode', `${query} -> ${result.latitude},${result.longitude} (${source})`);
     return result;
+  };
+
+  // 1. Consulta estruturada: é mais precisa quando já temos rua/cidade separadas.
+  if (parts.street && parts.city) {
+    const structured = await nominatimLookup({
+      street: [parts.number, parts.street].filter(Boolean).join(' '),
+      city: parts.city,
+      state: parts.state || undefined,
+      country: 'Brasil',
+    }).catch((error) => {
+      logEvent('warning', 'Nominatim estruturado falhou.', { error: String(error), query });
+      return null;
+    });
+    if (structured) return save(structured, 'nominatim-structured');
+  }
+
+  // 2. Tenta variações progressivamente menos restritivas.
+  const cityState = [parts.city, parts.state].filter(Boolean).join(' - ');
+  const variants = uniqueQueries([
+    `${query}, Brasil`,
+    [parts.street, parts.number, parts.district, cityState, 'Brasil'].filter(Boolean).join(', '),
+    [parts.street, parts.number, cityState, 'Brasil'].filter(Boolean).join(', '),
+    [parts.street, parts.district, cityState, 'Brasil'].filter(Boolean).join(', '),
+    [parts.street, cityState, 'Brasil'].filter(Boolean).join(', '),
+  ]);
+
+  for (const variant of variants) {
+    const found = await nominatimLookup({ q: variant }).catch((error) => {
+      logEvent('warning', 'Nominatim livre falhou.', { error: String(error), variant });
+      return null;
+    });
+    if (found) return save(found, 'nominatim-free');
+  }
+
+  // 3. Fallback brasileiro: acha o CEP pela rua/cidade e usa o CEP para desambiguar.
+  const cep = await findCepByAddress(parts).catch((error) => {
+    logEvent('warning', 'ViaCEP falhou.', { error: String(error), query });
+    return null;
   });
+  if (cep?.cep) {
+    const byCep = await nominatimLookup({
+      street: [parts.number, cep.logradouro || parts.street].filter(Boolean).join(' '),
+      city: cep.localidade || parts.city,
+      state: cep.uf || parts.state,
+      postalcode: cep.cep,
+      country: 'Brasil',
+    }).catch(() => null);
+    if (byCep) return save(byCep, 'viacep+nominatim');
+
+    const cepOnly = await nominatimLookup({
+      postalcode: cep.cep,
+      city: cep.localidade || parts.city,
+      state: cep.uf || parts.state,
+      country: 'Brasil',
+    }).catch(() => null);
+    if (cepOnly) return save(cepOnly, 'viacep-postcode');
+  }
+
+  logEvent('warning', 'Endereço não geocodificado após todos os fallbacks.', { query, parts });
+  return null;
 }
 
 async function routeBetween(start, end) {
@@ -897,6 +1031,22 @@ app.post('/api/ai-test', async (req, res) => {
       model: (await getSettings()).aiModel,
       trackerUsed: Boolean(trackerContext),
     });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/route-test', async (req, res) => {
+  try {
+    const fromAddress = typeof req.body?.from === 'string' ? req.body.from.trim() : '';
+    const toAddress = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+    if (!fromAddress || !toAddress) return res.status(400).json({ ok: false, error: 'from_and_to_required' });
+    const from = await geocodeAddress(fromAddress);
+    const to = await geocodeAddress(toAddress);
+    if (!from || !to) return res.status(422).json({ ok: false, error: 'geocode_failed', from, to });
+    const route = await routeBetween(from, to);
+    if (!route) return res.status(422).json({ ok: false, error: 'route_failed', from, to });
+    return res.json({ ok: true, from, to, route });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
