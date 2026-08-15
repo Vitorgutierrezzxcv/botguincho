@@ -141,6 +141,27 @@ jobs:
           console.log(`ETA via GConnect: ${x.route.minutes} min · ${x.route.distanceKm} km`);
           NODE
 
+      - name: Validar nova origem do acionamento
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 60 -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"fromTracker":true,"to":"R. DOIS, 161 - TROPICAL - CONTAGEM - MG"}' \
+            -o /tmp/new-route.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/route-test)
+          echo "HTTP $CODE"
+          cat /tmp/new-route.json
+          echo
+          test "$CODE" = "200"
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/new-route.json', 'utf8'));
+          if (!x.ok || !x.fromTracker) process.exit(1);
+          if (!Number.isFinite(x.route?.minutes) || x.route.minutes < 1) process.exit(1);
+          if (!Number.isFinite(x.route?.distanceKm) || x.route.distanceKm <= 0) process.exit(1);
+          console.log(`Nova origem validada: ${x.route.minutes} min · ${x.route.distanceKm} km`);
+          NODE
+
       - name: Validar frases de ETA e distância em produção
         run: |
           set -e
