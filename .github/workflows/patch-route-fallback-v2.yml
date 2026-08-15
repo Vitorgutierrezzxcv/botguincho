@@ -1,0 +1,223 @@
+name: Patch Route Fallback V2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-route-fallback-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  deployments: read
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch worker
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+
+          new_asks = r'''function asksEta(text = '') {
+            const value = normalizeForIntent(text);
+            return /\b(quanto tempo|qual (?:o )?tempo|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)\b/.test(value);
+          }
+
+          function asksDistance(text = '') {
+            const value = normalizeForIntent(text);
+            return /\b(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente))\b/.test(value);
+          }
+          '''
+          s, n = re.subn(r"function asksEta\(text = ''\) \{.*?\n\}\n", new_asks, s, count=1, flags=re.S)
+          if n != 1: raise SystemExit('asksEta não substituído')
+
+          old = '  if (looksLikeDispatch(value) || asksAvailability(value) || asksEta(value) || asksTrackerLocation(value)) return true;'
+          new = '  if (looksLikeDispatch(value) || asksAvailability(value) || asksEta(value) || asksDistance(value) || asksTrackerLocation(value)) return true;'
+          if old not in s: raise SystemExit('isOperationalMessage não encontrado')
+          s = s.replace(old, new, 1)
+
+          new_route = '''async function routeBetween(start, end) {
+            if (!start || !end) return null;
+            if (!validCoordinates(start.latitude, start.longitude) || !validCoordinates(end.latitude, end.longitude)) {
+              throw new Error('Coordenadas inválidas para roteamento.');
+            }
+
+            const coordinates = `${Number(start.longitude)},${Number(start.latitude)};${Number(end.longitude)},${Number(end.latitude)}`;
+            const providers = [
+              { name: 'osrm-main', base: 'https://router.project-osrm.org/route/v1/driving/' },
+              { name: 'osrm-osmde', base: 'https://routing.openstreetmap.de/routed-car/route/v1/driving/' },
+            ];
+            let lastError = null;
+
+            for (const provider of providers) {
+              const url = `${provider.base}${coordinates}?overview=false&steps=false&alternatives=false`;
+              try {
+                const response = await fetch(url, {
+                  headers: { 'user-agent': 'BotGuincho/1.1 (+https://botguincho.vercel.app/)' },
+                  signal: AbortSignal.timeout(6500),
+                });
+                if (!response.ok) {
+                  const body = (await response.text().catch(() => '')).slice(0, 180);
+                  throw new Error(`${provider.name} HTTP ${response.status}${body ? `: ${body}` : ''}`);
+                }
+                const data = await response.json();
+                const route = data?.code === 'Ok' && Array.isArray(data.routes) ? data.routes[0] : null;
+                if (!route || !Number.isFinite(Number(route.duration))) {
+                  throw new Error(`${provider.name} não retornou rota válida (${data?.code || 'sem código'}).`);
+                }
+                if (provider.name !== 'osrm-main') {
+                  logEvent('route-fallback', `Rota calculada pelo fallback ${provider.name}.`);
+                }
+                return {
+                  minutes: Math.max(1, Math.ceil(Number(route.duration) / 60)),
+                  distanceKm: Number.isFinite(Number(route.distance)) ? Math.round(Number(route.distance) / 100) / 10 : null,
+                };
+              } catch (error) {
+                lastError = error;
+                logEvent('warning', `Falha no roteador ${provider.name}; tentando alternativa.`, {
+                  error: String(error),
+                  coordinates,
+                });
+              }
+            }
+
+            throw lastError || new Error('Nenhum roteador conseguiu calcular a rota.');
+          }
+          '''
+          s, n = re.subn(r"async function routeBetween\(start, end\) \{.*?\n\}\n\nasync function trackerCoordinates", new_route + '\nasync function trackerCoordinates', s, count=1, flags=re.S)
+          if n != 1: raise SystemExit('routeBetween não substituído')
+
+          old = "    await replyAndRemember(msg, groupName, readableText, 'Sem origem ativa para calcular o tempo.', { intent: 'eta-no-origin' });"
+          new = "    logEvent('ignored', `${groupName}: pergunta de ETA sem acionamento ativo ignorada.`, { groupId: msg.from });"
+          if old not in s: raise SystemExit('eta-no-origin não encontrado')
+          s = s.replace(old, new, 1)
+
+          marker = 'async function handleTrackerLocationQuestion(msg, groupName, readableText) {'
+          distance_handler = '''async function handleDistanceQuestion(msg, groupName, readableText) {
+            const state = await getDispatchState(msg.from);
+            if (!state?.originAddress && !state?.originCoordinates) {
+              logEvent('ignored', `${groupName}: pergunta de distância sem acionamento ativo ignorada.`, { groupId: msg.from });
+              return;
+            }
+
+            let eta = null;
+            try {
+              eta = await computeEtaToClient({
+                targetAddress: state.originAddress,
+                targetCoordinates: state.originCoordinates,
+              });
+            } catch (error) {
+              logEvent('warning', 'Não foi possível recalcular distância/ETA.', { error: String(error) });
+            }
+
+            if (!eta) {
+              await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a rota agora.', { intent: 'distance-unavailable' });
+              return;
+            }
+
+            await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
+            const distance = Number.isFinite(Number(eta.distanceKm)) ? `${eta.distanceKm} km` : 'indisponível';
+            const reply = `Distância até o cliente: ${distance}.\nPrevisão de chegada: ${eta.minutes} min.`;
+            await replyAndRemember(msg, groupName, readableText, reply, { intent: 'distance', etaMinutes: eta.minutes, distanceKm: eta.distanceKm });
+          }
+
+          '''
+          if marker not in s: raise SystemExit('marker tracker handler não encontrado')
+          s = s.replace(marker, distance_handler + marker, 1)
+
+          intent_marker = '    if (asksTrackerLocation(readableText)) {'
+          distance_branch = "    if (asksDistance(readableText)) {\n      await handleDistanceQuestion(msg, groupName, readableText);\n      return;\n    }\n\n"
+          if intent_marker not in s: raise SystemExit('marker intent tracker não encontrado')
+          s = s.replace(intent_marker, distance_branch + intent_marker, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Validate code and intent samples
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "function asksDistance" tools/vercel-whatsapp-worker.mjs
+          grep -q "routing.openstreetmap.de" tools/vercel-whatsapp-worker.mjs
+          grep -q "temp(?:o)? (?:ate|para|pra) chegar" tools/vercel-whatsapp-worker.mjs
+          echo 'Código e intents: OK'
+
+      - name: Validate fallback router
+        run: |
+          set -e
+          curl -fsSL --max-time 20 \
+            'https://routing.openstreetmap.de/routed-car/route/v1/driving/-44.2299511,-20.0183692;-43.9149009,-19.9358523?overview=false&steps=false&alternatives=false' \
+            -o /tmp/fallback.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/fallback.json', 'utf8'));
+          if (x.code !== 'Ok' || !x.routes?.[0]?.duration) process.exit(1);
+          console.log(`Fallback OK: ${Math.ceil(x.routes[0].duration/60)} min`);
+          NODE
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Corrige fallback de rota e perguntas de ETA/distância'
+          git push origin HEAD:main
+
+      - name: Reload persistent worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          sleep 4
+          CODE=$(curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload || true)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/reload.json', 'utf8'));
+          if (!x.ok || x.whatsappStatus !== 'pronto' || x.workerProcessCount !== 1) process.exit(1);
+          console.log('Worker atualizado e WhatsApp pronto.');
+          NODE
+
+      - name: Validate production route
+        run: |
+          set -e
+          curl -fsSL --max-time 60 -X POST https://botguincho.vercel.app/api/worker/route-test \
+            -H 'content-type: application/json' \
+            -d '{"from":"Rua das Rosas, 310, São Salvador, Betim - Minas Gerais","to":"RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG"}' \
+            -o /tmp/route.json
+          cat /tmp/route.json; echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/route.json', 'utf8'));
+          if (!x.ok || !Number.isFinite(x.route?.minutes) || !Number.isFinite(x.route?.distanceKm)) process.exit(1);
+          console.log(`Rota validada: ${x.route.minutes} min · ${x.route.distanceKm} km`);
+          NODE
+
+      - name: Confirm tracker still connected
+        run: |
+          set -e
+          curl -fsSL --max-time 30 https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json; echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/status.json', 'utf8'));
+          if (x.whatsapp?.status !== 'pronto') process.exit(1);
+          if (!x.tracker?.connected) process.exit(1);
+          if (x.tracker?.lastLocation?.plate !== 'GSW0H17') process.exit(1);
+          console.log('WhatsApp e GConnect continuam conectados.');
+          NODE
