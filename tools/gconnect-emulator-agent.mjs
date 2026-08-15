@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
-import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
 const APP_PACKAGE = process.env.GCONNECT_PACKAGE || 'br.com.getrak.gconnect';
 const PLATE = (process.env.GCONNECT_PLATE || 'GSW0H17').toUpperCase().replace(/[^A-Z0-9]/g, '');
-const BRIDGE_URL = process.env.BOTGUINCHO_BRIDGE_URL || 'https://botguincho.vercel.app/api/tracker-bridge';
-const BRIDGE_TOKEN = process.env.BOTGUINCHO_BRIDGE_TOKEN || '';
+const BRIDGE_URL = process.env.BOTGUINCHO_BRIDGE_URL || 'https://botguincho.vercel.app/api/worker/tracker-bridge';
+const PAIR_CODE = (process.env.BOTGUINCHO_PAIR_CODE || '').trim().toUpperCase();
 const POLL_SECONDS = Math.max(10, Number(process.env.GCONNECT_POLL_SECONDS || 20));
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
@@ -120,7 +119,6 @@ function parseUiDump(xml) {
     address: card.address || null,
     lastUpdateText: card.lastUpdateText || null,
     capturedAt: new Date().toISOString(),
-    rawDescription: card.rawDescription || null,
   };
 }
 
@@ -141,32 +139,25 @@ async function readLocation() {
   await adb('shell', 'uiautomator', 'dump', '/sdcard/gconnect-bot.xml');
   const xml = await adb('shell', 'cat', '/sdcard/gconnect-bot.xml');
   const reading = parseUiDump(xml);
-  if (!reading.plate || reading.plate !== PLATE) {
-    throw new Error(`Veículo ${PLATE} não apareceu na tela atual do GConnect.`);
-  }
-  if (!reading.address && reading.speedKph == null && reading.batteryVoltage == null) {
-    throw new Error('GConnect aberto, mas o cartão do veículo não trouxe dados legíveis pelo UIAutomator.');
-  }
+  if (!reading.plate || reading.plate !== PLATE) throw new Error(`Veículo ${PLATE} não apareceu na tela atual do GConnect.`);
+  if (!reading.address && reading.speedKph == null && reading.batteryVoltage == null) throw new Error('GConnect aberto, mas o cartão do veículo não trouxe dados legíveis pelo UIAutomator.');
   return reading;
 }
 
 async function sendReading(reading) {
-  if (!BRIDGE_TOKEN) throw new Error('BOTGUINCHO_BRIDGE_TOKEN não configurado no agente.');
-  const body = JSON.stringify(reading);
-  const signature = crypto.createHmac('sha256', BRIDGE_TOKEN).update(body).digest('hex');
+  if (!PAIR_CODE) throw new Error('BOTGUINCHO_PAIR_CODE não configurado no agente.');
   const response = await fetch(BRIDGE_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-botguincho-signature': signature,
+      'x-botguincho-pair-code': PAIR_CODE,
       'x-botguincho-agent': 'gconnect-emulator-v1',
     },
-    body,
+    body: JSON.stringify(reading),
     signal: AbortSignal.timeout(20_000),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`Bridge HTTP ${response.status}: ${text.slice(0, 500)}`);
-  return text;
 }
 
 async function cycle() {
