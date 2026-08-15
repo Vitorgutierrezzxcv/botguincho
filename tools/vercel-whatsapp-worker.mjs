@@ -393,8 +393,9 @@ function cleanAddressQuery(value = '') {
   return String(value)
     .replace(/\bref\.?\s*:.*$/i, '')
     .replace(/\bn[º°]\s*/gi, '')
+    .replace(/[?]+$/g, '')
     .replace(/\s+/g, ' ')
-    .replace(/\s*-\s*/g, ' - ')
+    .replace(/\s+[–—-]\s+/g, ' - ')
     .trim();
 }
 
@@ -421,6 +422,84 @@ function coordinatesFromLocation(location) {
     latitude: Number(location.latitude),
     longitude: Number(location.longitude),
   };
+}
+
+function coordinatesFromText(value = '') {
+  const raw = String(value || '');
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch {}
+  const candidates = [decoded, raw];
+  const patterns = [
+    /@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)(?:,|\/|\?|$)/,
+    /(?:[?&](?:q|query|ll)=)(-?\d{1,2}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i,
+    /(?:^|[^\d.-])(-?\d{1,2}\.\d{4,})\s*[,;]\s*(-?\d{1,3}\.\d{4,})(?:[^\d.]|$)/,
+  ];
+  for (const candidate of candidates) {
+    for (const pattern of patterns) {
+      const match = candidate.match(pattern);
+      if (!match) continue;
+      if (!validCoordinates(match[1], match[2])) continue;
+      return { latitude: Number(match[1]), longitude: Number(match[2]) };
+    }
+  }
+  return null;
+}
+
+function extractMapsUrl(value = '') {
+  const match = String(value || '').match(/https?:\/\/(?:maps\.app\.goo\.gl|maps\.google\.[^/\s]+|www\.google\.[^/\s]+\/maps|goo\.gl\/maps)\/[^\s<>]+/i);
+  return match?.[0]?.replace(/[),.;!?]+$/g, '') || null;
+}
+
+async function coordinatesFromMapsUrl(value = '') {
+  const direct = coordinatesFromText(value);
+  if (direct) return direct;
+  const mapsUrl = extractMapsUrl(value);
+  if (!mapsUrl) return null;
+  try {
+    const response = await fetch(mapsUrl, {
+      redirect: 'follow',
+      headers: { 'user-agent': 'Mozilla/5.0 BotGuincho/1.2' },
+      signal: AbortSignal.timeout(10000),
+    });
+    const finalUrl = response.url || mapsUrl;
+    return coordinatesFromText(finalUrl);
+  } catch (error) {
+    logEvent('warning', 'Nao foi possivel resolver link do Google Maps.', { error: String(error), mapsUrl });
+    return null;
+  }
+}
+
+async function rememberSharedLocation(groupId, coordinates, source = 'whatsapp-location') {
+  if (!coordinates || !validCoordinates(coordinates.latitude, coordinates.longitude)) return null;
+  const normalized = {
+    latitude: Number(coordinates.latitude),
+    longitude: Number(coordinates.longitude),
+  };
+  const at = Date.now();
+  sharedLocations.set(groupId, { coordinates: normalized, at, source });
+  await setDispatchState(groupId, {
+    lastSharedCoordinates: normalized,
+    lastSharedAt: new Date(at).toISOString(),
+    lastSharedSource: source,
+  });
+  return { coordinates: normalized, at, source };
+}
+
+async function getRecentSharedLocation(groupId, stateOverride = undefined) {
+  const maxAge = 20 * 60 * 1000;
+  const candidates = [];
+  const memory = sharedLocations.get(groupId);
+  if (memory?.coordinates && validCoordinates(memory.coordinates.latitude, memory.coordinates.longitude)) {
+    candidates.push({ coordinates: memory.coordinates, at: Number(memory.at) || 0, source: memory.source || 'memory' });
+  }
+  const state = stateOverride === undefined ? await getDispatchState(groupId) : stateOverride;
+  if (state?.lastSharedCoordinates && validCoordinates(state.lastSharedCoordinates.latitude, state.lastSharedCoordinates.longitude)) {
+    const at = new Date(state.lastSharedAt || 0).getTime();
+    candidates.push({ coordinates: state.lastSharedCoordinates, at, source: state.lastSharedSource || 'persisted' });
+  }
+  return candidates
+    .filter((item) => Number.isFinite(item.at) && Date.now() - item.at <= maxAge)
+    .sort((a, b) => b.at - a.at)[0] || null;
 }
 
 async function getDispatchStates() {
@@ -477,31 +556,81 @@ async function scheduleNominatim(task) {
   return run;
 }
 
+const BRAZIL_STATE_BY_NAME = {
+  acre: 'AC', alagoas: 'AL', amapa: 'AP', amazonas: 'AM', bahia: 'BA', ceara: 'CE',
+  'distrito federal': 'DF', 'espirito santo': 'ES', goias: 'GO', maranhao: 'MA',
+  'mato grosso': 'MT', 'mato grosso do sul': 'MS', 'minas gerais': 'MG', para: 'PA',
+  paraiba: 'PB', parana: 'PR', pernambuco: 'PE', piaui: 'PI', 'rio de janeiro': 'RJ',
+  'rio grande do norte': 'RN', 'rio grande do sul': 'RS', rondonia: 'RO', roraima: 'RR',
+  'santa catarina': 'SC', 'sao paulo': 'SP', sergipe: 'SE', tocantins: 'TO',
+};
+const BRAZIL_UFS = new Set(Object.values(BRAZIL_STATE_BY_NAME));
+
+function normalizeBrazilState(value = '') {
+  const key = normalizeForIntent(value).trim();
+  if (!key) return '';
+  const upper = key.toUpperCase();
+  if (BRAZIL_UFS.has(upper)) return upper;
+  return BRAZIL_STATE_BY_NAME[key] || '';
+}
+
+function extractCep(value = '') {
+  const match = String(value || '').match(/\b(\d{5})-?(\d{3})\b/);
+  return match ? `${match[1]}-${match[2]}` : '';
+}
+
 function parseBrazilAddress(address = '') {
   const query = cleanAddressQuery(address);
-  const parts = query.split(',').map((part) => part.trim()).filter(Boolean);
-  const street = parts[0] || '';
+  const cep = extractCep(query);
+  const withoutCep = query.replace(/\b\d{5}-?\d{3}\b/g, '').replace(/\s+,/g, ',').trim();
+  const parts = withoutCep.split(',').map((part) => part.trim()).filter(Boolean);
+  let street = parts[0] || withoutCep;
   let number = '';
   let district = '';
   let city = '';
   let state = '';
 
-  if (parts.length > 1 && /^\d+[A-Za-z0-9/-]*$/.test(parts[1].replace(/\s+/g, ''))) {
-    number = parts[1];
+  if (parts.length > 1) {
+    const second = parts[1].replace(/^n[º°]?\s*/i, '').trim();
+    if (/^\d+[A-Za-z0-9/-]*$/.test(second.replace(/\s+/g, ''))) number = second;
   }
 
-  const tail = parts.at(-1) || '';
-  const cityState = tail.match(/^(.*?)(?:\s*-\s*(MG|Minas Gerais|SP|São Paulo|RJ|Rio de Janeiro))?$/i);
-  city = (cityState?.[1] || tail).trim();
-  state = (cityState?.[2] || '').trim();
-  if (/^minas gerais$/i.test(state)) state = 'MG';
-  if (/^s[aã]o paulo$/i.test(state)) state = 'SP';
-  if (/^rio de janeiro$/i.test(state)) state = 'RJ';
+  if (!number) {
+    const firstNumber = street.match(/^(.*?)(?:,|\s+n[º°]?\s*|\s+)(\d+[A-Za-z]?)\s*$/i);
+    if (firstNumber && firstNumber[1].trim().length >= 3) {
+      street = firstNumber[1].trim();
+      number = firstNumber[2];
+    }
+  }
 
-  const middle = parts.slice(number ? 2 : 1, -1);
-  district = middle.join(', ').trim();
+  if (parts.length >= 2) {
+    const tail = parts.at(-1) || '';
+    const cityState = tail.match(/^(.*?)\s*[-–—]\s*([A-Za-zÀ-ÿ ]{2,24}|[A-Za-z]{2})$/);
+    if (cityState) {
+      const normalizedState = normalizeBrazilState(cityState[2]);
+      if (normalizedState) {
+        city = cityState[1].trim();
+        state = normalizedState;
+      }
+    }
+    if (!state) {
+      const tailState = normalizeBrazilState(tail);
+      if (tailState && parts.length >= 3) {
+        state = tailState;
+        city = parts.at(-2) || '';
+      } else {
+        city = tail;
+      }
+    }
+  }
 
-  return { query, street, number, district, city, state };
+  let middleEnd = parts.length;
+  if (state && normalizeBrazilState(parts.at(-1) || '')) middleEnd -= 2;
+  else if (city) middleEnd -= 1;
+  const middleStart = number ? 2 : 1;
+  if (middleEnd > middleStart) district = parts.slice(middleStart, middleEnd).join(', ').trim();
+
+  return { query, street, number, district, city, state, cep };
 }
 
 function uniqueQueries(values) {
@@ -547,6 +676,19 @@ async function nominatimLookup(params) {
   });
 }
 
+async function lookupCep(cep) {
+  const digits = String(cep || '').replace(/\D/g, '');
+  if (digits.length !== 8) return null;
+  const response = await fetch(`https://viacep.com.br/ws/${digits}/json/`, {
+    headers: { 'user-agent': 'BotGuincho/1.2' },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!response.ok) return null;
+  const item = await response.json();
+  if (!item || item.erro) return null;
+  return item;
+}
+
 async function findCepByAddress(parts) {
   if (!parts.state || !parts.city || !parts.street || parts.street.length < 3) return null;
   const state = encodeURIComponent(parts.state);
@@ -587,9 +729,8 @@ async function geocodeAddress(address) {
     return { latitude: Number(cached.latitude), longitude: Number(cached.longitude), displayName: cached.displayName || query };
   }
 
-  const parts = parseBrazilAddress(query);
   const save = async (found, source) => {
-    if (!found) return null;
+    if (!found || !validCoordinates(found.latitude, found.longitude)) return null;
     const result = { ...found, source, cachedAt: new Date().toISOString() };
     cache[key] = result;
     await saveGeocodeCache(cache);
@@ -597,12 +738,40 @@ async function geocodeAddress(address) {
     return result;
   };
 
-  // 1. Consulta estruturada: é mais precisa quando já temos rua/cidade separadas.
+  const directCoordinates = coordinatesFromText(query);
+  if (directCoordinates) return save({ ...directCoordinates, displayName: query }, 'coordinates-text');
+
+  if (extractMapsUrl(query)) {
+    const mapCoordinates = await coordinatesFromMapsUrl(query);
+    if (mapCoordinates) return save({ ...mapCoordinates, displayName: query }, 'google-maps-url');
+  }
+
+  const parts = parseBrazilAddress(query);
+
+  if (parts.cep) {
+    const byCep = await lookupCep(parts.cep).catch((error) => {
+      logEvent('warning', 'Consulta direta de CEP falhou.', { error: String(error), cep: parts.cep });
+      return null;
+    });
+    if (byCep) {
+      const cepVariants = uniqueQueries([
+        [byCep.logradouro, parts.number, byCep.bairro, `${byCep.localidade} - ${byCep.uf}`, byCep.cep, 'Brasil'].filter(Boolean).join(', '),
+        [byCep.logradouro, parts.number, `${byCep.localidade} - ${byCep.uf}`, 'Brasil'].filter(Boolean).join(', '),
+        [byCep.cep, byCep.localidade, byCep.uf, 'Brasil'].filter(Boolean).join(', '),
+      ]);
+      for (const variant of cepVariants) {
+        const found = await nominatimLookup({ q: variant }).catch(() => null);
+        if (found) return save(found, 'viacep-direct+nominatim');
+      }
+    }
+  }
+
   if (parts.street && parts.city) {
     const structured = await nominatimLookup({
       street: [parts.number, parts.street].filter(Boolean).join(' '),
       city: parts.city,
       state: parts.state || undefined,
+      postalcode: parts.cep || undefined,
       country: 'Brasil',
     }).catch((error) => {
       logEvent('warning', 'Nominatim estruturado falhou.', { error: String(error), query });
@@ -611,11 +780,11 @@ async function geocodeAddress(address) {
     if (structured) return save(structured, 'nominatim-structured');
   }
 
-  // 2. Tenta variações progressivamente menos restritivas.
   const cityState = [parts.city, parts.state].filter(Boolean).join(' - ');
   const variants = uniqueQueries([
+    query,
     `${query}, Brasil`,
-    [parts.street, parts.number, parts.district, cityState, 'Brasil'].filter(Boolean).join(', '),
+    [parts.street, parts.number, parts.district, cityState, parts.cep, 'Brasil'].filter(Boolean).join(', '),
     [parts.street, parts.number, cityState, 'Brasil'].filter(Boolean).join(', '),
     [parts.street, parts.district, cityState, 'Brasil'].filter(Boolean).join(', '),
     [parts.street, cityState, 'Brasil'].filter(Boolean).join(', '),
@@ -629,31 +798,18 @@ async function geocodeAddress(address) {
     if (found) return save(found, 'nominatim-free');
   }
 
-  // 3. Fallback brasileiro: acha o CEP pela rua/cidade e usa o CEP para desambiguar.
   const cep = await findCepByAddress(parts).catch((error) => {
-    logEvent('warning', 'ViaCEP falhou.', { error: String(error), query });
+    logEvent('warning', 'ViaCEP por endereco falhou.', { error: String(error), query });
     return null;
   });
   if (cep?.cep) {
-    const byCep = await nominatimLookup({
-      street: [parts.number, cep.logradouro || parts.street].filter(Boolean).join(' '),
-      city: cep.localidade || parts.city,
-      state: cep.uf || parts.state,
-      postalcode: cep.cep,
-      country: 'Brasil',
+    const found = await nominatimLookup({
+      q: [cep.logradouro || parts.street, parts.number, cep.bairro, `${cep.localidade} - ${cep.uf}`, cep.cep, 'Brasil'].filter(Boolean).join(', '),
     }).catch(() => null);
-    if (byCep) return save(byCep, 'viacep+nominatim');
-
-    const cepOnly = await nominatimLookup({
-      postalcode: cep.cep,
-      city: cep.localidade || parts.city,
-      state: cep.uf || parts.state,
-      country: 'Brasil',
-    }).catch(() => null);
-    if (cepOnly) return save(cepOnly, 'viacep-postcode');
+    if (found) return save(found, 'viacep-address+nominatim');
   }
 
-  logEvent('warning', 'Endereço não geocodificado após todos os fallbacks.', { query, parts });
+  logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });
   return null;
 }
 
@@ -813,12 +969,30 @@ async function extractMessageInput(msg) {
         imageDataUrl = `data:${media.mimetype};base64,${media.data}`;
       }
     } catch (error) {
-      logEvent('warning', 'Não foi possível baixar a mídia recebida.', { error: String(error) });
+      logEvent('warning', 'Nao foi possivel baixar a midia recebida.', { error: String(error) });
     }
   }
 
   const location = coordinatesFromLocation(msg.location);
-  return { text, imageDataUrl, location };
+  const locationMeta = msg.location ? {
+    name: msg.location.name || null,
+    address: msg.location.address || null,
+    url: msg.location.url || null,
+  } : null;
+
+  let quotedLocation = null;
+  let quotedText = '';
+  if (msg.hasQuotedMsg) {
+    try {
+      const quoted = await msg.getQuotedMessage();
+      quotedLocation = coordinatesFromLocation(quoted?.location);
+      quotedText = quoted?.body?.trim() || '';
+    } catch (error) {
+      logEvent('warning', 'Nao foi possivel ler a mensagem citada.', { error: String(error) });
+    }
+  }
+
+  return { text, imageDataUrl, location, locationMeta, quotedLocation, quotedText };
 }
 
 async function replyAndRemember(msg, groupName, incomingText, reply, meta = {}) {
@@ -837,14 +1011,17 @@ function formatEtaReply(eta, withConfirmation = false) {
 async function handleDispatch(msg, groupName, readableText, location) {
   const originAddress = extractLabeledField(readableText, 'Origem');
   const destinationAddress = extractLabeledField(readableText, 'Destino');
-  const shared = sharedLocations.get(msg.from);
-  const sharedFresh = shared && Date.now() - shared.at <= 10 * 60 * 1000 ? shared.coordinates : null;
-  const originCoordinates = location || (!originAddress ? sharedFresh : null);
+  const shared = await getRecentSharedLocation(msg.from);
+  const originCoordinates = location || (!originAddress ? shared?.coordinates || null : null);
+  const originMoment = originCoordinates && !originAddress && shared?.at
+    ? new Date(shared.at).toISOString()
+    : new Date().toISOString();
 
   const state = await setDispatchState(msg.from, {
     originAddress: originAddress || null,
     originCoordinates: originCoordinates || null,
     destinationAddress: destinationAddress || null,
+    originUpdatedAt: originMoment,
   });
 
   let eta = null;
@@ -854,7 +1031,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
       targetCoordinates: state.originCoordinates,
     });
   } catch (error) {
-    logEvent('warning', 'Não foi possível calcular ETA do acionamento.', { error: String(error), origin: state.originAddress });
+    logEvent('warning', 'Nao foi possivel calcular ETA do acionamento.', { error: String(error), origin: state.originAddress });
   }
 
   if (eta) {
@@ -866,47 +1043,63 @@ async function handleDispatch(msg, groupName, readableText, location) {
   await replyAndRemember(msg, groupName, readableText, reply, { intent: 'dispatch', etaMinutes: eta?.minutes ?? null });
 }
 
+function looksLikeAddressCandidate(value = '') {
+  const candidate = cleanAddressQuery(value);
+  if (!candidate || candidate.length < 4) return false;
+  if (coordinatesFromText(candidate) || extractMapsUrl(candidate) || extractCep(candidate)) return true;
+
+  const normalized = normalizeForIntent(candidate);
+  const streetHint = /\b(rua|r\.?|avenida|av\.?|alameda|travessa|estrada|rodovia|rod\.?|br-?\d+|mg-?\d+|praca|largo|via|marginal|fazenda|sitio|condominio|loteamento|bairro)\b/i.test(normalized);
+  const hasNumber = /\b\d{1,6}[a-z]?\b/i.test(normalized);
+  const hasComma = candidate.includes(',');
+  const hasUf = new RegExp(`\\b(?:${[...BRAZIL_UFS].join('|')})\\b`, 'i').test(candidate);
+  return streetHint || (hasComma && (hasNumber || hasUf)) || (hasNumber && hasUf) || (hasComma && candidate.length >= 12);
+}
+
 function extractInlineRouteTarget(text = '') {
   const raw = String(text).replace(/\r/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
 
-  const patterns = [
-    /^\s*(?:qual\s+(?:a\s+)?previs[aã]o\s+de\s+chegada|previs[aã]o\s+de\s+chegada|qual\s+(?:o\s+)?tempo\s+de\s+dist[aâ]ncia|qual\s+(?:o\s+)?tempo|quanto\s+tempo(?:\s+(?:at[eé]|para|pra)\s+chegar)?|tempo\s+(?:at[eé]|para|pra)\s+chegar)\s*[?:\-–—]*\s*(.+)$/i,
-    /^\s*(?:qual\s+(?:a\s+)?dist[aâ]ncia|dist[aâ]ncia\s+(?:at[eé]|para|pro|do\s+guincho|do\s+local|do\s+cliente))\s*[?:\-–—]*\s*(.+)$/i,
-  ];
+  const labeled = raw.match(/(?:^|\b)(?:origem|endereco|endereço|local|localizacao|localização|local do cliente|endereco do cliente|endereço do cliente|cliente)\s*[:=\-–—]\s*(.+)$/i);
+  if (labeled?.[1] && looksLikeAddressCandidate(labeled[1])) return cleanAddressQuery(labeled[1]);
 
-  for (const pattern of patterns) {
-    const match = raw.match(pattern);
-    if (!match?.[1]) continue;
-    const candidate = match[1].replace(/^(?:at[eé]|para|pra|pro|em)\s+/i, '').trim();
-    const hasNumber = /\d/.test(candidate);
-    const hasAddressHint = /(?:\bru[ae]\b|\br\.|\bavenida\b|\bav\.|\balameda\b|\btravessa\b|\bestrada\b|\brodovia\b|\bbr\s*-?\s*\d+\b|\bpra[cç]a\b|\bbairro\b|\bcep\b|\bbetim\b|\bcontagem\b|\bbelo horizonte\b|\bminas gerais\b|\bmg\b)/i.test(candidate);
-    const hasStructure = candidate.includes(',') || /\b\d{5}-?\d{3}\b/.test(candidate);
-    if (candidate.length >= 8 && hasNumber && (hasAddressHint || hasStructure)) return candidate;
+  const questionMark = raw.indexOf('?');
+  if (questionMark >= 0) {
+    const after = raw.slice(questionMark + 1).trim().replace(/^(?:ate|até|para|pra|pro|no|na|em|do|da)\s+/i, '');
+    if (looksLikeAddressCandidate(after)) return cleanAddressQuery(after);
   }
-  return null;
-}
 
-function recentSharedCoordinates(groupId) {
-  const shared = sharedLocations.get(groupId);
-  if (!shared || Date.now() - shared.at > 10 * 60 * 1000) return null;
-  return shared.coordinates || null;
+  let candidate = raw.replace(/^\s*(?:(?:qual|quanto)\s+(?:a\s+|o\s+)?(?:previs[aã]o(?:\s+de\s+chegada)?|tempo(?:\s+de\s+dist[aâ]ncia)?|dist[aâ]ncia)|previs[aã]o(?:\s+de\s+chegada)?|eta|quanto\s+demora|tempo\s+(?:at[eé]|para|pra)\s+chegar)\s*[:?=\-–—]*\s*/i, '');
+  candidate = candidate.replace(/^(?:ate|até|para|pra|pro|no|na|em|do|da)\s+/i, '').trim();
+  if (looksLikeAddressCandidate(candidate)) return cleanAddressQuery(candidate);
+
+  const embedded = raw.match(/\b(?:rua|r\.?|avenida|av\.?|alameda|travessa|estrada|rodovia|rod\.?|br-?\d+|mg-?\d+|praca|praça|largo|via|marginal|fazenda|sitio|sítio|condominio|condomínio|loteamento)\b.+$/i);
+  if (embedded?.[0] && looksLikeAddressCandidate(embedded[0])) return cleanAddressQuery(embedded[0]);
+
+  const mapsUrl = extractMapsUrl(raw);
+  if (mapsUrl) return mapsUrl;
+  return null;
 }
 
 async function resolveRouteQuestionTarget(groupId, readableText) {
   const inlineAddress = extractInlineRouteTarget(readableText);
-  const sharedCoordinates = inlineAddress ? null : recentSharedCoordinates(groupId);
   let state = await getDispatchState(groupId);
+  const shared = inlineAddress ? null : await getRecentSharedLocation(groupId, state);
+  const originAt = new Date(state?.originUpdatedAt || state?.createdAt || 0).getTime();
+  const stateHasOrigin = Boolean(state?.originAddress || state?.originCoordinates);
+  const sharedIsNewer = shared && (!stateHasOrigin || !Number.isFinite(originAt) || shared.at >= originAt);
 
   if (inlineAddress) {
     state = await setDispatchState(groupId, {
       originAddress: inlineAddress,
       originCoordinates: null,
+      originUpdatedAt: new Date().toISOString(),
     });
-  } else if (sharedCoordinates) {
+  } else if (sharedIsNewer) {
     state = await setDispatchState(groupId, {
       originAddress: null,
-      originCoordinates: sharedCoordinates,
+      originCoordinates: shared.coordinates,
+      originUpdatedAt: new Date(shared.at).toISOString(),
     });
   }
 
@@ -914,8 +1107,8 @@ async function resolveRouteQuestionTarget(groupId, readableText) {
     state,
     inlineAddress,
     targetAddress: inlineAddress || state?.originAddress || null,
-    targetCoordinates: inlineAddress ? null : (sharedCoordinates || state?.originCoordinates || null),
-    source: inlineAddress ? 'inline-address' : sharedCoordinates ? 'shared-location' : 'dispatch-state',
+    targetCoordinates: inlineAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || null),
+    source: inlineAddress ? 'inline-address' : sharedIsNewer ? shared.source : 'dispatch-state',
   };
 }
 
@@ -1018,11 +1211,21 @@ async function processIncomingMessage(msg) {
     if (!allowed.has(msg.from)) return;
 
     const settings = await getSettings();
-    const { text, imageDataUrl, location } = await extractMessageInput(msg);
+    const { text, imageDataUrl, location, locationMeta, quotedLocation, quotedText } = await extractMessageInput(msg);
     const author = msg.author || 'participante';
+    const incomingLocation = location || quotedLocation || null;
+
+    if (location) {
+      await rememberSharedLocation(msg.from, location, 'whatsapp-location');
+      logEvent('location', `${groupName}: localizacao nativa do WhatsApp recebida.`, { groupId: msg.from, ...location, locationMeta });
+    } else if (quotedLocation) {
+      await rememberSharedLocation(msg.from, quotedLocation, 'whatsapp-quoted-location');
+      logEvent('location', `${groupName}: localizacao encontrada na mensagem citada.`, { groupId: msg.from, ...quotedLocation });
+    }
+
     const readableText = text || (
       location
-        ? `[localização compartilhada: ${location.latitude}, ${location.longitude}]`
+        ? `[localização WhatsApp: ${location.latitude}, ${location.longitude}]`
         : (imageDataUrl ? '[imagem recebida]' : '[mídia recebida]')
     );
 
@@ -1037,19 +1240,12 @@ async function processIncomingMessage(msg) {
     }
 
     if (location && !text) {
-      sharedLocations.set(msg.from, { coordinates: location, at: Date.now() });
-      const state = await getDispatchState(msg.from);
-      if (state && (!state.originCoordinates || !state.originAddress)) {
-        await setDispatchState(msg.from, { originCoordinates: location });
-        await handleEtaQuestion(msg, groupName, readableText);
-      } else {
-        logEvent('system', `${groupName}: localização compartilhada armazenada para o próximo acionamento.`, { groupId: msg.from });
-      }
+      logEvent('system', `${groupName}: localizacao do WhatsApp armazenada; aguardando pergunta/acionamento.`, { groupId: msg.from });
       return;
     }
 
     if (looksLikeDispatch(readableText)) {
-      await handleDispatch(msg, groupName, readableText, location);
+      await handleDispatch(msg, groupName, readableText, incomingLocation);
       return;
     }
 
@@ -1207,10 +1403,13 @@ app.post('/api/route-test', async (req, res) => {
     const fromTracker = req.body?.fromTracker === true;
     const fromAddress = typeof req.body?.from === 'string' ? req.body.from.trim() : '';
     const toAddress = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+    const toCoordinates = validCoordinates(req.body?.toLatitude, req.body?.toLongitude)
+      ? { latitude: Number(req.body.toLatitude), longitude: Number(req.body.toLongitude) }
+      : null;
 
     if (fromTracker) {
-      if (!toAddress) return res.status(400).json({ ok: false, error: 'to_required' });
-      const route = await computeEtaToClient({ targetAddress: toAddress });
+      if (!toAddress && !toCoordinates) return res.status(400).json({ ok: false, error: 'to_required' });
+      const route = await computeEtaToClient({ targetAddress: toAddress || null, targetCoordinates: toCoordinates });
       if (!route) return res.status(422).json({ ok: false, error: 'tracker_eta_failed' });
       return res.json({ ok: true, fromTracker: true, route });
     }
