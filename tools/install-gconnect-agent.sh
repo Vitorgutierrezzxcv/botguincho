@@ -57,7 +57,7 @@ Environment=HOME=$RUN_HOME
 Environment=ANDROID_HOME=$RUN_HOME/android-sdk
 Environment=ANDROID_SDK_ROOT=$RUN_HOME/android-sdk
 Environment=PATH=$(dirname "$ADB_BIN"):$(dirname "$EMULATOR_BIN"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=$EMULATOR_BIN -avd $AVD_NAME -no-window -no-audio -no-boot-anim -no-metrics -gpu swiftshader_indirect -accel on
+ExecStart=$EMULATOR_BIN -avd $AVD_NAME -no-snapshot-load -no-snapshot-save -no-window -no-audio -no-boot-anim -no-metrics -gpu swiftshader_indirect -accel on
 Restart=always
 RestartSec=10
 TimeoutStopSec=30
@@ -89,6 +89,7 @@ systemctl daemon-reload
 systemctl enable botguincho-android-emulator.service botguincho-gconnect.service >/dev/null
 
 # Passa o emulador atual para o systemd sem apagar o AVD nem os dados do GConnect.
+# Faz cold boot de propósito para não restaurar um snapshot antigo que pode não conter o GConnect.
 if sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" devices | grep -q $'\tdevice$'; then
   echo "Android atual encontrado. Reiniciando de forma controlada para deixá-lo 24/7 pelo systemd..."
   sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" emu kill >/dev/null 2>&1 || true
