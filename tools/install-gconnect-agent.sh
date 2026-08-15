@@ -3,7 +3,7 @@ set -euo pipefail
 
 PAIR_CODE="${1:-}"
 PLATE="${2:-GSW0H17}"
-AVD_NAME="${3:-gconnect-avd}"
+AVD_NAME="${3:-gconnect-playstore}"
 BASE_URL="https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho/main"
 INSTALL_DIR="/opt/botguincho-gconnect"
 ENV_FILE="/etc/botguincho-gconnect.env"
@@ -89,7 +89,7 @@ systemctl daemon-reload
 systemctl enable botguincho-android-emulator.service botguincho-gconnect.service >/dev/null
 
 # Passa o emulador atual para o systemd sem apagar o AVD nem os dados do GConnect.
-# Faz cold boot de propósito para não restaurar um snapshot antigo que pode não conter o GConnect.
+# Faz cold boot de propósito para não restaurar um snapshot antigo.
 if sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" devices | grep -q $'\tdevice$'; then
   echo "Android atual encontrado. Reiniciando de forma controlada para deixá-lo 24/7 pelo systemd..."
   sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" emu kill >/dev/null 2>&1 || true
@@ -112,6 +112,12 @@ if [ "$READY" != "1" ]; then
   echo "Android não concluiu o boot a tempo."
   journalctl -u botguincho-android-emulator.service -n 80 --no-pager || true
   exit 6
+fi
+
+if ! sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" shell pm list packages | grep -q '^package:br\.com\.getrak\.gconnect$'; then
+  echo "GConnect não está instalado no AVD '$AVD_NAME'."
+  echo "Use o AVD gconnect-playstore, que contém o aplicativo instalado."
+  exit 7
 fi
 
 systemctl restart botguincho-gconnect.service
