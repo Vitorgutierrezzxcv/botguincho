@@ -717,8 +717,128 @@ async function findCepByAddress(parts) {
   return ranked[0]?.item || null;
 }
 
+
+function stripRouteQuestionFragments(value = '') {
+  let text = String(value || '')
+    .replace(/\r/g, ' ')
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const patterns = [
+    /\b(?:qual|quanto)\s+(?:e|é\s+)?(?:o\s+|a\s+)?(?:tempo(?:\s+de\s+dist[aâ]ncia)?|dist[aâ]ncia|previs[aã]o(?:\s+de\s+chegada)?)\s*\??/gi,
+    /\b(?:qual\s+seria\s+)?(?:o\s+)?tempo\s+(?:at[eé]|para|pra)\s+chegar(?:\s+(?:no|ao)\s+cliente)?\s*\??/gi,
+    /\bquanto\s+tempo\s+(?:at[eé]|para|pra)\s+chegar(?:\s+(?:no|ao)\s+cliente)?\s*\??/gi,
+    /\bquanto\s+demora(?:\s+(?:at[eé]|para|pra)\s+chegar)?\s*\??/gi,
+    /\b(?:eta|previs[aã]o\s+de\s+chegada)\s*[:?]\s*/gi,
+  ];
+  for (const pattern of patterns) text = text.replace(pattern, ' ');
+  return text
+    .replace(/\s*[,;|]+\s*$/g, '')
+    .replace(/^\s*[,;|]+\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function detectBrazilState(value = '') {
+  const normalized = normalizeForIntent(value);
+  for (const [name, uf] of Object.entries(BRAZIL_STATE_BY_NAME)) {
+    if (normalized === name || normalized.includes(` ${name} `) || normalized.endsWith(` ${name}`) || normalized.startsWith(`${name} `)) return uf;
+  }
+  const ufMatch = String(value || '').toUpperCase().match(/(?:^|[^A-Z])([A-Z]{2})(?:[^A-Z]|$)/);
+  return ufMatch && BRAZIL_UFS.has(ufMatch[1]) ? ufMatch[1] : '';
+}
+
+function normalizeAddressForLookup(value = '') {
+  let query = stripRouteQuestionFragments(value);
+  query = cleanAddressQuery(query)
+    .replace(/\b(?:n[uú]mero|numero|nro\.?|num\.?|n[º°])\s*[:#-]?\s*(\d{1,6}[A-Za-z]?)/gi, '$1')
+    .replace(/\bbrasil\b(?:\s*,?\s*\bbrasil\b)+/gi, 'Brasil')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/,{2,}/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return query;
+}
+
+function looseAddressCandidates(value = '') {
+  const query = normalizeAddressForLookup(value);
+  const state = detectBrazilState(query);
+  const pieces = query
+    .replace(/\bBrasil\b/gi, '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!state || !pieces.length) return [];
+
+  const street = pieces[0] || '';
+  let number = '';
+  if (pieces[1] && /^\d{1,6}[A-Za-z]?$/.test(pieces[1])) number = pieces[1];
+
+  let beforeState = '';
+  for (let i = pieces.length - 1; i >= 0; i -= 1) {
+    if (detectBrazilState(pieces[i])) {
+      beforeState = pieces[i - 1] || '';
+      break;
+    }
+  }
+  if (!beforeState && pieces.length >= 2) beforeState = pieces.at(-2) || '';
+
+  const words = beforeState.split(/\s+/).filter(Boolean);
+  const cities = [];
+  for (let size = 1; size <= Math.min(4, words.length); size += 1) cities.push(words.slice(-size).join(' '));
+  return uniqueQueries(cities).map((city) => ({ street, number, city, state }));
+}
+
+function buildLookupVariants(value = '') {
+  const query = normalizeAddressForLookup(value);
+  const state = detectBrazilState(query);
+  const variants = [query, `${query}, Brasil`];
+  const pieces = query.replace(/\bBrasil\b/gi, '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (state && pieces.length >= 2) {
+    const street = pieces[0];
+    const number = pieces[1] && /^\d{1,6}[A-Za-z]?$/.test(pieces[1]) ? pieces[1] : '';
+    for (const candidate of looseAddressCandidates(query)) {
+      variants.push([street, number, candidate.city, state, 'Brasil'].filter(Boolean).join(', '));
+      variants.push([street, candidate.city, state, 'Brasil'].filter(Boolean).join(', '));
+    }
+  }
+  return uniqueQueries(variants);
+}
+
+async function photonLookup(query) {
+  try {
+    const url = new URL('https://photon.komoot.io/api/');
+    url.searchParams.set('q', query);
+    url.searchParams.set('limit', '5');
+    url.searchParams.set('lang', 'pt');
+    const response = await fetch(url, {
+      headers: { 'user-agent': 'BotGuincho/1.3 (+https://botguincho.vercel.app/)' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const features = Array.isArray(data?.features) ? data.features : [];
+    for (const feature of features) {
+      const coords = feature?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) continue;
+      const countryCode = String(feature?.properties?.countrycode || '').toUpperCase();
+      if (countryCode && countryCode !== 'BR') continue;
+      if (!validCoordinates(coords[1], coords[0])) continue;
+      return {
+        latitude: Number(coords[1]),
+        longitude: Number(coords[0]),
+        displayName: [feature?.properties?.name, feature?.properties?.street, feature?.properties?.city, feature?.properties?.state].filter(Boolean).join(', '),
+      };
+    }
+  } catch (error) {
+    logEvent('warning', 'Photon geocoder falhou.', { error: String(error), query });
+  }
+  return null;
+}
+
 async function geocodeAddress(address) {
-  const query = cleanAddressQuery(address);
+  const query = normalizeAddressForLookup(address);
   if (!query) return null;
 
   const key = geocodeCacheKey(query);
@@ -782,8 +902,7 @@ async function geocodeAddress(address) {
 
   const cityState = [parts.city, parts.state].filter(Boolean).join(' - ');
   const variants = uniqueQueries([
-    query,
-    `${query}, Brasil`,
+    ...buildLookupVariants(query),
     [parts.street, parts.number, parts.district, cityState, parts.cep, 'Brasil'].filter(Boolean).join(', '),
     [parts.street, parts.number, cityState, 'Brasil'].filter(Boolean).join(', '),
     [parts.street, parts.district, cityState, 'Brasil'].filter(Boolean).join(', '),
@@ -807,6 +926,19 @@ async function geocodeAddress(address) {
       q: [cep.logradouro || parts.street, parts.number, cep.bairro, `${cep.localidade} - ${cep.uf}`, cep.cep, 'Brasil'].filter(Boolean).join(', '),
     }).catch(() => null);
     if (found) return save(found, 'viacep-address+nominatim');
+  }
+
+  for (const loose of looseAddressCandidates(query)) {
+    const cepItem = await findCepByAddress({ street: loose.street, number: loose.number, district: '', city: loose.city, state: loose.state }).catch(() => null);
+    if (!cepItem?.cep) continue;
+    const variant = [cepItem.logradouro || loose.street, loose.number, cepItem.bairro, `${cepItem.localidade} - ${cepItem.uf}`, cepItem.cep, 'Brasil'].filter(Boolean).join(', ');
+    const found = await nominatimLookup({ q: variant }).catch(() => null);
+    if (found) return save(found, 'viacep-loose+nominatim');
+  }
+
+  for (const variant of buildLookupVariants(query)) {
+    const found = await photonLookup(variant);
+    if (found) return save(found, 'photon-fallback');
   }
 
   logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });
@@ -1035,7 +1167,13 @@ async function handleDispatch(msg, groupName, readableText, location) {
   }
 
   if (eta) {
-    await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
+    await setDispatchState(msg.from, {
+    lastEta: eta,
+    lastEtaAt: new Date().toISOString(),
+    ...(target.source === 'inline-address' || target.source === 'quoted-address'
+      ? { originAddress: target.targetAddress, originCoordinates: null, originUpdatedAt: new Date().toISOString() }
+      : {}),
+  });
     logEvent('route', `${groupName}: ETA ${eta.minutes} min${eta.distanceKm ? ` · ${eta.distanceKm} km` : ''}.`, { groupId: msg.from });
   }
 
@@ -1057,27 +1195,28 @@ function looksLikeAddressCandidate(value = '') {
 }
 
 function extractInlineRouteTarget(text = '') {
-  const raw = String(text).replace(/\r/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+  const raw = String(text || '').replace(/\r/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
-
-  const labeled = raw.match(/(?:^|\b)(?:origem|endereco|endereço|local|localizacao|localização|local do cliente|endereco do cliente|endereço do cliente|cliente)\s*[:=\-–—]\s*(.+)$/i);
-  if (labeled?.[1] && looksLikeAddressCandidate(labeled[1])) return cleanAddressQuery(labeled[1]);
-
-  const questionMark = raw.indexOf('?');
-  if (questionMark >= 0) {
-    const after = raw.slice(questionMark + 1).trim().replace(/^(?:ate|até|para|pra|pro|no|na|em|do|da)\s+/i, '');
-    if (looksLikeAddressCandidate(after)) return cleanAddressQuery(after);
-  }
-
-  let candidate = raw.replace(/^\s*(?:(?:qual|quanto)\s+(?:a\s+|o\s+)?(?:previs[aã]o(?:\s+de\s+chegada)?|tempo(?:\s+de\s+dist[aâ]ncia)?|dist[aâ]ncia)|previs[aã]o(?:\s+de\s+chegada)?|eta|quanto\s+demora|tempo\s+(?:at[eé]|para|pra)\s+chegar)\s*[:?=\-–—]*\s*/i, '');
-  candidate = candidate.replace(/^(?:ate|até|para|pra|pro|no|na|em|do|da)\s+/i, '').trim();
-  if (looksLikeAddressCandidate(candidate)) return cleanAddressQuery(candidate);
-
-  const embedded = raw.match(/\b(?:rua|r\.?|avenida|av\.?|alameda|travessa|estrada|rodovia|rod\.?|br-?\d+|mg-?\d+|praca|praça|largo|via|marginal|fazenda|sitio|sítio|condominio|condomínio|loteamento)\b.+$/i);
-  if (embedded?.[0] && looksLikeAddressCandidate(embedded[0])) return cleanAddressQuery(embedded[0]);
 
   const mapsUrl = extractMapsUrl(raw);
   if (mapsUrl) return mapsUrl;
+  const directCoordinates = coordinatesFromText(raw);
+  if (directCoordinates) return `${directCoordinates.latitude},${directCoordinates.longitude}`;
+
+  const labeled = raw.match(/(?:^|\b)(?:origem|endereco|endereço|local|localizacao|localização|local do cliente|endereco do cliente|endereço do cliente|cliente)\s*[:=\-–—]\s*(.+)$/i);
+  if (labeled?.[1]) {
+    const labeledCandidate = normalizeAddressForLookup(labeled[1]);
+    if (looksLikeAddressCandidate(labeledCandidate)) return labeledCandidate;
+  }
+
+  const withoutQuestion = normalizeAddressForLookup(raw);
+  if (looksLikeAddressCandidate(withoutQuestion)) return withoutQuestion;
+
+  const embedded = withoutQuestion.match(/\b(?:rua|r\.?|avenida|av\.?|alameda|travessa|estrada|rodovia|rod\.?|br-?\d+|mg-?\d+|praca|praça|largo|via|marginal|fazenda|sitio|sítio|condominio|condomínio|loteamento|bairro)\b.+$/i);
+  if (embedded?.[0]) {
+    const candidate = normalizeAddressForLookup(embedded[0]);
+    if (looksLikeAddressCandidate(candidate)) return candidate;
+  }
   return null;
 }
 
@@ -1092,11 +1231,7 @@ async function resolveRouteQuestionTarget(groupId, readableText, quotedText = ''
   const sharedIsNewer = shared && (!stateHasOrigin || !Number.isFinite(originAt) || shared.at >= originAt);
 
   if (explicitAddress) {
-    state = await setDispatchState(groupId, {
-      originAddress: explicitAddress,
-      originCoordinates: null,
-      originUpdatedAt: new Date().toISOString(),
-    });
+    // Nao persiste ainda: evita contaminar o grupo com endereco invalido.
   } else if (sharedIsNewer) {
     state = await setDispatchState(groupId, {
       originAddress: null,
@@ -1147,7 +1282,13 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') 
     return;
   }
 
-  await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
+  await setDispatchState(msg.from, {
+    lastEta: eta,
+    lastEtaAt: new Date().toISOString(),
+    ...(target.source === 'inline-address' || target.source === 'quoted-address'
+      ? { originAddress: target.targetAddress, originCoordinates: null, originUpdatedAt: new Date().toISOString() }
+      : {}),
+  });
   const reply = formatEtaReply(eta, false);
   await replyAndRemember(msg, groupName, readableText, reply, {
     intent: 'eta',
@@ -1417,10 +1558,16 @@ app.post('/api/route-test', async (req, res) => {
       : null;
 
     if (fromTracker) {
-      if (!toAddress && !toCoordinates) return res.status(400).json({ ok: false, error: 'to_required' });
-      const route = await computeEtaToClient({ targetAddress: toAddress || null, targetCoordinates: toCoordinates });
-      if (!route) return res.status(422).json({ ok: false, error: 'tracker_eta_failed' });
-      return res.json({ ok: true, fromTracker: true, route });
+      const testMessage = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+      const testQuotedText = typeof req.body?.quotedText === 'string' ? req.body.quotedText.trim() : '';
+      const inlineTarget = testMessage ? extractInlineRouteTarget(testMessage) : null;
+      const quotedTarget = !inlineTarget && testQuotedText ? extractInlineRouteTarget(testQuotedText) : null;
+      const parsedTarget = inlineTarget || quotedTarget || toAddress || null;
+      const parsedSource = inlineTarget ? 'inline-address' : quotedTarget ? 'quoted-address' : toCoordinates ? 'coordinates' : 'to';
+      if (!parsedTarget && !toCoordinates) return res.status(400).json({ ok: false, error: 'to_required' });
+      const route = await computeEtaToClient({ targetAddress: parsedTarget, targetCoordinates: toCoordinates });
+      if (!route) return res.status(422).json({ ok: false, error: 'tracker_eta_failed', parsedTarget, parsedSource });
+      return res.json({ ok: true, fromTracker: true, parsedTarget, parsedSource, route });
     }
 
     if (!fromAddress || !toAddress) return res.status(400).json({ ok: false, error: 'from_and_to_required' });
