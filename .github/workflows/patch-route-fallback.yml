@@ -195,33 +195,6 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Tornar smoke do tracker não destrutivo
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('.github/workflows/worker-reload.yml')
-          s = p.read_text()
-          start = s.find('      - name: Validar bridge GConnect Android\n')
-          if start < 0:
-              raise SystemExit('step de bridge não encontrado')
-          replacement = '''      - name: Validar GConnect Android sem alterar leitura real
-        run: |
-          set -e
-          curl -fsSL --retry 4 --retry-delay 3 --max-time 30 https://botguincho.vercel.app/api/worker/tracker -o /tmp/tracker.json
-          node - <<'NODE'
-          const fs = require('fs');
-          const x = JSON.parse(fs.readFileSync('/tmp/tracker.json', 'utf8'));
-          if (!/^[A-Z0-9]{8}$/.test(x.pairCode || '')) process.exit(1);
-          if (!x.connected) process.exit(1);
-          if (x.lastLocation?.plate !== 'GSW0H17') process.exit(1);
-          if (!x.lastLocation?.address) process.exit(1);
-          console.log(`GConnect conectado: ${x.lastLocation.plate} · ${x.lastLocation.address}`);
-          NODE
-'''
-          s = s[:start] + replacement
-          p.write_text(s)
-          PY
-
       - name: Validar sintaxe e intents
         run: |
           node --check tools/vercel-whatsapp-worker.mjs
@@ -256,7 +229,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add tools/vercel-whatsapp-worker.mjs .github/workflows/worker-reload.yml
+          git add tools/vercel-whatsapp-worker.mjs
           git commit -m 'Corrige fallback de rota e perguntas de ETA/distância'
           git push origin HEAD:main
 
