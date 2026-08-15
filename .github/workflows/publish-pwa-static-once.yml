@@ -1,0 +1,26 @@
+name: Publish PWA Static Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-pwa-static-once.yml']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy static assets to public
+        run: |
+          cp app.js public/app.js
+          cp app.css public/app.css
+          cp manifest.webmanifest public/manifest.webmanifest
+          cp sw.js public/sw.js
+          cp icon.svg public/icon.svg
+      - name: Commit public assets
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/app.js public/app.css public/manifest.webmanifest public/sw.js public/icon.svg
+          git commit -m 'Publica assets do PWA na Vercel' || true
+          git push
