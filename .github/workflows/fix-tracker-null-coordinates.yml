@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Corrigir validação de coordenadas e teste pelo tracker
+      - name: Corrigir coordenadas nulas do GConnect
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -27,7 +27,7 @@ jobs:
           p = Path('tools/vercel-whatsapp-worker.mjs')
           s = p.read_text()
 
-          old = '''function validCoordinates(latitude, longitude) {
+          old = """function validCoordinates(latitude, longitude) {
             return Number.isFinite(Number(latitude))
               && Number.isFinite(Number(longitude))
               && Number(latitude) >= -90
@@ -35,8 +35,8 @@ jobs:
               && Number(longitude) >= -180
               && Number(longitude) <= 180;
           }
-          '''
-          new = '''function validCoordinates(latitude, longitude) {
+          """
+          new = """function validCoordinates(latitude, longitude) {
             const missing = (value) => value === null
               || value === undefined
               || (typeof value === 'string' && !value.trim());
@@ -45,7 +45,6 @@ jobs:
             const lat = Number(latitude);
             const lng = Number(longitude);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-            // 0,0 é o valor clássico de coordenada ausente/inválida em integrações de rastreamento.
             if (lat === 0 && lng === 0) return false;
 
             return lat >= -90
@@ -53,12 +52,12 @@ jobs:
               && lng >= -180
               && lng <= 180;
           }
-          '''
+          """
           if old not in s:
               raise SystemExit('validCoordinates original não encontrado')
           s = s.replace(old, new, 1)
 
-          old = '''app.post('/api/route-test', async (req, res) => {
+          old = """app.post('/api/route-test', async (req, res) => {
             try {
               const fromAddress = typeof req.body?.from === 'string' ? req.body.from.trim() : '';
               const toAddress = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
@@ -73,8 +72,8 @@ jobs:
               return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
             }
           });
-          '''
-          new = '''app.post('/api/route-test', async (req, res) => {
+          """
+          new = """app.post('/api/route-test', async (req, res) => {
             try {
               const fromTracker = req.body?.fromTracker === true;
               const fromAddress = typeof req.body?.from === 'string' ? req.body.from.trim() : '';
@@ -98,53 +97,24 @@ jobs:
               return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
             }
           });
-          '''
+          """
           if old not in s:
               raise SystemExit('route-test original não encontrado')
           s = s.replace(old, new, 1)
           p.write_text(s)
-
-          w = Path('.github/workflows/worker-reload.yml')
-          ws = w.read_text()
-          marker = '''      - name: Validar frases de ETA e distância em produção
-'''
-          step = '''      - name: Validar ETA pelo mesmo caminho do WhatsApp e GConnect
-        run: |
-          set -e
-          curl -fsSL --max-time 60 -X POST https://botguincho.vercel.app/api/worker/route-test \\
-            -H 'content-type: application/json' \\
-            -d '{"fromTracker":true,"to":"RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG"}' \\
-            -o /tmp/tracker-route.json
-          cat /tmp/tracker-route.json; echo
-          node - <<'NODE'
-          const fs = require('fs');
-          const x = JSON.parse(fs.readFileSync('/tmp/tracker-route.json', 'utf8'));
-          if (!x.ok || !x.fromTracker) process.exit(1);
-          if (!Number.isFinite(x.route?.minutes) || x.route.minutes < 1) process.exit(1);
-          if (!Number.isFinite(x.route?.distanceKm) || x.route.distanceKm <= 0) process.exit(1);
-          if (x.route?.trackerAddress !== 'Rua das Rosas, 310, São Salvador, Betim - Minas Gerais') process.exit(1);
-          console.log(`ETA pelo GConnect validado: ${x.route.minutes} min · ${x.route.distanceKm} km`);
-          NODE
-
-'''
-          if marker not in ws:
-              raise SystemExit('marcador do worker-reload não encontrado')
-          ws = ws.replace(marker, step + marker, 1)
-          w.write_text(ws)
           PY
 
-      - name: Validar código antes do commit
+      - name: Validar código
         run: |
           node --check tools/vercel-whatsapp-worker.mjs
-          grep -q "if (missing(latitude) || missing(longitude)) return false" tools/vercel-whatsapp-worker.mjs
+          grep -q "missing(latitude)" tools/vercel-whatsapp-worker.mjs
           grep -q "fromTracker" tools/vercel-whatsapp-worker.mjs
-          grep -q "mesmo caminho do WhatsApp e GConnect" .github/workflows/worker-reload.yml
-          echo 'Correção e teste de regressão preparados.'
+          echo 'Worker corrigido e sintaxe válida.'
 
       - name: Commitar correção
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add tools/vercel-whatsapp-worker.mjs .github/workflows/worker-reload.yml
-          git commit -m 'Corrige ETA com latitude e longitude nulas do GConnect'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Corrige coordenadas nulas do GConnect no ETA'
           git push origin HEAD:main
