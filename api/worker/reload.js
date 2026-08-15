@@ -79,39 +79,34 @@ async function launchWorker(sandbox, credential) {
 }
 
 async function syncFiles(sandbox, sourceRef) {
-  const files = [
-    ['tools/vercel-whatsapp-worker.mjs', `${RAW_ROOT}/${sourceRef}/tools/vercel-whatsapp-worker.mjs`],
-  ];
-  const script = `
-    const fs = require('fs');
-    const path = require('path');
-    const files = ${JSON.stringify(files)};
-    (async () => {
-      const states = [];
-      for (const [relative, url] of files) {
-        const target = '/vercel/sandbox/' + relative;
-        const response = await fetch(url, {
-          cache: 'no-store',
-          headers: { 'cache-control': 'no-cache' },
-        });
-        if (!response.ok) throw new Error(relative + ' download HTTP ' + response.status + ' from ' + url);
-        const next = await response.text();
-        const current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        if (current !== next) {
-          fs.writeFileSync(target + '.tmp', next);
-          fs.renameSync(target + '.tmp', target);
-          states.push(relative + ':updated');
-        } else states.push(relative + ':same');
-      }
-      process.stdout.write(states.join(','));
-    })().catch((e) => { console.error(e); process.exit(1); });
-  `;
-  const result = await sandbox.runCommand({ cmd: 'node', args: ['-e', script], signal: AbortSignal.timeout(30000) });
+  const relative = 'tools/vercel-whatsapp-worker.mjs';
+  const url = `${RAW_ROOT}/${sourceRef}/${relative}`;
+  const script = [
+    'set -euo pipefail',
+    `TARGET='/vercel/sandbox/${relative}'`,
+    'TMP="${TARGET}.tmp.$$"',
+    'trap \'rm -f "$TMP"\' EXIT',
+    'mkdir -p "$(dirname "$TARGET")"',
+    `curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' '${url}' -o "$TMP"`,
+    'if [ -f "$TARGET" ] && cmp -s "$TARGET" "$TMP"; then',
+    `  echo '${relative}:same'`,
+    'else',
+    '  mv "$TMP" "$TARGET"',
+    `  echo '${relative}:updated'`,
+    'fi',
+  ].join('\n');
+
+  const result = await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', script],
+    signal: AbortSignal.timeout(45000),
+  });
   if (result.exitCode !== 0) {
     let stderr = '';
+    let stdout = '';
     try { stderr = await result.stderr(); } catch {}
-    throw new Error(`Falha ao atualizar arquivos do worker: ${stderr || result.exitCode}`);
+    try { stdout = await result.stdout(); } catch {}
+    throw new Error(`Falha ao atualizar arquivos do worker: ${stderr || stdout || result.exitCode}`);
   }
   return commandOutput(result);
 }
