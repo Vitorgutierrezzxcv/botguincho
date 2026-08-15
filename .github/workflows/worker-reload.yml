@@ -119,6 +119,28 @@ jobs:
           console.log(`ETA validado: ${x.route.minutes} min · ${x.route.distanceKm} km`);
           NODE
 
+      - name: Validar ETA pelo mesmo caminho do WhatsApp e GConnect
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 60 -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"fromTracker":true,"to":"RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG"}' \
+            -o /tmp/tracker-route.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/route-test)
+          echo "HTTP $CODE"
+          cat /tmp/tracker-route.json
+          echo
+          test "$CODE" = "200"
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/tracker-route.json', 'utf8'));
+          if (!x.ok || !x.fromTracker) process.exit(1);
+          if (!Number.isFinite(x.route?.minutes) || x.route.minutes < 1) process.exit(1);
+          if (!Number.isFinite(x.route?.distanceKm) || x.route.distanceKm <= 0) process.exit(1);
+          if (x.route?.trackerAddress !== 'Rua das Rosas, 310, São Salvador, Betim - Minas Gerais') process.exit(1);
+          console.log(`ETA via GConnect: ${x.route.minutes} min · ${x.route.distanceKm} km`);
+          NODE
+
       - name: Validar frases de ETA e distância em produção
         run: |
           set -e
