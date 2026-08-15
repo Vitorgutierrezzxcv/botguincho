@@ -1,0 +1,42 @@
+name: Connect Management Automations Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/connect-management-automations-once.yml']
+permissions:
+  contents: write
+jobs:
+  connect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply automation patch
+        run: |
+          python3 tools/connect_management_automations_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+      - name: Commit worker
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Conecta chamados do WhatsApp ao financeiro' || true
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Reload worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e '.ok==true and .whatsappStatus=="pronto" and .workerProcessCount==1' /tmp/reload.json >/dev/null
+      - name: Validate management remains available
+        run: |
+          curl -fsSL https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt
+          jq -e '.ok==true and (.data.automations|type)=="array"' /tmp/mgmt >/dev/null
