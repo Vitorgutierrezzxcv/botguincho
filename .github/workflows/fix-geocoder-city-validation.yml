@@ -1,0 +1,77 @@
+name: Fix Geocoder City Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-geocoder-city-validation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply geocoder validation patch
+        run: |
+          python3 tools/fix_geocoder_validation_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Valida cidade e UF antes de aceitar coordenadas'
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Reload worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e --arg ref "$SOURCE_REF" '.ok == true and .sourceRef == $ref and .whatsappStatus == "pronto" and .workerProcessCount == 1' /tmp/reload.json >/dev/null
+
+      - name: Validate exact routes
+        run: |
+          set -e
+          test_route() {
+            LABEL="$1"
+            MESSAGE="$2"
+            MAX="$3"
+            BODY=$(jq -nc --arg message "$MESSAGE" '{fromTracker:true,message:$message}')
+            CODE=$(curl -sS -L --max-time 120 -X POST -H 'Content-Type: application/json' --data "$BODY" -o /tmp/route.json -w '%{http_code}' https://botguincho.vercel.app/api/worker/route-test)
+            echo "=== $LABEL === HTTP $CODE"
+            cat /tmp/route.json; echo
+            test "$CODE" = "200"
+            jq -e '.ok == true and (.route.minutes|numbers) > 0 and (.route.distanceKm|numbers) > 0' /tmp/route.json >/dev/null
+            MIN=$(jq -r '.route.minutes' /tmp/route.json)
+            test "$MIN" -lt "$MAX"
+          }
+
+          test_route 'JK Betim' 'Qual tempo de distância? Avenida Juscelino Kubitschek, 229, Centro, Betim, Minas Gerais' 90
+          test_route 'Inspetor Jaime Betim' 'Qual tempo de distância? Rua inspetor Jaime caldeira, brasileia, Betim Minas Gerais' 90
+          test_route 'Mitu Icaivera' 'Qual tempo de distância? Rua Mitu, número 15, Icaivera Betim, Minas Gerais Brasil' 90
+
+          BODY=$(jq -nc --arg message 'Qual previsão de chegada? Avenida Paulista, 1000, Bela Vista, São Paulo - SP' '{fromTracker:true,message:$message}')
+          curl -fsSL --max-time 120 -X POST -H 'Content-Type: application/json' --data "$BODY" https://botguincho.vercel.app/api/worker/route-test -o /tmp/sp.json
+          cat /tmp/sp.json; echo
+          jq -e '.ok == true and (.route.minutes|numbers) > 300' /tmp/sp.json >/dev/null
+
+          curl -fsSL --max-time 120 -X POST -H 'Content-Type: application/json' \
+            --data '{"fromTracker":true,"toLatitude":-19.9705,"toLongitude":-44.1982}' \
+            https://botguincho.vercel.app/api/worker/route-test -o /tmp/coords.json
+          cat /tmp/coords.json; echo
+          jq -e '.ok == true and (.route.minutes|numbers) > 0' /tmp/coords.json >/dev/null
