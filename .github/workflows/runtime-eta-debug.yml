@@ -1,0 +1,28 @@
+name: Runtime ETA Debug
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/runtime-eta-debug.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Capturar atividade atual
+        run: |
+          set -e
+          echo '===== ACTIVITY ====='
+          curl -fsSL --max-time 30 https://botguincho.vercel.app/api/worker/activity | jq .
+          echo '===== STATUS ====='
+          curl -fsSL --max-time 30 https://botguincho.vercel.app/api/worker/status | jq .
+          echo '===== ROUTE SAME ADDRESSES ====='
+          curl -fsSL --max-time 60 -X POST https://botguincho.vercel.app/api/worker/route-test \
+            -H 'content-type: application/json' \
+            -d '{"from":"Rua das Rosas, 310, São Salvador, Betim - Minas Gerais","to":"RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG"}' | jq .
