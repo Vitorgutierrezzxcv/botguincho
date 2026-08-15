@@ -1,0 +1,28 @@
+name: Debug New Dispatch Address
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-new-address.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Testar nova origem a partir do GConnect
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 60 -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"fromTracker":true,"to":"R. DOIS, 161 - TROPICAL - CONTAGEM - MG"}' \
+            -o /tmp/result.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/route-test)
+          echo "HTTP $CODE"
+          cat /tmp/result.json
+          echo
