@@ -82,7 +82,6 @@ async function launchWorker(sandbox, credential) {
 async function syncFiles(sandbox) {
   const files = [
     ['tools/vercel-whatsapp-worker.mjs', `${RAW_BASE}/tools/vercel-whatsapp-worker.mjs`],
-    ['tools/getrak-webservice.mjs', `${RAW_BASE}/tools/getrak-webservice.mjs`],
   ];
   const script = `
     const fs = require('fs');
@@ -139,8 +138,6 @@ export default async function handler(req, res) {
     const sourceState = await syncFiles(sandbox);
     const patchState = await applyWwebjsPatch(sandbox);
 
-    // Mata o worker antigo e qualquer navegador que ainda esteja segurando o
-    // perfil da sessão. O padrão com [c] evita que o pkill mate o próprio shell.
     await sandbox.runCommand({
       cmd: 'bash',
       args: ['-lc', [
