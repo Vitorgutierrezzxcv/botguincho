@@ -1,0 +1,104 @@
+name: Fix Dispatch Address Labels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-dispatch-address-labels.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ampliar parser de origem e destino
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+          old = r'''function extractLabeledField(text = '', label = '') {
+            const lines = String(text).replace(/\r/g, '').split('\n');
+            const target = normalizeForIntent(label);
+            for (const line of lines) {
+              const normalized = normalizeForIntent(line);
+              const match = normalized.match(new RegExp(`^${target}\\s*[:\\-]\\s*(.+)$`));
+              if (!match) continue;
+              const rawSeparator = line.search(/[:\-]/);
+              if (rawSeparator >= 0) return line.slice(rawSeparator + 1).trim();
+            }
+            return null;
+          }
+          '''
+          new = r'''function extractLabeledField(text = '', label = '') {
+            const lines = String(text).replace(/\r/g, '').split('\n');
+            const target = normalizeForIntent(label);
+            const aliases = target === 'origem'
+              ? ['origem', 'endereco de origem', 'endereco origem', 'local de origem', 'local origem', 'localizacao de origem', 'localizacao origem']
+              : target === 'destino'
+                ? ['destino', 'endereco de destino', 'endereco destino', 'local de destino', 'local destino', 'localizacao de destino', 'localizacao destino']
+                : [target];
+            const escapedAliases = aliases.map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const pattern = new RegExp(`^(?:${escapedAliases.join('|')})\\s*[:\\-]\\s*(.+)$`);
+
+            for (const line of lines) {
+              const normalized = normalizeForIntent(line);
+              if (!pattern.test(normalized)) continue;
+
+              const rawMatch = line.match(/^\s*[^:\-]+?\s*[:\-]\s*(.+)$/);
+              const value = rawMatch?.[1]?.trim();
+              if (value) return value;
+            }
+            return null;
+          }
+          '''
+          if old not in s:
+              raise SystemExit('extractLabeledField original não encontrado')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Validar parser com formatos antigo e novo
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node - <<'NODE'
+          const fs = require('fs');
+          const src = fs.readFileSync('tools/vercel-whatsapp-worker.mjs', 'utf8');
+          const start = src.indexOf('function normalizeForIntent');
+          const end = src.indexOf('function cleanAddressQuery');
+          if (start < 0 || end <= start) process.exit(1);
+          eval(src.slice(start, end));
+
+          const novo = `Veículo:\nFORD KA\n\nServiço:\nREBOQUE LEVE\n\nEndereço de Origem:\nR. DOIS, 161 - TROPICAL - CONTAGEM - MG\n\nEndereço de Destino:\nBENEVIDES CAETANO DA SILVEIRA, 583 - SAO JORGE - BETIM - MG\n\n50KM`;
+          const antigo = `Origem: RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG\nDestino: RUA LEOPOLDO GOMES, nº 758, POMPÉIA, BELO HORIZONTE - MG`;
+
+          const checks = [
+            [extractLabeledField(novo, 'Origem'), 'R. DOIS, 161 - TROPICAL - CONTAGEM - MG'],
+            [extractLabeledField(novo, 'Destino'), 'BENEVIDES CAETANO DA SILVEIRA, 583 - SAO JORGE - BETIM - MG'],
+            [extractLabeledField(antigo, 'Origem'), 'RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG'],
+            [extractLabeledField(antigo, 'Destino'), 'RUA LEOPOLDO GOMES, nº 758, POMPÉIA, BELO HORIZONTE - MG'],
+          ];
+          for (const [actual, expected] of checks) {
+            if (actual !== expected) {
+              console.error({ actual, expected });
+              process.exit(1);
+            }
+          }
+          console.log('Parser validado nos formatos antigo e novo.');
+          NODE
+
+      - name: Commitar correção
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Aceita Endereço de Origem e Destino nos acionamentos'
+          git push origin HEAD:main
