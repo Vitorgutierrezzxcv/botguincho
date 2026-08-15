@@ -1,0 +1,19 @@
+name: Publish New Index Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-new-index-once.yml']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp index.html public/index.html
+      - run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/index.html
+          git commit -m 'Publica nova central PWA como tela principal' || true
+          git push
