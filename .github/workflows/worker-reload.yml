@@ -61,7 +61,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          CODE=$(curl -sS -L --max-time 120 -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -o /tmp/reload.json -w '%{http_code}' https://botguincho.vercel.app/api/worker/reload)
+          CODE=$(curl -sS -L --max-time 120 \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $GITHUB_SHA" \
+            -H "Content-Type: application/json" \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
           echo "HTTP $CODE"
           cat /tmp/reload.json
           echo
@@ -71,8 +77,9 @@ jobs:
           const x = JSON.parse(fs.readFileSync('/tmp/reload.json', 'utf8'));
           if (!x.ok) process.exit(1);
           if (x.whatsappStatus !== 'pronto') process.exit(1);
+          if (x.sourceRef !== process.env.GITHUB_SHA) process.exit(1);
           if (!Number.isFinite(x.groupsFound) || x.groupsFound < 1) process.exit(1);
-          console.log(`WhatsApp pronto; ${x.groupsFound} grupo(s); sessão preservada=${x.sessionPreserved}`);
+          console.log(`WhatsApp pronto; sourceRef=${x.sourceRef}; ${x.groupsFound} grupo(s); sessão preservada=${x.sessionPreserved}`);
           NODE
 
       - name: Validar grupos pela API pública
@@ -111,6 +118,22 @@ jobs:
           if (!Number.isFinite(x.route?.distanceKm) || x.route.distanceKm <= 0) process.exit(1);
           console.log(`ETA validado: ${x.route.minutes} min · ${x.route.distanceKm} km`);
           NODE
+
+      - name: Validar frases de ETA e distância em produção
+        run: |
+          set -e
+          for TEXT in 'Qual a distância?' 'Temp até chegar no cliente, qual seria?'; do
+            curl -fsSL --max-time 45 -X POST https://botguincho.vercel.app/api/worker/ai-test \
+              -H 'content-type: application/json' \
+              --data "$(jq -nc --arg text "$TEXT" '{text:$text}')" -o /tmp/intent.json
+            echo "$TEXT"
+            cat /tmp/intent.json; echo
+            node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/intent.json', 'utf8'));
+          if (!x.ok || x.ignored === true) process.exit(1);
+          NODE
+          done
 
       - name: Validar GConnect Android sem alterar leitura real
         run: |
