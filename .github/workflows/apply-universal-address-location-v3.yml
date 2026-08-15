@@ -1,0 +1,44 @@
+name: Apply Universal Address Location V3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-universal-address-location-v3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Aplicar patch universal
+        run: node tools/patch-universal-address-location.mjs
+
+      - name: Validar worker
+        run: |
+          set -e
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "whatsapp-location" tools/vercel-whatsapp-worker.mjs
+          grep -q "whatsapp-quoted-location" tools/vercel-whatsapp-worker.mjs
+          grep -q "lastSharedCoordinates" tools/vercel-whatsapp-worker.mjs
+          grep -q "BRAZIL_UFS" tools/vercel-whatsapp-worker.mjs
+          grep -q "google-maps-url" tools/vercel-whatsapp-worker.mjs
+          grep -q "viacep-direct+nominatim" tools/vercel-whatsapp-worker.mjs
+          grep -q "toCoordinates" tools/vercel-whatsapp-worker.mjs
+          echo "Worker universal: sintaxe e recursos OK"
+
+      - name: Commitar worker
+        run: |
+          set -e
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Generaliza enderecos e localizacao do WhatsApp'
+          git push origin HEAD:main
