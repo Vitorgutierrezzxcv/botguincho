@@ -26,6 +26,7 @@ const trackerReadingFile = path.join(clientDir, 'gconnect-reading.json');
 const trackerPairFile = path.join(clientDir, 'gconnect-pair-code.txt');
 const dispatchStateFile = path.join(clientDir, 'dispatch-state.json');
 const geocodeCacheFile = path.join(clientDir, 'geocode-cache.json');
+const managementFile = path.join(clientDir, 'management.json');
 
 let aiCredential = process.env.OPENAI_API_KEY ?? '';
 let waClient = null;
@@ -101,6 +102,87 @@ async function saveSettings(patch) {
   const next = { ...(await getSettings()), ...patch };
   await writeJson(settingsFile, next);
   return next;
+}
+
+const DEFAULT_MANAGEMENT = {
+  company: { name: 'Central Guincho', document: '', phone: '', email: '' },
+  calls: [],
+  clients: [],
+  finance: [],
+  fleet: [{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: '', notes: '' }],
+  automations: [
+    { id: 'auto-confirm', name: 'Confirmar acionamento automaticamente', enabled: true, trigger: 'dispatch', action: 'confirm_eta' },
+    { id: 'auto-finance', name: 'Criar receita ao concluir chamado', enabled: true, trigger: 'call_completed', action: 'create_revenue' },
+    { id: 'auto-overdue', name: 'Destacar recebimentos vencidos', enabled: true, trigger: 'daily', action: 'flag_overdue' }
+  ],
+  updatedAt: null,
+};
+
+function normalizeManagement(data = {}) {
+  return {
+    company: { ...DEFAULT_MANAGEMENT.company, ...(data.company || {}) },
+    calls: Array.isArray(data.calls) ? data.calls : [],
+    clients: Array.isArray(data.clients) ? data.clients : [],
+    finance: Array.isArray(data.finance) ? data.finance : [],
+    fleet: Array.isArray(data.fleet) ? data.fleet : DEFAULT_MANAGEMENT.fleet,
+    automations: Array.isArray(data.automations) ? data.automations : DEFAULT_MANAGEMENT.automations,
+    updatedAt: data.updatedAt || null,
+  };
+}
+
+async function getManagement() {
+  return normalizeManagement(await readJson(managementFile, DEFAULT_MANAGEMENT));
+}
+
+async function saveManagement(next) {
+  const normalized = normalizeManagement({ ...next, updatedAt: new Date().toISOString() });
+  await writeJson(managementFile, normalized);
+  return normalized;
+}
+
+function cleanManagementItem(value = {}) {
+  const out = {};
+  for (const [key, raw] of Object.entries(value || {})) {
+    if (typeof raw === 'string') out[key] = raw.trim().slice(0, 2000);
+    else if (typeof raw === 'number' && Number.isFinite(raw)) out[key] = raw;
+    else if (typeof raw === 'boolean' || raw === null) out[key] = raw;
+  }
+  if (!out.id) out.id = crypto.randomUUID();
+  if (!out.createdAt) out.createdAt = new Date().toISOString();
+  out.updatedAt = new Date().toISOString();
+  return out;
+}
+
+async function applyManagementAction(body = {}) {
+  const state = await getManagement();
+  const action = String(body.action || 'get');
+  const collection = String(body.collection || '');
+  const allowed = new Set(['calls','clients','finance','fleet','automations']);
+
+  if (action === 'replace_company') {
+    state.company = { ...state.company, ...cleanManagementItem(body.item || {}) };
+    delete state.company.id; delete state.company.createdAt; delete state.company.updatedAt;
+    return saveManagement(state);
+  }
+  if (!allowed.has(collection)) throw new Error('collection_invalid');
+  if (action === 'upsert') {
+    const item = cleanManagementItem(body.item || {});
+    const idx = state[collection].findIndex((x) => x.id === item.id);
+    if (idx >= 0) state[collection][idx] = { ...state[collection][idx], ...item };
+    else state[collection].unshift(item);
+    return saveManagement(state);
+  }
+  if (action === 'delete') {
+    const id = String(body.id || '');
+    state[collection] = state[collection].filter((x) => x.id !== id);
+    return saveManagement(state);
+  }
+  if (action === 'toggle_automation') {
+    const id = String(body.id || '');
+    state.automations = state.automations.map((x) => x.id === id ? { ...x, enabled: body.enabled !== false, updatedAt: new Date().toISOString() } : x);
+    return saveManagement(state);
+  }
+  throw new Error('action_invalid');
 }
 
 async function getPairCode() {
@@ -1627,6 +1709,25 @@ app.post('/api/route-test', async (req, res) => {
     return res.json({ ok: true, from, to, route });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get('/api/management', async (_req, res) => {
+  try {
+    return res.json({ ok: true, data: await getManagement() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/management', async (req, res) => {
+  try {
+    const data = await applyManagementAction(req.body || {});
+    logEvent('management', `Gestão atualizada: ${String(req.body?.action || 'update')} ${String(req.body?.collection || '')}`.trim());
+    return res.json({ ok: true, data });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return res.status(message.includes('invalid') ? 400 : 500).json({ ok: false, error: message });
   }
 });
 
