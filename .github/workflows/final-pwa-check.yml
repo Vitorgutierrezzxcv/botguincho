@@ -1,0 +1,34 @@
+name: Final PWA Check
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/final-pwa-check.yml']
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait deploy
+        run: sleep 20
+      - name: Check production files
+        run: |
+          set -e
+          for URL in / /app.js /app.css /manifest.webmanifest /sw.js /icon.svg /api/worker/management /api/worker/status; do
+            CODE=$(curl -sSL --max-time 90 -o /tmp/out -w '%{http_code}' "https://botguincho.vercel.app$URL")
+            echo "$URL -> $CODE"
+            test "$CODE" = "200"
+          done
+      - name: Validate content
+        run: |
+          curl -fsSL https://botguincho.vercel.app/ -o /tmp/index
+          curl -fsSL https://botguincho.vercel.app/app.js -o /tmp/app.js
+          curl -fsSL https://botguincho.vercel.app/manifest.webmanifest -o /tmp/manifest
+          curl -fsSL https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt
+          curl -fsSL https://botguincho.vercel.app/api/worker/status -o /tmp/status
+          grep -q 'manifest.webmanifest' /tmp/index
+          grep -q 'Financeiro' /tmp/index
+          node --check /tmp/app.js
+          jq -e '.display=="standalone" and .name=="Bot Guincho"' /tmp/manifest >/dev/null
+          jq -e '.ok==true and (.data.calls|type)=="array" and (.data.clients|type)=="array" and (.data.finance|type)=="array" and (.data.fleet|type)=="array" and (.data.automations|type)=="array"' /tmp/mgmt >/dev/null
+          jq -e '.whatsapp.status=="pronto" and .tracker.connected==true' /tmp/status >/dev/null
+          echo 'FINAL_PWA_OK'
