@@ -1,0 +1,52 @@
+name: Expand Bot Guincho Management Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/expand-management-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  expand:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply management backend
+        run: |
+          python3 tools/expand_management_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+
+      - name: Commit backend
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Adiciona gestão persistente, financeiro e automações' || true
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Reload persistent worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e '.ok == true and .whatsappStatus == "pronto" and .workerProcessCount == 1' /tmp/reload.json >/dev/null
+
+      - name: Validate management API
+        run: |
+          curl -fsSL --max-time 60 https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt.json
+          cat /tmp/mgmt.json; echo
+          jq -e '.ok == true and (.data.calls|arrays) and (.data.finance|arrays) and (.data.clients|arrays) and (.data.fleet|arrays) and (.data.automations|arrays)' /tmp/mgmt.json >/dev/null
