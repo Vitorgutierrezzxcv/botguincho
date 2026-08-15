@@ -1,5 +1,6 @@
 import { proxyWorker } from '../../lib/sandbox-runtime.js';
 
+// Endpoint de diagnóstico do ETA real entre dois endereços.
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
   return proxyWorker(req, res, '/api/route-test');
