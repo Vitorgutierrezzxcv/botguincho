@@ -811,7 +811,6 @@ async function photonLookup(query) {
     const url = new URL('https://photon.komoot.io/api/');
     url.searchParams.set('q', query);
     url.searchParams.set('limit', '5');
-    url.searchParams.set('lang', 'pt');
     const response = await fetch(url, {
       headers: { 'user-agent': 'BotGuincho/1.3 (+https://botguincho.vercel.app/)' },
       signal: AbortSignal.timeout(10000),
@@ -1167,13 +1166,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
   }
 
   if (eta) {
-    await setDispatchState(msg.from, {
-    lastEta: eta,
-    lastEtaAt: new Date().toISOString(),
-    ...(target.source === 'inline-address' || target.source === 'quoted-address'
-      ? { originAddress: target.targetAddress, originCoordinates: null, originUpdatedAt: new Date().toISOString() }
-      : {}),
-  });
+    await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
     logEvent('route', `${groupName}: ETA ${eta.minutes} min${eta.distanceKm ? ` · ${eta.distanceKm} km` : ''}.`, { groupId: msg.from });
   }
 
@@ -1325,7 +1318,13 @@ async function handleDistanceQuestion(msg, groupName, readableText, quotedText =
     return;
   }
 
-  await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
+  await setDispatchState(msg.from, {
+    lastEta: eta,
+    lastEtaAt: new Date().toISOString(),
+    ...(target.source === 'inline-address' || target.source === 'quoted-address'
+      ? { originAddress: target.targetAddress, originCoordinates: null, originUpdatedAt: new Date().toISOString() }
+      : {}),
+  });
   const distance = Number.isFinite(Number(eta.distanceKm)) ? `${eta.distanceKm} km` : 'indisponível';
   const reply = `Distância até o cliente: ${distance}.
 Previsão de chegada: ${eta.minutes} min.`;
