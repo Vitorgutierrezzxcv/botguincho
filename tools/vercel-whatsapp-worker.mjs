@@ -542,7 +542,8 @@ async function saveGeocodeCache(cache) {
 }
 
 function geocodeCacheKey(address) {
-  return normalizeForIntent(cleanAddressQuery(address));
+  // v3 invalida coordenadas antigas que possam ter sido salvas para uma cidade homonima.
+  return `v3:${normalizeForIntent(cleanAddressQuery(address))}`;
 }
 
 async function scheduleNominatim(task) {
@@ -643,20 +644,48 @@ function uniqueQueries(values) {
   });
 }
 
-async function nominatimLookup(params) {
+function geocoderResultMatchesExpected(found, expected = null) {
+  if (!expected) return true;
+  const expectedState = normalizeBrazilState(expected.state || '');
+  const expectedCities = uniqueQueries([
+    ...(Array.isArray(expected.cities) ? expected.cities : []),
+    expected.city || '',
+  ]).map(normalizeForIntent).filter(Boolean);
+
+  const actualState = normalizeBrazilState(found?.state || '');
+  const actualCity = normalizeForIntent(found?.city || '');
+  const display = normalizeForIntent(found?.displayName || '');
+
+  if (expectedState) {
+    if (actualState && actualState !== expectedState) return false;
+    if (!actualState) return false;
+  }
+
+  if (expectedCities.length) {
+    const cityMatches = expectedCities.some((expectedCity) => {
+      if (actualCity && (actualCity === expectedCity || actualCity.includes(expectedCity) || expectedCity.includes(actualCity))) return true;
+      return display.includes(expectedCity);
+    });
+    if (!cityMatches) return false;
+  }
+
+  return true;
+}
+
+async function nominatimLookup(params, expected = null) {
   return scheduleNominatim(async () => {
     const url = new URL('https://nominatim.openstreetmap.org/search');
     for (const [key, value] of Object.entries(params)) {
       if (value) url.searchParams.set(key, String(value));
     }
     url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('limit', '1');
+    url.searchParams.set('limit', expected ? '5' : '1');
     url.searchParams.set('countrycodes', 'br');
     url.searchParams.set('addressdetails', '1');
 
     const response = await fetch(url, {
       headers: {
-        'user-agent': 'BotGuincho/1.1 (operacao-guincho; https://botguincho.vercel.app/)',
+        'user-agent': 'BotGuincho/1.4 (operacao-guincho; https://botguincho.vercel.app/)',
         referer: 'https://botguincho.vercel.app/',
         'accept-language': 'pt-BR,pt;q=0.9',
       },
@@ -665,14 +694,22 @@ async function nominatimLookup(params) {
 
     if (!response.ok) throw new Error(`Geocodificação HTTP ${response.status}`);
     const results = await response.json();
-    const first = Array.isArray(results) ? results[0] : null;
-    if (!first || !validCoordinates(first.lat, first.lon)) return null;
-    return {
-      latitude: Number(first.lat),
-      longitude: Number(first.lon),
-      displayName: first.display_name || '',
-      postcode: first.address?.postcode || null,
-    };
+    if (!Array.isArray(results)) return null;
+
+    for (const item of results) {
+      if (!item || !validCoordinates(item.lat, item.lon)) continue;
+      const address = item.address || {};
+      const found = {
+        latitude: Number(item.lat),
+        longitude: Number(item.lon),
+        displayName: item.display_name || '',
+        postcode: address.postcode || null,
+        city: address.city || address.town || address.municipality || address.village || address.county || '',
+        state: address.state || String(address['ISO3166-2-lvl4'] || '').split('-').pop() || '',
+      };
+      if (geocoderResultMatchesExpected(found, expected)) return found;
+    }
+    return null;
   });
 }
 
@@ -754,6 +791,7 @@ function normalizeAddressForLookup(value = '') {
   query = cleanAddressQuery(query)
     .replace(/\b(?:n[uú]mero|numero|nro\.?|num\.?|n[º°])\s*[:#-]?\s*(\d{1,6}[A-Za-z]?)/gi, '$1')
     .replace(/\bbrasil\b(?:\s*,?\s*\bbrasil\b)+/gi, 'Brasil')
+    .replace(/(?:,\s*)?\bBrasil\b\s*$/i, '')
     .replace(/\s*,\s*/g, ', ')
     .replace(/,{2,}/g, ',')
     .replace(/\s+/g, ' ')
@@ -806,13 +844,13 @@ function buildLookupVariants(value = '') {
   return uniqueQueries(variants);
 }
 
-async function photonLookup(query) {
+async function photonLookup(query, expected = null) {
   try {
     const url = new URL('https://photon.komoot.io/api/');
     url.searchParams.set('q', query);
     url.searchParams.set('limit', '5');
     const response = await fetch(url, {
-      headers: { 'user-agent': 'BotGuincho/1.3 (+https://botguincho.vercel.app/)' },
+      headers: { 'user-agent': 'BotGuincho/1.4 (+https://botguincho.vercel.app/)' },
       signal: AbortSignal.timeout(10000),
     });
     if (!response.ok) return null;
@@ -821,14 +859,18 @@ async function photonLookup(query) {
     for (const feature of features) {
       const coords = feature?.geometry?.coordinates;
       if (!Array.isArray(coords) || coords.length < 2) continue;
-      const countryCode = String(feature?.properties?.countrycode || '').toUpperCase();
+      const properties = feature?.properties || {};
+      const countryCode = String(properties.countrycode || '').toUpperCase();
       if (countryCode && countryCode !== 'BR') continue;
       if (!validCoordinates(coords[1], coords[0])) continue;
-      return {
+      const found = {
         latitude: Number(coords[1]),
         longitude: Number(coords[0]),
-        displayName: [feature?.properties?.name, feature?.properties?.street, feature?.properties?.city, feature?.properties?.state].filter(Boolean).join(', '),
+        displayName: [properties.name, properties.street, properties.district, properties.city, properties.county, properties.state].filter(Boolean).join(', '),
+        city: properties.city || properties.town || properties.county || properties.district || '',
+        state: properties.state || '',
       };
+      if (geocoderResultMatchesExpected(found, expected)) return found;
     }
   } catch (error) {
     logEvent('warning', 'Photon geocoder falhou.', { error: String(error), query });
@@ -866,6 +908,13 @@ async function geocodeAddress(address) {
   }
 
   const parts = parseBrazilAddress(query);
+  const expectedLocation = {
+    state: parts.state || detectBrazilState(query),
+    cities: uniqueQueries([
+      parts.city,
+      ...looseAddressCandidates(query).map((candidate) => candidate.city),
+    ]),
+  };
 
   if (parts.cep) {
     const byCep = await lookupCep(parts.cep).catch((error) => {
@@ -879,7 +928,7 @@ async function geocodeAddress(address) {
         [byCep.cep, byCep.localidade, byCep.uf, 'Brasil'].filter(Boolean).join(', '),
       ]);
       for (const variant of cepVariants) {
-        const found = await nominatimLookup({ q: variant }).catch(() => null);
+        const found = await nominatimLookup({ q: variant }, { city: byCep.localidade, state: byCep.uf }).catch(() => null);
         if (found) return save(found, 'viacep-direct+nominatim');
       }
     }
@@ -892,7 +941,7 @@ async function geocodeAddress(address) {
       state: parts.state || undefined,
       postalcode: parts.cep || undefined,
       country: 'Brasil',
-    }).catch((error) => {
+    }, expectedLocation).catch((error) => {
       logEvent('warning', 'Nominatim estruturado falhou.', { error: String(error), query });
       return null;
     });
@@ -909,7 +958,7 @@ async function geocodeAddress(address) {
   ]);
 
   for (const variant of variants) {
-    const found = await nominatimLookup({ q: variant }).catch((error) => {
+    const found = await nominatimLookup({ q: variant }, expectedLocation).catch((error) => {
       logEvent('warning', 'Nominatim livre falhou.', { error: String(error), variant });
       return null;
     });
@@ -923,7 +972,7 @@ async function geocodeAddress(address) {
   if (cep?.cep) {
     const found = await nominatimLookup({
       q: [cep.logradouro || parts.street, parts.number, cep.bairro, `${cep.localidade} - ${cep.uf}`, cep.cep, 'Brasil'].filter(Boolean).join(', '),
-    }).catch(() => null);
+    }, { city: cep.localidade, state: cep.uf }).catch(() => null);
     if (found) return save(found, 'viacep-address+nominatim');
   }
 
@@ -931,12 +980,12 @@ async function geocodeAddress(address) {
     const cepItem = await findCepByAddress({ street: loose.street, number: loose.number, district: '', city: loose.city, state: loose.state }).catch(() => null);
     if (!cepItem?.cep) continue;
     const variant = [cepItem.logradouro || loose.street, loose.number, cepItem.bairro, `${cepItem.localidade} - ${cepItem.uf}`, cepItem.cep, 'Brasil'].filter(Boolean).join(', ');
-    const found = await nominatimLookup({ q: variant }).catch(() => null);
+    const found = await nominatimLookup({ q: variant }, { city: cepItem.localidade || loose.city, state: cepItem.uf || loose.state }).catch(() => null);
     if (found) return save(found, 'viacep-loose+nominatim');
   }
 
   for (const variant of buildLookupVariants(query)) {
-    const found = await photonLookup(variant);
+    const found = await photonLookup(variant, expectedLocation);
     if (found) return save(found, 'photon-fallback');
   }
 
