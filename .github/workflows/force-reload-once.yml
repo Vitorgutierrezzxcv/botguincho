@@ -16,7 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Atualizar worker persistente imediatamente
+      - name: Aguardar propagação do GitHub Raw
+        run: sleep 20
+
+      - name: Atualizar worker persistente
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -32,38 +35,59 @@ jobs:
           cat /tmp/reload.json
           echo
           test "$CODE" = "200"
-
           node - <<'NODE'
           const fs = require('fs');
           const x = JSON.parse(fs.readFileSync('/tmp/reload.json', 'utf8'));
-          if (!x.ok) process.exit(1);
-          if (x.whatsappStatus !== 'pronto') process.exit(1);
-          if (x.workerProcessCount !== 1) process.exit(1);
+          if (!x.ok || x.whatsappStatus !== 'pronto' || x.workerProcessCount !== 1) process.exit(1);
           if (!Number.isFinite(x.groupsFound) || x.groupsFound < 1) process.exit(1);
-          console.log(`Worker atualizado: WhatsApp=${x.whatsappStatus}; grupos=${x.groupsFound}; sessão preservada=${x.sessionPreserved}`);
+          console.log(`Worker atualizado: source=${x.sourceState}; WhatsApp=${x.whatsappStatus}; grupos=${x.groupsFound}`);
+          NODE
+
+      - name: Validar novas frases em produção
+        run: |
+          set -e
+          for TEXT in 'Qual a distância?' 'Temp até chegar no cliente, qual seria?'; do
+            curl -fsSL --max-time 45 -X POST https://botguincho.vercel.app/api/worker/ai-test \
+              -H 'content-type: application/json' \
+              --data "$(jq -nc --arg text "$TEXT" '{text:$text}')" \
+              -o /tmp/intent.json
+            echo "$TEXT"
+            cat /tmp/intent.json; echo
+            node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/intent.json', 'utf8'));
+          if (!x.ok || x.ignored === true) process.exit(1);
+          NODE
+          done
+
+      - name: Validar rota real
+        run: |
+          set -e
+          curl -fsSL --max-time 60 -X POST https://botguincho.vercel.app/api/worker/route-test \
+            -H 'content-type: application/json' \
+            -d '{"from":"Rua das Rosas, 310, São Salvador, Betim - Minas Gerais","to":"RUA DOUTOR CAMILO ANTÔNIO NOGUEIRA, nº 100, NOSSA SENHORA DA CONCEIÇÃO, BELO HORIZONTE - MG"}' \
+            -o /tmp/route.json
+          cat /tmp/route.json; echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/route.json', 'utf8'));
+          if (!x.ok || !Number.isFinite(x.route?.minutes) || !Number.isFinite(x.route?.distanceKm)) process.exit(1);
+          console.log(`Rota OK: ${x.route.minutes} min · ${x.route.distanceKm} km`);
           NODE
 
       - name: Conferir status e GConnect
         run: |
           set -e
-          curl -sS --fail-with-body https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
-          cat /tmp/status.json
-          echo
+          curl -fsSL https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json; echo
           node - <<'NODE'
           const fs = require('fs');
           const x = JSON.parse(fs.readFileSync('/tmp/status.json', 'utf8'));
           if (x.whatsapp?.status !== 'pronto') process.exit(1);
           if (!x.tracker?.connected) process.exit(1);
-          console.log(`Status OK; GConnect=${x.tracker.lastLocation?.address || 'online'}`);
+          if (x.tracker?.lastLocation?.plate !== 'GSW0H17') process.exit(1);
+          console.log(`Status final OK; GConnect=${x.tracker.lastLocation?.address}`);
           NODE
-
-      - name: Conferir inteligência operacional
-        run: |
-          set -e
-          curl -sS --fail-with-body -X POST https://botguincho.vercel.app/api/worker/ai-test \
-            -H 'content-type: application/json' \
-            -d '{"text":"A rua é estreita e precisa de um caminhão menor."}'
-          echo
 
       - name: Mostrar atividade recente do worker
         if: always()
