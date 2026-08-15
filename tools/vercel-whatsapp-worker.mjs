@@ -340,12 +340,12 @@ function asksAvailability(text = '') {
 
 function asksEta(text = '') {
   const value = normalizeForIntent(text);
-  return /(quanto tempo|qual (?:o )?tempo|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)/.test(value);
+  return /\b(quanto tempo|qual (?:o )?tempo|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)\b/.test(value);
 }
 
 function asksDistance(text = '') {
   const value = normalizeForIntent(text);
-  return /(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente))/.test(value);
+  return /\b(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente))\b/.test(value);
 }
 
 function asksTrackerLocation(text = '') {
