@@ -1,0 +1,157 @@
+name: Fix Quoted Address Priority
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-quoted-address-priority.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Corrigir endereco citado
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+
+          old = '''async function resolveRouteQuestionTarget(groupId, readableText) {
+            const inlineAddress = extractInlineRouteTarget(readableText);
+            let state = await getDispatchState(groupId);
+            const shared = inlineAddress ? null : await getRecentSharedLocation(groupId, state);
+            const originAt = new Date(state?.originUpdatedAt || state?.createdAt || 0).getTime();
+            const stateHasOrigin = Boolean(state?.originAddress || state?.originCoordinates);
+            const sharedIsNewer = shared && (!stateHasOrigin || !Number.isFinite(originAt) || shared.at >= originAt);
+
+            if (inlineAddress) {
+              state = await setDispatchState(groupId, {
+                originAddress: inlineAddress,
+                originCoordinates: null,
+                originUpdatedAt: new Date().toISOString(),
+              });
+            } else if (sharedIsNewer) {
+              state = await setDispatchState(groupId, {
+                originAddress: null,
+                originCoordinates: shared.coordinates,
+                originUpdatedAt: new Date(shared.at).toISOString(),
+              });
+            }
+
+            return {
+              state,
+              inlineAddress,
+              targetAddress: inlineAddress || state?.originAddress || null,
+              targetCoordinates: inlineAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || null),
+              source: inlineAddress ? 'inline-address' : sharedIsNewer ? shared.source : 'dispatch-state',
+            };
+          }'''
+
+          new = '''async function resolveRouteQuestionTarget(groupId, readableText, quotedText = '') {
+            const inlineAddress = extractInlineRouteTarget(readableText);
+            const quotedAddress = inlineAddress ? null : extractInlineRouteTarget(quotedText);
+            const explicitAddress = inlineAddress || quotedAddress || null;
+            let state = await getDispatchState(groupId);
+            const shared = explicitAddress ? null : await getRecentSharedLocation(groupId, state);
+            const originAt = new Date(state?.originUpdatedAt || state?.createdAt || 0).getTime();
+            const stateHasOrigin = Boolean(state?.originAddress || state?.originCoordinates);
+            const sharedIsNewer = shared && (!stateHasOrigin || !Number.isFinite(originAt) || shared.at >= originAt);
+
+            if (explicitAddress) {
+              state = await setDispatchState(groupId, {
+                originAddress: explicitAddress,
+                originCoordinates: null,
+                originUpdatedAt: new Date().toISOString(),
+              });
+            } else if (sharedIsNewer) {
+              state = await setDispatchState(groupId, {
+                originAddress: null,
+                originCoordinates: shared.coordinates,
+                originUpdatedAt: new Date(shared.at).toISOString(),
+              });
+            }
+
+            return {
+              state,
+              inlineAddress,
+              quotedAddress,
+              targetAddress: explicitAddress || state?.originAddress || null,
+              targetCoordinates: explicitAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || null),
+              source: inlineAddress
+                ? 'inline-address'
+                : quotedAddress
+                  ? 'quoted-address'
+                  : sharedIsNewer
+                    ? shared.source
+                    : 'dispatch-state',
+            };
+          }'''
+
+          if old not in s:
+              raise SystemExit('resolveRouteQuestionTarget alvo nao encontrado')
+          s = s.replace(old, new, 1)
+
+          s = s.replace(
+              'async function handleEtaQuestion(msg, groupName, readableText) {\n  const target = await resolveRouteQuestionTarget(msg.from, readableText);',
+              "async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') {\n  const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);",
+              1,
+          )
+          s = s.replace(
+              'async function handleDistanceQuestion(msg, groupName, readableText) {\n  const target = await resolveRouteQuestionTarget(msg.from, readableText);',
+              "async function handleDistanceQuestion(msg, groupName, readableText, quotedText = '') {\n  const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);",
+              1,
+          )
+          s = s.replace(
+              'await handleEtaQuestion(msg, groupName, readableText);',
+              'await handleEtaQuestion(msg, groupName, readableText, quotedText);',
+              1,
+          )
+          s = s.replace(
+              'await handleDistanceQuestion(msg, groupName, readableText);',
+              'await handleDistanceQuestion(msg, groupName, readableText, quotedText);',
+              1,
+          )
+
+          p.write_text(s)
+          PY
+
+      - name: Validar correcao
+        run: |
+          set -e
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "quoted-address" tools/vercel-whatsapp-worker.mjs
+          grep -q "resolveRouteQuestionTarget(msg.from, readableText, quotedText)" tools/vercel-whatsapp-worker.mjs
+          node - <<'NODE'
+          const fs = require('fs');
+          const src = fs.readFileSync('tools/vercel-whatsapp-worker.mjs','utf8');
+          const take = (a,b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)+a.length));
+          const code = [
+            take('function normalizeForIntent', 'function looksLikeDispatch'),
+            take('function cleanAddressQuery', 'async function getDispatchStates'),
+            take('const BRAZIL_STATE_BY_NAME', 'function uniqueQueries'),
+            take('function looksLikeAddressCandidate', 'async function handleEtaQuestion'),
+          ].join('\n');
+          eval(code);
+          const q = extractInlineRouteTarget('Qual tempo de distância?');
+          const quoted = extractInlineRouteTarget('Rua inspetor Jaime caldeira, brasileira, Betim Minas Gerais');
+          if (q !== null) throw new Error('pergunta pura virou endereco: ' + q);
+          if (quoted !== 'Rua inspetor Jaime caldeira, brasileira, Betim Minas Gerais') throw new Error('endereco citado nao reconhecido: ' + quoted);
+          console.log('QUOTED_ADDRESS_PARSER_OK');
+          NODE
+
+      - name: Commitar
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Usa endereco da mensagem citada na rota'
+          git push origin HEAD:main
