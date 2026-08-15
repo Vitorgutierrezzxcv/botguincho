@@ -9,6 +9,7 @@ on:
       - 'tools/install-gconnect-agent.sh'
       - 'api/worker/reload.js'
       - 'api/worker/tracker-bridge.js'
+      - 'api/worker/route-test.js'
       - '.github/workflows/worker-reload.yml'
   workflow_dispatch:
 
@@ -82,6 +83,33 @@ jobs:
           const x = JSON.parse(fs.readFileSync('/tmp/groups.json', 'utf8'));
           if (!Array.isArray(x.groups) || x.groups.length < 1) process.exit(1);
           console.log(`API pública: ${x.groups.length} grupo(s).`);
+          NODE
+
+      - name: Validar ETA real com os endereços do teste
+        run: |
+          set -e
+          cat >/tmp/route.json <<'JSON'
+          {
+            "from": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais",
+            "to": "Rua Doutor Camilo Antônio Nogueira, 100, Nossa Senhora da Conceição, Belo Horizonte - MG"
+          }
+          JSON
+          CODE=$(curl -sS -L --max-time 60 -X POST \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/route.json \
+            -o /tmp/route-result.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/route-test)
+          echo "HTTP $CODE"
+          cat /tmp/route-result.json
+          echo
+          test "$CODE" = "200"
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/route-result.json', 'utf8'));
+          if (!x.ok) process.exit(1);
+          if (!Number.isFinite(x.route?.minutes) || x.route.minutes < 1) process.exit(1);
+          if (!Number.isFinite(x.route?.distanceKm) || x.route.distanceKm <= 0) process.exit(1);
+          console.log(`ETA validado: ${x.route.minutes} min · ${x.route.distanceKm} km`);
           NODE
 
       - name: Validar bridge GConnect Android
