@@ -11,16 +11,35 @@ function normalizePlate(value) {
   return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+function resolveClientCredentials(config = {}) {
+  let clientId = clean(config.clientId);
+  let clientSecret = clean(config.clientSecret);
+  if (clientId && !clientSecret) {
+    let decoded = clientId;
+    if (!decoded.includes(':')) {
+      try { decoded = Buffer.from(clientId, 'base64').toString('utf8').trim(); } catch {}
+    }
+    if (decoded.includes(':')) {
+      const splitAt = decoded.indexOf(':');
+      clientId = decoded.slice(0, splitAt).trim();
+      clientSecret = decoded.slice(splitAt + 1).trim();
+    }
+  }
+  return { clientId, clientSecret };
+}
+
 function configKey(config, grantType) {
-  return [grantType, config.clientId, config.username].map(clean).join('|');
+  const { clientId } = resolveClientCredentials(config);
+  return [grantType, clientId, config.username].map(clean).join('|');
 }
 
 export function sanitizeTrackerConfig(config = {}) {
+  const { clientId, clientSecret } = resolveClientCredentials(config);
   return {
     provider: 'getrak-webservice',
-    configured: Boolean(clean(config.clientId) && clean(config.clientSecret) && clean(config.username) && clean(config.password)),
+    configured: Boolean(clientId && clientSecret && clean(config.username) && clean(config.password)),
     clientIdConfigured: Boolean(clean(config.clientId)),
-    clientSecretConfigured: Boolean(clean(config.clientSecret)),
+    clientSecretConfigured: Boolean(clientSecret),
     usernameConfigured: Boolean(clean(config.username)),
     passwordConfigured: Boolean(clean(config.password)),
     defaultVehicle: normalizePlate(config.defaultVehicle),
@@ -52,12 +71,11 @@ async function oauthToken(config, grantType = 'password') {
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
 
-  const clientId = clean(config.clientId);
-  const clientSecret = clean(config.clientSecret);
+  const { clientId, clientSecret } = resolveClientCredentials(config);
   const username = clean(config.username);
   const password = clean(config.password);
 
-  if (!clientId || !clientSecret) throw new Error('Informe o Client ID e o Client Secret da API Getrak.');
+  if (!clientId || !clientSecret) throw new Error('Informe a chave da API Getrak ou o Client ID e Client Secret.');
   if (grantType === 'password' && (!username || !password)) {
     throw new Error('Informe o usuário integrador e a senha do WebService Getrak.');
   }
