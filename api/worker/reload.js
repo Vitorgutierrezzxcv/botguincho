@@ -56,7 +56,7 @@ async function launchWorker(sandbox, credential) {
     cmd: 'bash',
     args: ['-lc', [
       'LOCK=/vercel/sandbox/.whatsapp-worker-lock',
-      'rm -rf "$LOCK"',
+      // Não remove o lock aqui: mkdir é o mutex entre reload e health-check.
       'mkdir "$LOCK" 2>/dev/null || exit 0',
       'echo $$ > "$LOCK/launcher-pid"',
       'rm -f /vercel/sandbox/worker.log',
@@ -150,6 +150,8 @@ export default async function handler(req, res) {
       signal: AbortSignal.timeout(10000),
     });
 
+    // Se um health-check vencer a corrida, ele adquire o mesmo lock. Se o reload
+    // vencer, o health-check sai sem criar uma segunda instância.
     await launchWorker(sandbox, credential);
 
     let status = null;
@@ -165,7 +167,33 @@ export default async function handler(req, res) {
     }
     if (!status) throw new Error('Worker reiniciado, mas ainda não respondeu ao status.');
 
-    const workers = await workerCount(sandbox);
+    let workers = await workerCount(sandbox);
+    if (workers > 1) {
+      // Recuperação defensiva caso uma instância duplicada anterior ainda exista.
+      await sandbox.runCommand({
+        cmd: 'bash',
+        args: ['-lc', [
+          "PIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+          '[ -z "$PIDS" ] || kill -9 $PIDS >/dev/null 2>&1 || true',
+          "pkill -9 -f 'session-[c]liente-teste' >/dev/null 2>&1 || true",
+          'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
+          'sleep 2',
+        ].join('\n')],
+        signal: AbortSignal.timeout(10000),
+      });
+      await launchWorker(sandbox, credential);
+      for (let i = 0; i < 60; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        try {
+          const response = await fetch(`${sandbox.domain(PORT)}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(3500) });
+          if (response.ok) {
+            status = await response.json();
+            if (['pronto', 'qr'].includes(status?.whatsapp?.status)) break;
+          }
+        } catch {}
+      }
+      workers = await workerCount(sandbox);
+    }
     if (workers !== 1) throw new Error(`Esperado exatamente 1 worker, encontrado ${workers}.`);
 
     let groups = [];
