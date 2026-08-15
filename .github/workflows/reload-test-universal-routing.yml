@@ -1,0 +1,120 @@
+name: Reload Test Universal Routing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/reload-test-universal-routing.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SOURCE_REF: 17a5c2dc7ba290f2506b8ce90cede4c19d7ee3bd
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar parser generico localmente
+        run: |
+          set -e
+          node - <<'NODE'
+          const fs = require('fs');
+          const src = fs.readFileSync('tools/vercel-whatsapp-worker.mjs', 'utf8');
+          const take = (a, b) => {
+            const x = src.indexOf(a);
+            const y = src.indexOf(b, x + a.length);
+            if (x < 0 || y < 0) throw new Error(`secao ausente: ${a}`);
+            return src.slice(x, y);
+          };
+          const code = [
+            take('function normalizeForIntent', 'function looksLikeDispatch'),
+            take('function looksLikeDispatch', 'function isOperationalMessage'),
+            take('function cleanAddressQuery', 'async function getDispatchStates'),
+            take('const BRAZIL_STATE_BY_NAME', 'function uniqueQueries'),
+            take('function looksLikeAddressCandidate', 'async function handleEtaQuestion'),
+            String.raw`
+              const cases = [
+                ['Qual previsão de chegada? Rua Pau Brasil, 901, Vila das Flores, Betim - MG, 32605-345', 'Rua Pau Brasil, 901, Vila das Flores, Betim - MG, 32605-345'],
+                ['ETA: Av. Afonso Pena 1000, Belo Horizonte MG', 'Av. Afonso Pena 1000, Belo Horizonte MG'],
+                ['Quanto tempo até Praça Sete de Setembro, Belo Horizonte - MG?', 'Praça Sete de Setembro, Belo Horizonte - MG'],
+                ['Qual a distância? CEP 30130-010', 'CEP 30130-010'],
+                ['previsão para Rua XV de Novembro, 100, Centro, Curitiba - PR', 'Rua XV de Novembro, 100, Centro, Curitiba - PR'],
+                ['qual tempo? https://maps.google.com/?q=-19.920100,-44.004900', 'https://maps.google.com/?q=-19.920100,-44.004900'],
+                ['Quanto tempo? Avenida Paulista, 1578, São Paulo - SP', 'Avenida Paulista, 1578, São Paulo - SP'],
+                ['Qual tempo de distância?', null],
+                ['Quanto demora para chegar no cliente?', null],
+              ];
+              for (const [input, expected] of cases) {
+                const actual = extractInlineRouteTarget(input);
+                if (actual !== expected) throw new Error(JSON.stringify({input, actual, expected}));
+              }
+              const native = coordinatesFromLocation({ latitude: -19.9201, longitude: -44.0049 });
+              if (!native || native.latitude !== -19.9201 || native.longitude !== -44.0049) throw new Error('native location');
+              const link = coordinatesFromText('https://maps.google.com/?q=-19.920100,-44.004900');
+              if (!link || link.latitude !== -19.9201 || link.longitude !== -44.0049) throw new Error('maps coordinates');
+              const states = [['Paraná','PR'],['Bahia','BA'],['Minas Gerais','MG'],['Rio Grande do Sul','RS'],['Pernambuco','PE'],['Amazonas','AM']];
+              for (const [name, uf] of states) if (normalizeBrazilState(name) !== uf) throw new Error(name);
+              console.log('PARSER_UNIVERSAL_OK');
+            `,
+          ].join('\n');
+          eval(code);
+          NODE
+
+      - name: Recarregar worker preservando WhatsApp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 150 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          echo "HTTP $CODE"
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e --arg ref "$SOURCE_REF" '.ok == true and .sourceRef == $ref and .whatsappStatus == "pronto" and .trackerAvailable == true and .workerProcessCount == 1' /tmp/reload.json >/dev/null
+
+      - name: Confirmar GConnect
+        run: |
+          set -e
+          curl -fsSL --max-time 30 https://botguincho.vercel.app/api/worker/tracker -o /tmp/tracker.json
+          cat /tmp/tracker.json; echo
+          jq -e '.connected == true and .lastLocation.plate == "GSW0H17" and (.lastLocation.address | length > 0)' /tmp/tracker.json >/dev/null
+
+      - name: Testar enderecos variados e coordenadas
+        run: |
+          set -e
+          test_route () {
+            LABEL="$1"
+            PAYLOAD="$2"
+            echo "===== $LABEL ====="
+            CODE=$(curl -sS -L --max-time 90 -X POST \
+              -H 'Content-Type: application/json' \
+              --data "$PAYLOAD" \
+              -o /tmp/route.json -w '%{http_code}' \
+              https://botguincho.vercel.app/api/worker/route-test)
+            echo "HTTP $CODE"
+            cat /tmp/route.json; echo
+            test "$CODE" = "200"
+            jq -e '.ok == true and .fromTracker == true and (.route.minutes | numbers) > 0 and (.route.distanceKm | numbers) > 0' /tmp/route.json >/dev/null
+            sleep 2
+          }
+
+          test_route 'BETIM COM CEP' "$(jq -nc --arg to 'Rua Pau Brasil, 901, Vila das Flores, Betim - MG, 32605-345' '{fromTracker:true,to:$to}')"
+          test_route 'BH AVENIDA SEM CEP' "$(jq -nc --arg to 'Avenida Afonso Pena, 1000, Centro, Belo Horizonte - MG' '{fromTracker:true,to:$to}')"
+          test_route 'LOCAL SEM NUMERO' "$(jq -nc --arg to 'Praça Sete de Setembro, Belo Horizonte - MG' '{fromTracker:true,to:$to}')"
+          test_route 'SOMENTE CEP' "$(jq -nc --arg to '30130-010' '{fromTracker:true,to:$to}')"
+          test_route 'ENDERECO SEM VIRGULAS' "$(jq -nc --arg to 'Rua Rio de Janeiro 471 Belo Horizonte MG' '{fromTracker:true,to:$to}')"
+          test_route 'OUTRO ESTADO PARANA' "$(jq -nc --arg to 'Rua XV de Novembro, 100, Centro, Curitiba - PR' '{fromTracker:true,to:$to}')"
+          test_route 'OUTRO ESTADO SAO PAULO' "$(jq -nc --arg to 'Avenida Paulista, 1578, Bela Vista, São Paulo - SP' '{fromTracker:true,to:$to}')"
+          test_route 'COORDENADAS COMO WHATSAPP' "$(jq -nc '{fromTracker:true,toLatitude:-19.9201,toLongitude:-44.0049}')"
+          test_route 'LINK MAPS COM COORDENADAS' "$(jq -nc --arg to 'https://maps.google.com/?q=-19.920100,-44.004900' '{fromTracker:true,to:$to}')"
+
+      - name: Resultado
+        run: echo 'ROTEAMENTO_UNIVERSAL_E_COORDENADAS_OK'
