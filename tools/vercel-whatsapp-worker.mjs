@@ -866,52 +866,119 @@ async function handleDispatch(msg, groupName, readableText, location) {
   await replyAndRemember(msg, groupName, readableText, reply, { intent: 'dispatch', etaMinutes: eta?.minutes ?? null });
 }
 
+function extractInlineRouteTarget(text = '') {
+  const raw = String(text).replace(/\r/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+
+  const patterns = [
+    /^\s*(?:qual\s+(?:a\s+)?previs[aã]o\s+de\s+chegada|previs[aã]o\s+de\s+chegada|qual\s+(?:o\s+)?tempo\s+de\s+dist[aâ]ncia|qual\s+(?:o\s+)?tempo|quanto\s+tempo(?:\s+(?:at[eé]|para|pra)\s+chegar)?|tempo\s+(?:at[eé]|para|pra)\s+chegar)\s*[?:\-–—]*\s*(.+)$/i,
+    /^\s*(?:qual\s+(?:a\s+)?dist[aâ]ncia|dist[aâ]ncia\s+(?:at[eé]|para|pro|do\s+guincho|do\s+local|do\s+cliente))\s*[?:\-–—]*\s*(.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (!match?.[1]) continue;
+    const candidate = match[1].replace(/^(?:at[eé]|para|pra|pro|em)\s+/i, '').trim();
+    const hasNumber = /\d/.test(candidate);
+    const hasAddressHint = /(?:\bru[ae]\b|\br\.|\bavenida\b|\bav\.|\balameda\b|\btravessa\b|\bestrada\b|\brodovia\b|\bbr\s*-?\s*\d+\b|\bpra[cç]a\b|\bbairro\b|\bcep\b|\bbetim\b|\bcontagem\b|\bbelo horizonte\b|\bminas gerais\b|\bmg\b)/i.test(candidate);
+    const hasStructure = candidate.includes(',') || /\b\d{5}-?\d{3}\b/.test(candidate);
+    if (candidate.length >= 8 && hasNumber && (hasAddressHint || hasStructure)) return candidate;
+  }
+  return null;
+}
+
+function recentSharedCoordinates(groupId) {
+  const shared = sharedLocations.get(groupId);
+  if (!shared || Date.now() - shared.at > 10 * 60 * 1000) return null;
+  return shared.coordinates || null;
+}
+
+async function resolveRouteQuestionTarget(groupId, readableText) {
+  const inlineAddress = extractInlineRouteTarget(readableText);
+  const sharedCoordinates = inlineAddress ? null : recentSharedCoordinates(groupId);
+  let state = await getDispatchState(groupId);
+
+  if (inlineAddress) {
+    state = await setDispatchState(groupId, {
+      originAddress: inlineAddress,
+      originCoordinates: null,
+    });
+  } else if (sharedCoordinates) {
+    state = await setDispatchState(groupId, {
+      originAddress: null,
+      originCoordinates: sharedCoordinates,
+    });
+  }
+
+  return {
+    state,
+    inlineAddress,
+    targetAddress: inlineAddress || state?.originAddress || null,
+    targetCoordinates: inlineAddress ? null : (sharedCoordinates || state?.originCoordinates || null),
+    source: inlineAddress ? 'inline-address' : sharedCoordinates ? 'shared-location' : 'dispatch-state',
+  };
+}
+
 async function handleEtaQuestion(msg, groupName, readableText) {
-  const state = await getDispatchState(msg.from);
-  if (!state?.originAddress && !state?.originCoordinates) {
-    logEvent('ignored', `${groupName}: pergunta de ETA sem acionamento ativo ignorada.`, { groupId: msg.from });
+  const target = await resolveRouteQuestionTarget(msg.from, readableText);
+  if (!target.targetAddress && !target.targetCoordinates) {
+    logEvent('ignored', `${groupName}: pergunta de ETA sem destino identificável ignorada.`, { groupId: msg.from });
     return;
   }
 
   let eta = null;
   try {
     eta = await computeEtaToClient({
-      targetAddress: state.originAddress,
-      targetCoordinates: state.originCoordinates,
+      targetAddress: target.targetAddress,
+      targetCoordinates: target.targetCoordinates,
     });
   } catch (error) {
-    logEvent('warning', 'Não foi possível recalcular ETA.', { error: String(error) });
+    logEvent('warning', 'Não foi possível recalcular ETA.', {
+      error: String(error),
+      targetAddress: target.targetAddress,
+      source: target.source,
+    });
   }
 
   if (!eta) {
-    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a previsão agora.', { intent: 'eta-unavailable' });
+    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a previsão agora.', { intent: 'eta-unavailable', targetSource: target.source });
     return;
   }
 
   await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
   const reply = formatEtaReply(eta, false);
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'eta', etaMinutes: eta.minutes });
+  await replyAndRemember(msg, groupName, readableText, reply, {
+    intent: 'eta',
+    etaMinutes: eta.minutes,
+    distanceKm: eta.distanceKm,
+    targetSource: target.source,
+    targetAddress: target.targetAddress,
+  });
 }
 
 async function handleDistanceQuestion(msg, groupName, readableText) {
-  const state = await getDispatchState(msg.from);
-  if (!state?.originAddress && !state?.originCoordinates) {
-    logEvent('ignored', `${groupName}: pergunta de distância sem acionamento ativo ignorada.`, { groupId: msg.from });
+  const target = await resolveRouteQuestionTarget(msg.from, readableText);
+  if (!target.targetAddress && !target.targetCoordinates) {
+    logEvent('ignored', `${groupName}: pergunta de distância sem destino identificável ignorada.`, { groupId: msg.from });
     return;
   }
 
   let eta = null;
   try {
     eta = await computeEtaToClient({
-      targetAddress: state.originAddress,
-      targetCoordinates: state.originCoordinates,
+      targetAddress: target.targetAddress,
+      targetCoordinates: target.targetCoordinates,
     });
   } catch (error) {
-    logEvent('warning', 'Não foi possível recalcular distância/ETA.', { error: String(error) });
+    logEvent('warning', 'Não foi possível recalcular distância/ETA.', {
+      error: String(error),
+      targetAddress: target.targetAddress,
+      source: target.source,
+    });
   }
 
   if (!eta) {
-    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a rota agora.', { intent: 'distance-unavailable' });
+    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a rota agora.', { intent: 'distance-unavailable', targetSource: target.source });
     return;
   }
 
@@ -919,7 +986,13 @@ async function handleDistanceQuestion(msg, groupName, readableText) {
   const distance = Number.isFinite(Number(eta.distanceKm)) ? `${eta.distanceKm} km` : 'indisponível';
   const reply = `Distância até o cliente: ${distance}.
 Previsão de chegada: ${eta.minutes} min.`;
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'distance', etaMinutes: eta.minutes, distanceKm: eta.distanceKm });
+  await replyAndRemember(msg, groupName, readableText, reply, {
+    intent: 'distance',
+    etaMinutes: eta.minutes,
+    distanceKm: eta.distanceKm,
+    targetSource: target.source,
+    targetAddress: target.targetAddress,
+  });
 }
 
 async function handleTrackerLocationQuestion(msg, groupName, readableText) {
