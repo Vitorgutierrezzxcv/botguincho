@@ -383,12 +383,20 @@ function cleanAddressQuery(value = '') {
 }
 
 function validCoordinates(latitude, longitude) {
-  return Number.isFinite(Number(latitude))
-    && Number.isFinite(Number(longitude))
-    && Number(latitude) >= -90
-    && Number(latitude) <= 90
-    && Number(longitude) >= -180
-    && Number(longitude) <= 180;
+  const missing = (value) => value === null
+    || value === undefined
+    || (typeof value === 'string' && !value.trim());
+  if (missing(latitude) || missing(longitude)) return false;
+
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat === 0 && lng === 0) return false;
+
+  return lat >= -90
+    && lat <= 90
+    && lng >= -180
+    && lng <= 180;
 }
 
 function coordinatesFromLocation(location) {
@@ -1107,8 +1115,17 @@ app.post('/api/ai-test', async (req, res) => {
 
 app.post('/api/route-test', async (req, res) => {
   try {
+    const fromTracker = req.body?.fromTracker === true;
     const fromAddress = typeof req.body?.from === 'string' ? req.body.from.trim() : '';
     const toAddress = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+
+    if (fromTracker) {
+      if (!toAddress) return res.status(400).json({ ok: false, error: 'to_required' });
+      const route = await computeEtaToClient({ targetAddress: toAddress });
+      if (!route) return res.status(422).json({ ok: false, error: 'tracker_eta_failed' });
+      return res.json({ ok: true, fromTracker: true, route });
+    }
+
     if (!fromAddress || !toAddress) return res.status(400).json({ ok: false, error: 'from_and_to_required' });
     const from = await geocodeAddress(fromAddress);
     const to = await geocodeAddress(toAddress);
