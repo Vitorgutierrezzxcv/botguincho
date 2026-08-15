@@ -100,8 +100,8 @@ systemctl restart botguincho-android-emulator.service
 echo "Aguardando Android iniciar..."
 READY=0
 for i in $(seq 1 90); do
-  if sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" wait-for-device >/dev/null 2>&1; then
-    BOOT="$(sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+  if timeout 5s sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" wait-for-device >/dev/null 2>&1; then
+    BOOT="$(timeout 5s sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
     if [ "$BOOT" = "1" ]; then READY=1; break; fi
   fi
   sleep 2
