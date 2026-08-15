@@ -4,7 +4,7 @@ import { applyWwebjsPatch, requestCredential } from '../../lib/sandbox-runtime.j
 const REPO = 'Vitorgutierrezzxcv/botguincho';
 const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
 const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
-const RAW_BASE = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho/main';
+const RAW_ROOT = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho';
 const PORT = 3001;
 
 async function isGitHubActionsToken(req) {
@@ -56,7 +56,6 @@ async function launchWorker(sandbox, credential) {
     cmd: 'bash',
     args: ['-lc', [
       'LOCK=/vercel/sandbox/.whatsapp-worker-lock',
-      // Não remove o lock aqui: mkdir é o mutex entre reload e health-check.
       'mkdir "$LOCK" 2>/dev/null || exit 0',
       'echo $$ > "$LOCK/launcher-pid"',
       'rm -f /vercel/sandbox/worker.log',
@@ -79,9 +78,9 @@ async function launchWorker(sandbox, credential) {
   });
 }
 
-async function syncFiles(sandbox) {
+async function syncFiles(sandbox, sourceRef) {
   const files = [
-    ['tools/vercel-whatsapp-worker.mjs', `${RAW_BASE}/tools/vercel-whatsapp-worker.mjs`],
+    ['tools/vercel-whatsapp-worker.mjs', `${RAW_ROOT}/${sourceRef}/tools/vercel-whatsapp-worker.mjs`],
   ];
   const script = `
     const fs = require('fs');
@@ -91,8 +90,11 @@ async function syncFiles(sandbox) {
       const states = [];
       for (const [relative, url] of files) {
         const target = '/vercel/sandbox/' + relative;
-        const response = await fetch(url, { cache: 'no-store' });
-        if (!response.ok) throw new Error(relative + ' download HTTP ' + response.status);
+        const response = await fetch(url, {
+          cache: 'no-store',
+          headers: { 'cache-control': 'no-cache' },
+        });
+        if (!response.ok) throw new Error(relative + ' download HTTP ' + response.status + ' from ' + url);
         const next = await response.text();
         const current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
         fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -121,6 +123,9 @@ export default async function handler(req, res) {
 
   try {
     const credential = requestCredential(req);
+    const requestedRef = String(req.headers['x-botguincho-source-ref'] || '').trim();
+    const sourceRef = /^[0-9a-f]{40}$/i.test(requestedRef) ? requestedRef : 'main';
+
     const sandbox = await Sandbox.getOrCreate({
       name: SANDBOX_NAME,
       source: { type: 'git', url: REPO_URL, depth: 1 },
@@ -135,7 +140,7 @@ export default async function handler(req, res) {
       resume: true,
     });
 
-    const sourceState = await syncFiles(sandbox);
+    const sourceState = await syncFiles(sandbox, sourceRef);
     const patchState = await applyWwebjsPatch(sandbox);
 
     await sandbox.runCommand({
@@ -150,8 +155,6 @@ export default async function handler(req, res) {
       signal: AbortSignal.timeout(10000),
     });
 
-    // Se um health-check vencer a corrida, ele adquire o mesmo lock. Se o reload
-    // vencer, o health-check sai sem criar uma segunda instância.
     await launchWorker(sandbox, credential);
 
     let status = null;
@@ -169,7 +172,6 @@ export default async function handler(req, res) {
 
     let workers = await workerCount(sandbox);
     if (workers > 1) {
-      // Recuperação defensiva caso uma instância duplicada anterior ainda exista.
       await sandbox.runCommand({
         cmd: 'bash',
         args: ['-lc', [
@@ -210,6 +212,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       ok: true,
+      sourceRef,
       sourceState,
       patchState,
       workerProcessCount: workers,
