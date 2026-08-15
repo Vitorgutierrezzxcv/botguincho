@@ -340,7 +340,12 @@ function asksAvailability(text = '') {
 
 function asksEta(text = '') {
   const value = normalizeForIntent(text);
-  return /\b(quanto tempo|tempo de distancia|previsao de chegada|previsao|demora|eta|chega em|chegada|tempo para chegar|tempo pra chegar)\b/.test(value);
+  return /(quanto tempo|qual (?:o )?tempo|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)/.test(value);
+}
+
+function asksDistance(text = '') {
+  const value = normalizeForIntent(text);
+  return /(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente))/.test(value);
 }
 
 function asksTrackerLocation(text = '') {
@@ -351,7 +356,7 @@ function asksTrackerLocation(text = '') {
 function isOperationalMessage(text = '') {
   const value = normalizeForIntent(text);
   if (!value) return false;
-  if (looksLikeDispatch(value) || asksAvailability(value) || asksEta(value) || asksTrackerLocation(value)) return true;
+  if (looksLikeDispatch(value) || asksAvailability(value) || asksEta(value) || asksDistance(value) || asksTrackerLocation(value)) return true;
   return /\b(guincho|reboque|pane|veiculo|carro|moto|placa|origem|destino|assistencia|seguradora|acionamento|caminhao|rota|oficina|remocao|prestador|sinistro|chamado)\b/.test(value);
 }
 
@@ -630,20 +635,50 @@ async function geocodeAddress(address) {
 
 async function routeBetween(start, end) {
   if (!start || !end) return null;
-  const coordinates = `${start.longitude},${start.latitude};${end.longitude},${end.latitude}`;
-  const url = `https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=false&steps=false&alternatives=false`;
-  const response = await fetch(url, {
-    headers: { 'user-agent': 'BotGuincho/1.0 (+https://botguincho.vercel.app/)' },
-    signal: AbortSignal.timeout(9000),
-  });
-  if (!response.ok) throw new Error(`Roteamento HTTP ${response.status}`);
-  const data = await response.json();
-  const route = data?.code === 'Ok' && Array.isArray(data.routes) ? data.routes[0] : null;
-  if (!route || !Number.isFinite(Number(route.duration))) return null;
-  return {
-    minutes: Math.max(1, Math.ceil(Number(route.duration) / 60)),
-    distanceKm: Number.isFinite(Number(route.distance)) ? Math.round(Number(route.distance) / 100) / 10 : null,
-  };
+  if (!validCoordinates(start.latitude, start.longitude) || !validCoordinates(end.latitude, end.longitude)) {
+    throw new Error('Coordenadas inválidas para roteamento.');
+  }
+
+  const coordinates = `${Number(start.longitude)},${Number(start.latitude)};${Number(end.longitude)},${Number(end.latitude)}`;
+  const providers = [
+    { name: 'osrm-main', base: 'https://router.project-osrm.org/route/v1/driving/' },
+    { name: 'osrm-osmde', base: 'https://routing.openstreetmap.de/routed-car/route/v1/driving/' },
+  ];
+  let lastError = null;
+
+  for (const provider of providers) {
+    const url = `${provider.base}${coordinates}?overview=false&steps=false&alternatives=false`;
+    try {
+      const response = await fetch(url, {
+        headers: { 'user-agent': 'BotGuincho/1.1 (+https://botguincho.vercel.app/)' },
+        signal: AbortSignal.timeout(6500),
+      });
+      if (!response.ok) {
+        const body = (await response.text().catch(() => '')).slice(0, 180);
+        throw new Error(`${provider.name} HTTP ${response.status}${body ? `: ${body}` : ''}`);
+      }
+      const data = await response.json();
+      const route = data?.code === 'Ok' && Array.isArray(data.routes) ? data.routes[0] : null;
+      if (!route || !Number.isFinite(Number(route.duration))) {
+        throw new Error(`${provider.name} não retornou rota válida (${data?.code || 'sem código'}).`);
+      }
+      if (provider.name !== 'osrm-main') {
+        logEvent('route-fallback', `Rota calculada pelo fallback ${provider.name}.`);
+      }
+      return {
+        minutes: Math.max(1, Math.ceil(Number(route.duration) / 60)),
+        distanceKm: Number.isFinite(Number(route.distance)) ? Math.round(Number(route.distance) / 100) / 10 : null,
+      };
+    } catch (error) {
+      lastError = error;
+      logEvent('warning', `Falha no roteador ${provider.name}; tentando alternativa.`, {
+        error: String(error),
+        coordinates,
+      });
+    }
+  }
+
+  throw lastError || new Error('Nenhum roteador conseguiu calcular a rota.');
 }
 
 async function trackerCoordinates(reading) {
@@ -810,7 +845,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
 async function handleEtaQuestion(msg, groupName, readableText) {
   const state = await getDispatchState(msg.from);
   if (!state?.originAddress && !state?.originCoordinates) {
-    await replyAndRemember(msg, groupName, readableText, 'Sem origem ativa para calcular o tempo.', { intent: 'eta-no-origin' });
+    logEvent('ignored', `${groupName}: pergunta de ETA sem acionamento ativo ignorada.`, { groupId: msg.from });
     return;
   }
 
@@ -832,6 +867,35 @@ async function handleEtaQuestion(msg, groupName, readableText) {
   await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
   const reply = formatEtaReply(eta, false);
   await replyAndRemember(msg, groupName, readableText, reply, { intent: 'eta', etaMinutes: eta.minutes });
+}
+
+async function handleDistanceQuestion(msg, groupName, readableText) {
+  const state = await getDispatchState(msg.from);
+  if (!state?.originAddress && !state?.originCoordinates) {
+    logEvent('ignored', `${groupName}: pergunta de distância sem acionamento ativo ignorada.`, { groupId: msg.from });
+    return;
+  }
+
+  let eta = null;
+  try {
+    eta = await computeEtaToClient({
+      targetAddress: state.originAddress,
+      targetCoordinates: state.originCoordinates,
+    });
+  } catch (error) {
+    logEvent('warning', 'Não foi possível recalcular distância/ETA.', { error: String(error) });
+  }
+
+  if (!eta) {
+    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a rota agora.', { intent: 'distance-unavailable' });
+    return;
+  }
+
+  await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
+  const distance = Number.isFinite(Number(eta.distanceKm)) ? `${eta.distanceKm} km` : 'indisponível';
+  const reply = `Distância até o cliente: ${distance}.
+Previsão de chegada: ${eta.minutes} min.`;
+  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'distance', etaMinutes: eta.minutes, distanceKm: eta.distanceKm });
 }
 
 async function handleTrackerLocationQuestion(msg, groupName, readableText) {
@@ -894,6 +958,11 @@ async function processIncomingMessage(msg) {
 
     if (asksEta(readableText)) {
       await handleEtaQuestion(msg, groupName, readableText);
+      return;
+    }
+
+    if (asksDistance(readableText)) {
+      await handleDistanceQuestion(msg, groupName, readableText);
       return;
     }
 
