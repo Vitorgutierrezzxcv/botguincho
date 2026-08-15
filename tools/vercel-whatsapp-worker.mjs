@@ -363,12 +363,28 @@ function isOperationalMessage(text = '') {
 function extractLabeledField(text = '', label = '') {
   const lines = String(text).replace(/\r/g, '').split('\n');
   const target = normalizeForIntent(label);
-  for (const line of lines) {
+  const aliases = target === 'origem'
+    ? ['origem', 'endereco de origem', 'endereco origem', 'local de origem', 'local origem', 'localizacao de origem', 'localizacao origem']
+    : target === 'destino'
+      ? ['destino', 'endereco de destino', 'endereco destino', 'local de destino', 'local destino', 'localizacao de destino', 'localizacao destino']
+      : [target];
+  const escapedAliases = aliases.map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`^(?:${escapedAliases.join('|')})\\s*[:\\-]\\s*(.*)$`);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const normalized = normalizeForIntent(line);
-    const match = normalized.match(new RegExp(`^${target}\\s*[:\\-]\\s*(.+)$`));
-    if (!match) continue;
-    const rawSeparator = line.search(/[:\-]/);
-    if (rawSeparator >= 0) return line.slice(rawSeparator + 1).trim();
+    if (!pattern.test(normalized)) continue;
+
+    const rawMatch = line.match(/^\s*[^:\-]+?\s*[:\-]\s*(.*)$/);
+    const inlineValue = rawMatch?.[1]?.trim();
+    if (inlineValue) return inlineValue;
+
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const candidate = lines[next].trim();
+      if (!candidate) continue;
+      return candidate;
+    }
   }
   return null;
 }
