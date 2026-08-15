@@ -48,15 +48,22 @@ jobs:
                 ? ['destino', 'endereco de destino', 'endereco destino', 'local de destino', 'local destino', 'localizacao de destino', 'localizacao destino']
                 : [target];
             const escapedAliases = aliases.map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-            const pattern = new RegExp(`^(?:${escapedAliases.join('|')})\\s*[:\\-]\\s*(.+)$`);
+            const pattern = new RegExp(`^(?:${escapedAliases.join('|')})\\s*[:\\-]\\s*(.*)$`);
 
-            for (const line of lines) {
+            for (let index = 0; index < lines.length; index += 1) {
+              const line = lines[index];
               const normalized = normalizeForIntent(line);
               if (!pattern.test(normalized)) continue;
 
-              const rawMatch = line.match(/^\s*[^:\-]+?\s*[:\-]\s*(.+)$/);
-              const value = rawMatch?.[1]?.trim();
-              if (value) return value;
+              const rawMatch = line.match(/^\s*[^:\-]+?\s*[:\-]\s*(.*)$/);
+              const inlineValue = rawMatch?.[1]?.trim();
+              if (inlineValue) return inlineValue;
+
+              for (let next = index + 1; next < lines.length; next += 1) {
+                const candidate = lines[next].trim();
+                if (!candidate) continue;
+                return candidate;
+              }
             }
             return null;
           }
@@ -100,5 +107,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add tools/vercel-whatsapp-worker.mjs
-          git commit -m 'Aceita Endereço de Origem e Destino nos acionamentos'
+          git commit -m 'Aceita endereço em linha separada nos acionamentos'
           git push origin HEAD:main
