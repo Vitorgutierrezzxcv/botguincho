@@ -1,0 +1,47 @@
+name: Reload After Quoted Address Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/reload-after-quoted-address-fix.yml'
+
+jobs:
+  reload:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REF: b32e9af6076d490ba09954e0ae0a9c6a9880aa0d
+    steps:
+      - name: Recarregar worker
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 150 -X POST \
+            -H "Authorization: Bearer ${{ secrets.BOTGUINCHO_ADMIN_TOKEN }}" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e --arg ref "$SOURCE_REF" '.ok == true and .sourceRef == $ref and .whatsappStatus == "pronto" and .workerProcessCount == 1' /tmp/reload.json >/dev/null
+
+      - name: Testar endereco do print
+        run: |
+          set -e
+          for ADDRESS in \
+            'Rua inspetor Jaime caldeira, brasileia, Betim Minas Gerais' \
+            'Rua inspetor Jaime caldeira, brasileira, Betim Minas Gerais'
+          do
+            echo "TESTANDO: $ADDRESS"
+            CODE=$(curl -sS -L --max-time 90 -X POST \
+              -H 'Content-Type: application/json' \
+              --data "$(jq -nc --arg to "$ADDRESS" '{fromTracker:true,to:$to}')" \
+              -o /tmp/route.json -w '%{http_code}' \
+              https://botguincho.vercel.app/api/worker/route-test)
+            cat /tmp/route.json; echo
+            if [ "$CODE" = "200" ] && jq -e '.ok == true and (.route.minutes | numbers) > 0' /tmp/route.json >/dev/null; then
+              exit 0
+            fi
+          done
+          echo 'Nenhuma variante do endereco foi geocodificada.'
+          exit 1
