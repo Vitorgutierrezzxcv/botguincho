@@ -1,4 +1,4 @@
-import { maintainWorker, requestCredential } from '../../lib/sandbox-runtime.js';
+import { maintainWorker, requestCredential, requestTenant } from '../../lib/sandbox-runtime.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
 
@@ -36,7 +36,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const result = await maintainWorker(requestCredential(req));
+    const tenant = requestTenant(req);
+    const result = await maintainWorker(requestCredential(req, tenant), tenant);
     return res.status(200).json(result);
   } catch (error) {
     return res.status(500).json({

@@ -1,5 +1,5 @@
 import { Sandbox } from '@vercel/sandbox';
-import { getWorkerStatus, requestCredential } from '../../lib/sandbox-runtime.js';
+import { getWorkerStatus, requestCredential, requestTenant } from '../../lib/sandbox-runtime.js';
 
 const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
 const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
@@ -89,14 +89,17 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
   res.setHeader('cache-control', 'no-store');
 
-  const credential = requestCredential(req);
+  const tenant = requestTenant(req);
+  const credential = requestCredential(req, tenant);
 
-  try {
-    await quickRecover(credential);
-  } catch (error) {
-    console.error('Recuperação rápida do worker falhou:', error);
+  if (tenant === 'cliente-teste') {
+    try {
+      await quickRecover(credential);
+    } catch (error) {
+      console.error('Recuperação rápida do worker legado falhou:', error);
+    }
   }
 
-  const status = await getWorkerStatus(credential);
+  const status = await getWorkerStatus(credential, tenant);
   return res.status(200).json(status);
 }
