@@ -1,0 +1,52 @@
+name: Apply Block1 Hardening Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-block1-hardening-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply patch
+        run: |
+          python3 tools/harden_block1_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "function greetingReply" tools/vercel-whatsapp-worker.mjs
+          grep -q "computeEtaWithRetry" tools/vercel-whatsapp-worker.mjs
+          grep -q "dispatch-safe-mode" tools/vercel-whatsapp-worker.mjs
+      - name: Commit worker
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Reforça segurança operacional e adiciona saudações' || true
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Reload worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e '.ok==true and .whatsappStatus=="pronto" and .workerProcessCount==1' /tmp/reload.json >/dev/null
+      - name: Validate live tracker and route
+        run: |
+          curl -fsSL --max-time 90 https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json; echo
+          jq -e '.whatsapp.status=="pronto" and .tracker.connected==true and .tracker.stale==false' /tmp/status.json >/dev/null
+          curl -fsSL --max-time 90 -X POST https://botguincho.vercel.app/api/worker/route-test \
+            -H 'content-type: application/json' \
+            -d '{"fromTracker":true,"to":"Av. Otacilio Negrao de Lima, s/n - Sao Luiz, Belo Horizonte - MG, 31365-450, Brasil"}' \
+            -o /tmp/route.json
+          cat /tmp/route.json; echo
+          jq -e '.ok==true and .route.minutes>0' /tmp/route.json >/dev/null
