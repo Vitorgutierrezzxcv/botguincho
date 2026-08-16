@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/validate-gconnect-self-heal.yml'
+      - 'tools/install-gconnect-agent.sh'
+      - 'tools/gconnect-emulator-agent.mjs'
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -17,4 +19,6 @@ jobs:
           grep -q 'GConnect Android Agent v3' tools/gconnect-emulator-agent.mjs
           grep -q 'botguincho-gconnect-watchdog.timer' tools/install-gconnect-agent.sh
           grep -q 'GCONNECT_HEARTBEAT_FILE' tools/install-gconnect-agent.sh
+          grep -q 'GCONNECT_ADB_SERIAL' tools/install-gconnect-agent.sh
+          grep -q 'Serial fixado em' tools/install-gconnect-agent.sh
           echo SELF_HEAL_SCRIPTS_OK
