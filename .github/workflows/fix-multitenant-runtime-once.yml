@@ -1,0 +1,29 @@
+name: Fix Multitenant Runtime Once
+on:
+  push:
+    paths:
+      - 'tools/fix_multitenant_runtime_tmp.py'
+      - '.github/workflows/fix-multitenant-runtime-once.yml'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/fix_multitenant_runtime_tmp.py
+      - name: Validate
+        run: |
+          node --check lib/sandbox-runtime.js
+          node --check api/worker/status.js
+          node --check api/worker/maintain.js
+          ! grep -q 'latestCredential' lib/sandbox-runtime.js
+          grep -q "getWorkerStatus(credential, tenant)" api/worker/status.js
+          grep -q "maintainWorker(requestCredential(req, tenant), tenant)" api/worker/maintain.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/sandbox-runtime.js api/worker/status.js api/worker/maintain.js
+          git diff --cached --quiet || git commit -m 'Corrige runtime multiempresa e status por tenant'
+          git push
