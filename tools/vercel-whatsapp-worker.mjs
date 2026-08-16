@@ -36,6 +36,8 @@ let qrDataUrl = null;
 let lastError = null;
 let nominatimQueue = Promise.resolve();
 let lastNominatimRequestAt = 0;
+let whatsappRecoveryTimer = null;
+let lastWhatsappRecoveryAt = 0;
 
 const activity = [];
 const groupMemory = new Map();
@@ -1930,6 +1932,28 @@ async function processIncomingMessage(msg) {
   }
 }
 
+function scheduleWhatsAppRecovery(reason = 'unknown') {
+  if (whatsappRecoveryTimer) return;
+  const sinceLast = Date.now() - lastWhatsappRecoveryAt;
+  const delay = Math.max(15000, 60000 - sinceLast);
+  logEvent('recovery', `Recuperação do WhatsApp agendada em ${Math.ceil(delay / 1000)}s.`, { reason });
+  whatsappRecoveryTimer = setTimeout(async () => {
+    whatsappRecoveryTimer = null;
+    lastWhatsappRecoveryAt = Date.now();
+    try {
+      const current = waClient;
+      waClient = null;
+      if (current) await current.destroy().catch(() => undefined);
+      waStatus = 'iniciando';
+      await startWhatsApp();
+      logEvent('recovery', 'Rotina de reconexão do WhatsApp iniciada.', { reason });
+    } catch (error) {
+      logEvent('error', 'Falha na recuperação automática do WhatsApp.', { error: String(error), reason });
+      scheduleWhatsAppRecovery('retry-after-failure');
+    }
+  }, delay);
+}
+
 async function startWhatsApp() {
   if (waClient) return;
   waStatus = 'iniciando';
@@ -1980,12 +2004,14 @@ async function startWhatsApp() {
     waStatus = 'erro';
     lastError = String(message);
     logEvent('error', 'Falha de autenticação do WhatsApp.', { error: lastError });
+    scheduleWhatsAppRecovery('auth_failure');
   });
 
   waClient.on('disconnected', (reason) => {
     waStatus = 'desconectado';
     lastError = String(reason);
     logEvent('warning', 'WhatsApp desconectado.', { reason: lastError });
+    scheduleWhatsAppRecovery('disconnected');
   });
 
   waClient.on('message', processIncomingMessage);
@@ -1994,6 +2020,7 @@ async function startWhatsApp() {
     waStatus = 'erro';
     lastError = error instanceof Error ? error.message : String(error);
     logEvent('error', 'Falha ao iniciar WhatsApp.', { error: lastError });
+    scheduleWhatsAppRecovery('initialize_failure');
   });
 }
 
