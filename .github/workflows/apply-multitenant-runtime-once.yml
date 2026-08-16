@@ -1,0 +1,30 @@
+name: Apply Multitenant Runtime Once
+on:
+  push:
+    paths:
+      - 'tools/apply_multitenant_runtime_tmp.py'
+      - '.github/workflows/apply-multitenant-runtime-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply tenant runtime patch
+        run: python3 tools/apply_multitenant_runtime_tmp.py
+      - name: Validate syntax and invariants
+        run: |
+          node --check lib/sandbox-runtime.js
+          grep -q "LEGACY_SANDBOX_NAME = 'botguincho-wa-vercel-v12'" lib/sandbox-runtime.js
+          grep -q "requestTenant" lib/sandbox-runtime.js
+          grep -q "tenantSandboxName" lib/sandbox-runtime.js
+          grep -q "x-botguincho-company-id" lib/sandbox-runtime.js
+          grep -q "DEFAULT_CLIENT_ID = 'cliente-teste'" lib/sandbox-runtime.js
+      - name: Commit runtime
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/sandbox-runtime.js
+          git diff --cached --quiet || git commit -m 'Torna runtime isolado por empresa'
+          git push
