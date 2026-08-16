@@ -1,0 +1,31 @@
+name: Client Delivery Check
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/client-delivery-check.yml']
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait deploy
+        run: sleep 60
+      - name: Validate client UI
+        run: |
+          set -e
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --max-time 120 https://botguincho.vercel.app/ -o /tmp/index.html
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --max-time 120 https://botguincho.vercel.app/app.js -o /tmp/app.js
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --max-time 120 https://botguincho.vercel.app/app.css -o /tmp/app.css
+          grep -q 'Ajuda e segurança' /tmp/index.html
+          grep -q 'Configurações avançadas' /tmp/index.html
+          grep -q 'Comece por aqui' /tmp/index.html
+          grep -q 'Proteção automática ativa' /tmp/index.html
+          node --check /tmp/app.js
+      - name: Validate operation after UI deploy
+        run: |
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --max-time 120 https://botguincho.vercel.app/api/worker/health -o /tmp/health.json
+          cat /tmp/health.json; echo
+          jq -e '.checks.whatsapp.ok==true and .checks.tracker.ok==true and .checks.routes.ok==true' /tmp/health.json >/dev/null
+          curl -fsSL --max-time 90 https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt.json
+          jq -e '.ok==true' /tmp/mgmt.json >/dev/null
+          echo 'CLIENT_DELIVERY_OK'
