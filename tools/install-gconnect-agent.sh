@@ -121,29 +121,30 @@ if ! systemctl is-active --quiet botguincho-gconnect.service; then
   exit 0
 fi
 
-if ! timeout 8s "$ADB_BIN" devices | grep -q $'\\tdevice$'; then
+SERIAL="\$(timeout 8s "$ADB_BIN" devices | awk 'NR>1 && \$2=="device" {print \$1; exit}')"
+if [ -z "\$SERIAL" ]; then
   echo "[watchdog] ADB sem Android conectado"
   restart_all
   exit 0
 fi
 
-BOOT="$(timeout 8s "$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r' || true)"
-if [ "$BOOT" != "1" ]; then
+BOOT="\$(timeout 8s "$ADB_BIN" -s "\$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+if [ "\$BOOT" != "1" ]; then
   echo "[watchdog] Android não concluiu boot"
   restart_all
   exit 0
 fi
 
-if [ ! -f "$HEARTBEAT_FILE" ]; then
+if [ ! -f "\$HEARTBEAT" ]; then
   echo "[watchdog] heartbeat ausente; reiniciando agente"
   systemctl restart botguincho-gconnect.service
   exit 0
 fi
 
-NOW=$(date +%s)
-MOD=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || echo 0)
-AGE=$((NOW-MOD))
-if [ "$AGE" -gt "$MAX_AGE" ]; then
+NOW=\$(date +%s)
+MOD=\$(stat -c %Y "\$HEARTBEAT" 2>/dev/null || echo 0)
+AGE=\$((NOW-MOD))
+if [ "\$AGE" -gt "\$MAX_AGE" ]; then
   echo "[watchdog] heartbeat desatualizado: \${AGE}s"
   restart_all
   exit 0
@@ -182,19 +183,24 @@ EOF
 systemctl daemon-reload
 systemctl enable botguincho-android-emulator.service botguincho-gconnect.service botguincho-gconnect-watchdog.timer >/dev/null
 
-if sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" devices | grep -q $'\tdevice$'; then
-  echo "Android atual encontrado. Reiniciando de forma controlada para deixá-lo 24/7 pelo systemd..."
-  sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" emu kill >/dev/null 2>&1 || true
-  sleep 5
-fi
+# Encerra emuladores existentes de forma explícita para garantir uma única instância.
+while read -r SERIAL STATE; do
+  if [[ "$SERIAL" == emulator-* && "$STATE" == "device" ]]; then
+    echo "Encerrando Android existente: $SERIAL"
+    sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" -s "$SERIAL" emu kill >/dev/null 2>&1 || true
+  fi
+done < <(sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" devices | tail -n +2)
+sleep 5
 
 systemctl restart botguincho-android-emulator.service
 
 echo "Aguardando Android iniciar..."
 READY=0
+ACTIVE_SERIAL=""
 for i in $(seq 1 90); do
-  if timeout 5s sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" wait-for-device >/dev/null 2>&1; then
-    BOOT="$(timeout 5s sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+  ACTIVE_SERIAL="$(sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" devices | awk 'NR>1 && $2=="device" && $1 ~ /^emulator-/ {print $1; exit}')"
+  if [ -n "$ACTIVE_SERIAL" ]; then
+    BOOT="$(timeout 5s sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" -s "$ACTIVE_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
     if [ "$BOOT" = "1" ]; then READY=1; break; fi
   fi
   sleep 2
@@ -206,7 +212,14 @@ if [ "$READY" != "1" ]; then
   exit 6
 fi
 
-if ! sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" shell pm list packages | grep -q '^package:br\.com\.getrak\.gconnect$'; then
+# Fixa explicitamente o serial que acabou de iniciar para evitar ambiguidade do ADB.
+if grep -q '^GCONNECT_ADB_SERIAL=' "$ENV_FILE"; then
+  sed -i "s/^GCONNECT_ADB_SERIAL=.*/GCONNECT_ADB_SERIAL=$ACTIVE_SERIAL/" "$ENV_FILE"
+else
+  echo "GCONNECT_ADB_SERIAL=$ACTIVE_SERIAL" >> "$ENV_FILE"
+fi
+
+if ! sudo -u "$RUN_USER" env HOME="$RUN_HOME" PATH="$(dirname "$ADB_BIN"):$PATH" "$ADB_BIN" -s "$ACTIVE_SERIAL" shell pm list packages | grep -q '^package:br\.com\.getrak\.gconnect$'; then
   echo "GConnect não está instalado no AVD '$AVD_NAME'."
   echo "Use o AVD gconnect-playstore, que contém o aplicativo instalado."
   exit 7
@@ -231,4 +244,4 @@ echo "=== Últimos eventos ==="
 journalctl -u botguincho-gconnect.service -n 20 --no-pager || true
 
 echo
-echo "Pronto. O agente agora tem auto-recuperação: falhas consecutivas reiniciam o processo e o watchdog reinicia Android + agente se ficar mais de 2 minutos sem leitura."
+echo "Pronto. Serial fixado em $ACTIVE_SERIAL. O agente tem auto-recuperação e o watchdog reinicia Android + agente se ficar mais de 2 minutos sem leitura."
