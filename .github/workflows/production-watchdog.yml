@@ -1,0 +1,68 @@
+name: Production Watchdog
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: botguincho-production-watchdog
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Consultar saúde da produção
+        id: health
+        run: |
+          set +e
+          curl -sSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 60 \
+            https://botguincho.vercel.app/api/worker/health -o /tmp/health.json
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo '{"status":"unreachable"}' > /tmp/health.json
+          fi
+          cat /tmp/health.json; echo
+          WA_OK=$(jq -r '.checks.whatsapp.ok // false' /tmp/health.json)
+          TRACKER_OK=$(jq -r '.checks.tracker.ok // false' /tmp/health.json)
+          ROUTES_OK=$(jq -r '.checks.routes.ok // false' /tmp/health.json)
+          echo "wa_ok=$WA_OK" >> "$GITHUB_OUTPUT"
+          echo "tracker_ok=$TRACKER_OK" >> "$GITHUB_OUTPUT"
+          echo "routes_ok=$ROUTES_OK" >> "$GITHUB_OUTPUT"
+
+      - name: Recuperar WhatsApp automaticamente
+        if: steps.health.outputs.wa_ok != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo 'WhatsApp fora de pronto. Tentando reload seguro do worker...'
+          curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w 'HTTP %{http_code}\n' \
+            https://botguincho.vercel.app/api/worker/reload
+          cat /tmp/reload.json; echo
+          sleep 25
+
+      - name: Validar após recuperação
+        run: |
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 4 --max-time 90 \
+            https://botguincho.vercel.app/api/worker/health -o /tmp/final-health.json
+          cat /tmp/final-health.json; echo
+          jq -e '.checks.whatsapp.ok == true' /tmp/final-health.json >/dev/null
+          jq -e '.checks.tracker.ok == true' /tmp/final-health.json >/dev/null
+          jq -e '.checks.routes.ok == true' /tmp/final-health.json >/dev/null
+
+      - name: Validar PWA e gestão
+        run: |
+          curl -fsSL --max-time 60 https://botguincho.vercel.app/api/worker/management -o /tmp/management.json
+          jq -e '.ok == true and (.data.calls|type)=="array" and (.data.finance|type)=="array"' /tmp/management.json >/dev/null
+          curl -fsSL --max-time 60 https://botguincho.vercel.app/ -o /tmp/index.html
+          grep -q 'Saúde da automação' /tmp/index.html
+          echo 'PRODUCTION_WATCHDOG_OK'
