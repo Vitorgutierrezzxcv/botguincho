@@ -1,0 +1,50 @@
+name: Apply MG Coverage Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-mg-coverage-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply MG coverage patch
+        run: |
+          python3 tools/apply_mg_coverage_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "const SERVICE_STATE = 'MG'" tools/vercel-whatsapp-worker.mjs
+          grep -q "Fora da área de atendimento" tools/vercel-whatsapp-worker.mjs
+      - name: Commit worker
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Restringe cobertura a Minas Gerais e prioriza RMBH' || true
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Reload worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $SOURCE_REF" \
+            -H 'Content-Type: application/json' \
+            -o /tmp/reload.json -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e '.ok==true and .whatsappStatus=="pronto" and .workerProcessCount==1' /tmp/reload.json >/dev/null
+      - name: Validate MG routes
+        run: |
+          curl -fsSL -X POST https://botguincho.vercel.app/api/worker/route-test -H 'content-type: application/json' \
+            -d '{"fromTracker":true,"to":"Av. Otacilio Negrao de Lima, s/n, Belo Horizonte"}' -o /tmp/bh.json
+          cat /tmp/bh.json; echo
+          jq -e '.ok==true and .route.minutes>0' /tmp/bh.json >/dev/null
+          curl -fsSL -X POST https://botguincho.vercel.app/api/worker/route-test -H 'content-type: application/json' \
+            -d '{"fromTracker":true,"to":"Avenida Paulista, 1000, Sao Paulo - SP"}' -o /tmp/sp.json || true
+          cat /tmp/sp.json; echo
+          jq -e '.ok==false' /tmp/sp.json >/dev/null
