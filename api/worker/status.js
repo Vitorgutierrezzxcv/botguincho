@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox';
 import { getWorkerStatus, requestCredential, requestTenant } from '../../lib/sandbox-runtime.js';
+import { authorizeTenantRequest } from '../../lib/control-plane.js';
 
 const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
 const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
@@ -20,15 +21,12 @@ async function quickRecover(credential = '') {
     networkPolicy: 'allow-all',
     resume: true,
   });
-
   const health = await sandbox.runCommand({
     cmd: 'node',
     args: ['-e', `fetch('http://127.0.0.1:${PORT}/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`],
     signal: AbortSignal.timeout(3500),
   }).catch(() => null);
-
   if (health?.exitCode === 0) return;
-
   const restoreScript = `
     const fs = require('fs');
     const path = require('path');
@@ -41,13 +39,7 @@ async function quickRecover(credential = '') {
       })
       .catch((e) => { console.error(e); process.exit(1); });
   `;
-
-  await sandbox.runCommand({
-    cmd: 'node',
-    args: ['-e', restoreScript],
-    signal: AbortSignal.timeout(10000),
-  });
-
+  await sandbox.runCommand({ cmd: 'node', args: ['-e', restoreScript], signal: AbortSignal.timeout(10000) });
   await sandbox.runCommand({
     cmd: 'bash',
     args: ['-lc', [
@@ -58,7 +50,6 @@ async function quickRecover(credential = '') {
     ].join('\n')],
     signal: AbortSignal.timeout(5000),
   }).catch(() => undefined);
-
   await sandbox.runCommand({
     cmd: 'bash',
     args: ['-lc', [
@@ -88,18 +79,17 @@ async function quickRecover(credential = '') {
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
   res.setHeader('cache-control', 'no-store');
-
   const tenant = requestTenant(req);
-  const credential = requestCredential(req, tenant);
-
-  if (tenant === 'cliente-teste') {
-    try {
-      await quickRecover(credential);
-    } catch (error) {
-      console.error('Recuperação rápida do worker legado falhou:', error);
-    }
+  try {
+    await authorizeTenantRequest(req, tenant);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message || 'tenant_access_failed' });
   }
-
+  const credential = requestCredential(req, tenant);
+  if (tenant === 'cliente-teste') {
+    try { await quickRecover(credential); }
+    catch (error) { console.error('Recuperação rápida do worker legado falhou:', error); }
+  }
   const status = await getWorkerStatus(credential, tenant);
   return res.status(200).json(status);
 }
