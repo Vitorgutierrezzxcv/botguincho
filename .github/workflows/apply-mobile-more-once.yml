@@ -1,0 +1,23 @@
+name: Apply Mobile More Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-mobile-more-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 tools/apply_mobile_more_tmp.py
+          node --check public/app.js
+          grep -q 'id="more" class="page"' public/index.html
+          grep -q 'data-page="more"' public/index.html
+      - run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html public/index.html app.js public/app.js app.css public/app.css sw.js public/sw.js
+          git commit -m 'Completa navegação mobile da versão cliente' || true
+          git push
