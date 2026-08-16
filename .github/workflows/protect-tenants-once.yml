@@ -1,0 +1,25 @@
+name: Protect Tenants Once
+on:
+  push:
+    paths:
+      - 'tools/protect_tenants_tmp.py'
+      - '.github/workflows/protect-tenants-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/protect_tenants_tmp.py
+      - name: Validate
+        run: |
+          node --check lib/sandbox-runtime.js
+          grep -q 'authorizeTenantRequest(req, tenant)' lib/sandbox-runtime.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/sandbox-runtime.js
+          git diff --cached --quiet || git commit -m 'Protege acesso aos tenants por autenticacao'
+          git push
