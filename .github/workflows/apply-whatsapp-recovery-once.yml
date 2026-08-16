@@ -1,0 +1,34 @@
+name: Apply WhatsApp Recovery Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-whatsapp-recovery-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply recovery patch
+        run: |
+          python3 tools/apply_whatsapp_recovery_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q 'scheduleWhatsAppRecovery' tools/vercel-whatsapp-worker.mjs
+      - name: Commit worker
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Adiciona recuperacao automatica do WhatsApp' || true
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Reload and validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST -H "Authorization: Bearer $GH_TOKEN" -H "X-BotGuincho-Source-Ref: $SOURCE_REF" -H 'Content-Type: application/json' -o /tmp/reload.json -w '%{http_code}' https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e '.ok==true and .whatsappStatus=="pronto" and .workerProcessCount==1' /tmp/reload.json >/dev/null
