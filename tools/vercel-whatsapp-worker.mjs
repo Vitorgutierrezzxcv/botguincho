@@ -65,6 +65,8 @@ const DEFAULT_SETTINGS = {
   aiInstructions: 'Atenda somente mensagens operacionais relacionadas a guincho, reboque e assistência. Seja curto, direto e não faça perguntas de triagem.',
   replyEveryMessage: true,
   humanTakeover: false,
+  serviceState: 'MG',
+  priorityCities: [],
 };
 
 function getAiClient() {
@@ -743,14 +745,29 @@ const BRAZIL_STATE_BY_NAME = {
 };
 const BRAZIL_UFS = new Set(Object.values(BRAZIL_STATE_BY_NAME));
 
-const SERVICE_STATE = 'MG';
-const RMBH_PRIORITY_CITIES = [
+const DEFAULT_SERVICE_STATE = 'MG';
+const DEFAULT_PRIORITY_CITIES = [
   'Belo Horizonte','Betim','Contagem','Nova Lima','Ribeirão das Neves','Sabará','Santa Luzia',
   'Ibirité','Confins','Lagoa Santa','Vespasiano','Pedro Leopoldo','São José da Lapa','Matozinhos',
   'Sarzedo','Mário Campos','Brumadinho','Igarapé','Juatuba','Mateus Leme','Esmeraldas','Caeté',
   'Nova União','Rio Acima','Raposos','Itaguara','Itatiaiuçu','Florestal','Baldim','Capim Branco',
 ];
-const RMBH_PRIORITY_KEYS = RMBH_PRIORITY_CITIES.map((city) => normalizeForIntent(city));
+let configuredServiceState = DEFAULT_SERVICE_STATE;
+let configuredPriorityCities = [...DEFAULT_PRIORITY_CITIES];
+let configuredPriorityKeys = configuredPriorityCities.map((city) => normalizeForIntent(city));
+
+async function refreshServiceArea() {
+  const settings = await getSettings();
+  const state = normalizeBrazilState(settings.serviceState || DEFAULT_SERVICE_STATE);
+  configuredServiceState = state || DEFAULT_SERVICE_STATE;
+  const cities = Array.isArray(settings.priorityCities) ? settings.priorityCities.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 80) : [];
+  configuredPriorityCities = cities.length ? cities : (configuredServiceState === 'MG' ? [...DEFAULT_PRIORITY_CITIES] : []);
+  configuredPriorityKeys = configuredPriorityCities.map((city) => normalizeForIntent(city));
+}
+
+function serviceAreaLabel() {
+  return configuredPriorityCities.length ? `${configuredServiceState} · cidades prioritárias configuradas` : configuredServiceState;
+}
 
 function explicitBrazilState(value = '') {
   const state = detectBrazilState(value);
@@ -759,13 +776,13 @@ function explicitBrazilState(value = '') {
 
 function isExplicitlyOutOfCoverage(value = '') {
   const state = explicitBrazilState(value);
-  return Boolean(state && state !== SERVICE_STATE);
+  return Boolean(state && state !== configuredServiceState);
 }
 
 function preferredRmbhCity(value = '') {
   const normalized = normalizeForIntent(value);
-  const index = RMBH_PRIORITY_KEYS.findIndex((key) => normalized.includes(key));
-  return index >= 0 ? RMBH_PRIORITY_CITIES[index] : '';
+  const index = configuredPriorityKeys.findIndex((key) => normalized.includes(key));
+  return index >= 0 ? configuredPriorityCities[index] : '';
 }
 
 async function reverseGeocodeState(coordinates) {
@@ -779,7 +796,7 @@ async function reverseGeocodeState(coordinates) {
     url.searchParams.set('addressdetails', '1');
     const response = await fetch(url, {
       headers: {
-        'user-agent': 'BotGuincho/1.5 (cobertura-MG; https://botguincho.vercel.app/)',
+        'user-agent': 'BotGuincho/2.0 (cobertura-configuravel; https://botguincho.vercel.app/)',
         'accept-language': 'pt-BR,pt;q=0.9',
       },
       signal: AbortSignal.timeout(9000),
@@ -798,7 +815,7 @@ async function targetWithinServiceArea({ address = null, coordinates = null } = 
   if (address && isExplicitlyOutOfCoverage(address)) return false;
   if (coordinates && validCoordinates(coordinates.latitude, coordinates.longitude)) {
     const state = await reverseGeocodeState(coordinates);
-    if (state) return state === SERVICE_STATE;
+    if (state) return state === configuredServiceState;
   }
   return true;
 }
@@ -1181,7 +1198,7 @@ async function geocodeAddress(address) {
     const structured = await nominatimLookup({
       street: [parts.number, parts.street].filter(Boolean).join(' '),
       city: parts.city,
-      state: parts.state || SERVICE_STATE,
+      state: parts.state || configuredServiceState,
       postalcode: parts.cep || undefined,
       country: 'Brasil',
     }, expectedLocation).catch((error) => {
@@ -1479,7 +1496,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
   const originAddress = extractLabeledField(readableText, 'Origem');
   const destinationAddress = extractLabeledField(readableText, 'Destino');
   if (originAddress && isExplicitlyOutOfCoverage(originAddress)) {
-    await replyAndRemember(msg, groupName, readableText, 'Fora da área de atendimento. Atendemos somente Minas Gerais.', { intent: 'dispatch-out-of-coverage', originAddress });
+    await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, { intent: 'dispatch-out-of-coverage', originAddress });
     return;
   }
   const shared = await getRecentSharedLocation(msg.from);
@@ -1622,7 +1639,7 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') 
     return;
   }
   if (!(await targetWithinServiceArea({ address: target.targetAddress, coordinates: target.targetCoordinates }))) {
-    await replyAndRemember(msg, groupName, readableText, 'Fora da área de atendimento. Atendemos somente Minas Gerais.', { intent: 'out-of-coverage', targetSource: target.source });
+    await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, { intent: 'out-of-coverage', targetSource: target.source });
     return;
   }
 
@@ -1693,7 +1710,7 @@ async function handleStandaloneAddress(msg, groupName, readableText) {
   if (!targetAddress) return false;
 
   if (isExplicitlyOutOfCoverage(targetAddress)) {
-    await replyAndRemember(msg, groupName, readableText, 'Fora da área de atendimento. Atendemos somente Minas Gerais.', {
+    await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, {
       intent: 'out-of-coverage',
       targetAddress,
     });
@@ -1702,7 +1719,7 @@ async function handleStandaloneAddress(msg, groupName, readableText) {
 
   const directCoordinates = coordinatesFromText(targetAddress) || (extractMapsUrl(targetAddress) ? await coordinatesFromMapsUrl(targetAddress) : null);
   if (directCoordinates && !(await targetWithinServiceArea({ coordinates: directCoordinates }))) {
-    await replyAndRemember(msg, groupName, readableText, 'Fora da área de atendimento. Atendemos somente Minas Gerais.', {
+    await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, {
       intent: 'out-of-coverage-coordinates',
       targetAddress,
     });
@@ -1760,7 +1777,7 @@ async function handleDistanceQuestion(msg, groupName, readableText, quotedText =
     return;
   }
   if (!(await targetWithinServiceArea({ address: target.targetAddress, coordinates: target.targetCoordinates }))) {
-    await replyAndRemember(msg, groupName, readableText, 'Fora da área de atendimento. Atendemos somente Minas Gerais.', { intent: 'out-of-coverage', targetSource: target.source });
+    await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, { intent: 'out-of-coverage', targetSource: target.source });
     return;
   }
 
@@ -2124,6 +2141,7 @@ async function buildOperationalHealth() {
     checks,
     groupsSelected: (await getAllowedGroupIds()).size,
     recentErrors,
+    serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities, label: serviceAreaLabel() },
   };
 }
 
@@ -2178,6 +2196,7 @@ app.get('/api/status', async (_req, res) => {
     ai: { configured: Boolean(aiCredential), enabled: settings.aiEnabled, model: settings.aiModel },
     tracker: trackerSummary(reading, pairCode),
     groupsSelected: allowed.size,
+    serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities },
   });
 });
 
@@ -2206,9 +2225,13 @@ app.post('/api/settings', async (req, res) => {
     aiInstructions: typeof req.body?.aiInstructions === 'string' ? req.body.aiInstructions.slice(0, 8000) : undefined,
     replyEveryMessage: req.body?.replyEveryMessage !== false,
     humanTakeover: Boolean(req.body?.humanTakeover),
+    serviceState: typeof req.body?.serviceState === 'string' ? normalizeBrazilState(req.body.serviceState) || configuredServiceState : undefined,
+    priorityCities: Array.isArray(req.body?.priorityCities) ? req.body.priorityCities.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 80) : undefined,
   };
   Object.keys(patch).forEach((key) => patch[key] === undefined && delete patch[key]);
-  res.json({ ok: true, settings: await saveSettings(patch) });
+  const settings = await saveSettings(patch);
+  await refreshServiceArea();
+  res.json({ ok: true, settings, serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities } });
 });
 
 app.get('/api/tracker', async (_req, res) => {
@@ -2280,6 +2303,7 @@ app.get('/health', async (_req, res) => {
 
 await ensureDir();
 await getPairCode();
+await refreshServiceArea();
 await startWhatsApp();
 
 app.listen(port, '0.0.0.0', () => console.log(`[worker:${clientId}] listening on ${port}`));
