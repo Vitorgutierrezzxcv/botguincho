@@ -487,6 +487,15 @@ function asksAvailability(text = '') {
   return /\b(disponivel|disponibilidade|tem guincho|tem reboque|consegue atender|pode atender|tem como atender|esta livre|ta livre)\b/.test(value);
 }
 
+function greetingReply(text = '') {
+  const value = normalizeForIntent(text).replace(/[!.,;:?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(bom dia|oi bom dia|ola bom dia|opa bom dia)$/.test(value)) return 'Bom dia! 👋';
+  if (/^(boa tarde|oi boa tarde|ola boa tarde|opa boa tarde)$/.test(value)) return 'Boa tarde! 👋';
+  if (/^(boa noite|oi boa noite|ola boa noite|opa boa noite)$/.test(value)) return 'Boa noite! 👋';
+  if (/^(oi|ola|opa)$/.test(value)) return 'Olá! 👋';
+  return null;
+}
+
 function asksEta(text = '') {
   const value = normalizeForIntent(text);
   return /\b(quanto tempo|qual (?:o )?tempo|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)\b/.test(value);
@@ -1226,6 +1235,27 @@ async function computeEtaToClient({ targetAddress = null, targetCoordinates = nu
   };
 }
 
+async function computeEtaWithRetry(input = {}, options = {}) {
+  const attempts = Math.max(1, Math.min(3, Number(options.attempts || 3)));
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const eta = await computeEtaToClient(input);
+      if (eta) {
+        if (attempt > 1) logEvent('recovery', `ETA recuperado na tentativa ${attempt}.`);
+        return eta;
+      }
+      lastError = new Error('ETA indisponível sem erro explícito.');
+    } catch (error) {
+      lastError = error;
+      logEvent('warning', `Tentativa ${attempt}/${attempts} de ETA falhou.`, { error: String(error) });
+    }
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+  }
+  if (lastError) logEvent('safety', 'ETA suspenso após tentativas; nenhum dado antigo será reutilizado.', { error: String(lastError) });
+  return null;
+}
+
 function trackerContextText(location) {
   if (!location) return '';
   const parts = [`Veículo rastreado: ${location.plate || 'guincho'}`];
@@ -1355,7 +1385,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
 
   let eta = null;
   try {
-    eta = await computeEtaToClient({
+    eta = await computeEtaWithRetry({
       targetAddress: state.originAddress,
       targetCoordinates: state.originCoordinates,
     });
@@ -1377,8 +1407,13 @@ async function handleDispatch(msg, groupName, readableText, location) {
     eta,
   });
 
-  const reply = formatEtaReply(eta, true);
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'dispatch', etaMinutes: eta?.minutes ?? null });
+  const reply = eta
+    ? formatEtaReply(eta, true)
+    : 'Confirmado ✅\nEstou atualizando a localização para calcular a previsão.';
+  await replyAndRemember(msg, groupName, readableText, reply, {
+    intent: eta ? 'dispatch' : 'dispatch-safe-mode',
+    etaMinutes: eta?.minutes ?? null,
+  });
 }
 
 function looksLikeAddressCandidate(value = '') {
@@ -1465,7 +1500,7 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') 
 
   let eta = null;
   try {
-    eta = await computeEtaToClient({
+    eta = await computeEtaWithRetry({
       targetAddress: target.targetAddress,
       targetCoordinates: target.targetCoordinates,
     });
@@ -1478,7 +1513,7 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') 
   }
 
   if (!eta) {
-    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a previsão agora.', { intent: 'eta-unavailable', targetSource: target.source });
+    await replyAndRemember(msg, groupName, readableText, 'Estou atualizando a localização para calcular a previsão. Tente novamente em alguns segundos.', { intent: 'eta-unavailable', targetSource: target.source });
     return;
   }
 
@@ -1508,7 +1543,7 @@ async function handleDistanceQuestion(msg, groupName, readableText, quotedText =
 
   let eta = null;
   try {
-    eta = await computeEtaToClient({
+    eta = await computeEtaWithRetry({
       targetAddress: target.targetAddress,
       targetCoordinates: target.targetCoordinates,
     });
@@ -1521,7 +1556,7 @@ async function handleDistanceQuestion(msg, groupName, readableText, quotedText =
   }
 
   if (!eta) {
-    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular a rota agora.', { intent: 'distance-unavailable', targetSource: target.source });
+    await replyAndRemember(msg, groupName, readableText, 'Estou atualizando a localização para calcular a rota. Tente novamente em alguns segundos.', { intent: 'distance-unavailable', targetSource: target.source });
     return;
   }
 
@@ -1622,6 +1657,12 @@ async function processIncomingMessage(msg) {
 
     if (asksAvailability(readableText)) {
       await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability' });
+      return;
+    }
+
+    const greeting = greetingReply(readableText);
+    if (greeting) {
+      await replyAndRemember(msg, groupName, readableText, greeting, { intent: 'greeting' });
       return;
     }
 
