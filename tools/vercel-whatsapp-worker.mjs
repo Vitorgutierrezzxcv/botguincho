@@ -669,7 +669,7 @@ async function getDispatchState(groupId) {
   const state = states[groupId] ?? null;
   if (!state) return null;
   const age = Date.now() - new Date(state.updatedAt || state.createdAt || 0).getTime();
-  if (!Number.isFinite(age) || age > 12 * 60 * 60 * 1000) return null;
+  if (!Number.isFinite(age) || age > 2 * 60 * 60 * 1000) return null;
   return state;
 }
 
@@ -1759,6 +1759,19 @@ async function handleTrackerLocationQuestion(msg, groupName, readableText) {
 
 async function processIncomingMessage(msg) {
   try {
+    const messageId = msg?.id?._serialized || '';
+    if (messageId) {
+      const seenAt = processedMessageIds.get(messageId);
+      if (seenAt && Date.now() - seenAt < 6 * 60 * 60 * 1000) {
+        logEvent('dedupe', 'Mensagem repetida do WhatsApp ignorada.', { messageId });
+        return;
+      }
+      processedMessageIds.set(messageId, Date.now());
+      if (processedMessageIds.size > 1000) {
+        const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+        for (const [id, at] of processedMessageIds) if (at < cutoff) processedMessageIds.delete(id);
+      }
+    }
     if (msg.from === 'status@broadcast' || !msg.from?.endsWith('@g.us')) return;
 
     let groupName = 'Grupo do WhatsApp';
