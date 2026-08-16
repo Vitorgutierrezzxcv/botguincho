@@ -1,0 +1,35 @@
+name: Validate Master Monitor Once
+on:
+  push:
+    paths:
+      - 'api/control/overview.js'
+      - 'public/master.js'
+      - 'public/master.html'
+      - '.github/workflows/validate-master-monitor-once.yml'
+  workflow_dispatch:
+concurrency:
+  group: validate-master-monitor-once
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar sintaxe
+        run: |
+          node --check api/control/overview.js
+          node --check public/master.js
+          grep -q 'Central de empresas' public/master.html
+          grep -q 'Chamados hoje' public/master.js
+          grep -q '/api/control/overview' public/master.js
+      - name: Aguardar deploy
+        run: sleep 25
+      - name: Validar produção existente
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsS --retry 3 --retry-delay 5 https://botguincho.vercel.app/master.html | grep -q 'Central de empresas'
+          STATUS=$(curl -fsS --retry 3 --retry-delay 5 -H "Authorization: Bearer $GH_TOKEN" 'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste')
+          echo "$STATUS" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const j=JSON.parse(s);if(!j.whatsapp||!j.infrastructure)process.exit(1);console.log('WhatsApp:',j.whatsapp.status,'Tenant:',j.infrastructure.companyId||j.clientId)})"
+          echo 'MASTER_MONITOR_VALIDATION_OK'
