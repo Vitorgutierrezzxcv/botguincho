@@ -1,0 +1,26 @@
+name: Apply Tenant Auth PWA Once
+on:
+  push:
+    paths:
+      - 'tools/apply_tenant_auth_pwa_tmp.py'
+      - '.github/workflows/apply-tenant-auth-pwa-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/apply_tenant_auth_pwa_tmp.py
+      - name: Validate
+        run: |
+          node --check public/app.js
+          grep -q 'tenantAccessToken' public/app.js
+          grep -q 'authorization' public/app.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/app.js app.js
+          git diff --cached --quiet || git commit -m 'Adiciona autenticacao ao PWA multiempresa'
+          git push
