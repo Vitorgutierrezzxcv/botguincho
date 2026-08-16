@@ -1,0 +1,26 @@
+name: Apply Health Dashboard V2
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-health-dashboard-v2.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply dashboard patch
+        run: |
+          python3 tools/apply_health_dashboard_tmp.py
+          node --check app.js
+          node --check public/app.js
+          grep -q 'healthOverall' public/index.html
+      - name: Commit dashboard
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html public/index.html app.js public/app.js sw.js public/sw.js
+          git commit -m 'Adiciona painel de saude operacional ao PWA' || true
+          git push
