@@ -1,0 +1,42 @@
+name: Apply Phase2 Reliability V2
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-phase2-reliability-v2.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply reliability patch
+        run: |
+          python3 tools/apply_phase2_reliability_tmp.py
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "function dispatchFingerprint" tools/vercel-whatsapp-worker.mjs
+          grep -q "app.get('/api/health'" tools/vercel-whatsapp-worker.mjs
+          grep -q "routeProviderCanTry" tools/vercel-whatsapp-worker.mjs
+      - name: Commit worker
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Adiciona deduplicacao auditoria e health check' || true
+          git push
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Reload worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE=$(curl -sS -L --max-time 180 -X POST -H "Authorization: Bearer $GH_TOKEN" -H "X-BotGuincho-Source-Ref: $SOURCE_REF" -H 'Content-Type: application/json' -o /tmp/reload.json -w '%{http_code}' https://botguincho.vercel.app/api/worker/reload)
+          cat /tmp/reload.json; echo
+          test "$CODE" = "200"
+          jq -e '.ok==true and .whatsappStatus=="pronto" and .workerProcessCount==1' /tmp/reload.json >/dev/null
+      - name: Validate production
+        run: |
+          curl -fsSL --max-time 90 https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          jq -e '.whatsapp.status=="pronto" and .tracker.connected==true and .tracker.stale==false' /tmp/status.json >/dev/null
+          curl -fsSL --max-time 90 -X POST https://botguincho.vercel.app/api/worker/route-test -H 'content-type: application/json' -d '{"fromTracker":true,"to":"Av. Otacilio Negrao de Lima, s/n, Belo Horizonte"}' -o /tmp/route.json
+          jq -e '.ok==true and .route.minutes>0' /tmp/route.json >/dev/null
