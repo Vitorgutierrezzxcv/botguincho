@@ -1,0 +1,58 @@
+name: Final Management Acceptance
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/final-management-acceptance.yml']
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait production
+        run: sleep 30
+      - name: Health precheck
+        run: |
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 https://botguincho.vercel.app/api/worker/health -o /tmp/health.json
+          cat /tmp/health.json; echo
+          jq -e '.status=="operational" and .checks.whatsapp.ok==true and .checks.tracker.ok==true and .checks.routes.ok==true' /tmp/health.json >/dev/null
+      - name: Create test call
+        run: |
+          CALL_ID="acceptance-$(date +%s)-$RANDOM"
+          echo "CALL_ID=$CALL_ID" >> "$GITHUB_ENV"
+          jq -nc --arg id "$CALL_ID" '{action:"upsert",collection:"calls",item:{id:$id,vehicle:"ACEITE FINAL",client:"TESTE AUTOMATICO",origin:"Rua das Rosas, 314B, Betim - MG",destination:"Avenida Juscelino Kubitschek, 229, Centro, Betim - MG",status:"novo",value:199.90}}' > /tmp/create.json
+          curl -fsSL -X POST https://botguincho.vercel.app/api/worker/management -H 'content-type: application/json' --data-binary @/tmp/create.json -o /tmp/create.out
+          jq -e --arg id "$CALL_ID" '.ok==true and any(.data.calls[]; .id==$id and .status=="novo")' /tmp/create.out >/dev/null
+      - name: Complete call and validate finance automation
+        run: |
+          jq -nc --arg id "$CALL_ID" '{action:"upsert",collection:"calls",item:{id:$id,status:"concluido",value:199.90,vehicle:"ACEITE FINAL",client:"TESTE AUTOMATICO",origin:"Rua das Rosas, 314B, Betim - MG",destination:"Avenida Juscelino Kubitschek, 229, Centro, Betim - MG"}}' > /tmp/finish.json
+          curl -fsSL -X POST https://botguincho.vercel.app/api/worker/management -H 'content-type: application/json' --data-binary @/tmp/finish.json -o /tmp/finish.out
+          cat /tmp/finish.out; echo
+          jq -e --arg id "$CALL_ID" '.ok==true and any(.data.calls[]; .id==$id and .status=="concluido") and any(.data.finance[]; .sourceCallId==$id and .type=="receita" and .amount==199.9)' /tmp/finish.out >/dev/null
+          FIN_ID=$(jq -r --arg id "$CALL_ID" '.data.finance[]|select(.sourceCallId==$id)|.id' /tmp/finish.out | head -1)
+          test -n "$FIN_ID" && test "$FIN_ID" != "null"
+          echo "FIN_ID=$FIN_ID" >> "$GITHUB_ENV"
+      - name: Verify no duplicate finance entry
+        run: |
+          curl -fsSL -X POST https://botguincho.vercel.app/api/worker/management -H 'content-type: application/json' --data-binary @/tmp/finish.json -o /tmp/finish2.out
+          COUNT=$(jq --arg id "$CALL_ID" '[.data.finance[]|select(.sourceCallId==$id)]|length' /tmp/finish2.out)
+          echo "Finance entries for call: $COUNT"
+          test "$COUNT" = "1"
+      - name: Validate audit and PWA
+        run: |
+          curl -fsSL 'https://botguincho.vercel.app/api/worker/audit?limit=50' -o /tmp/audit.json
+          jq -e '.ok==true and (.entries|type)=="array"' /tmp/audit.json >/dev/null
+          curl -fsSL https://botguincho.vercel.app/ -o /tmp/index.html
+          curl -fsSL https://botguincho.vercel.app/app.js -o /tmp/app.js
+          grep -q 'Saúde da automação' /tmp/index.html
+          grep -q 'Financeiro' /tmp/index.html
+          node --check /tmp/app.js
+      - name: Cleanup test data
+        if: always()
+        run: |
+          if [ -n "${FIN_ID:-}" ]; then
+            jq -nc --arg id "$FIN_ID" '{action:"delete",collection:"finance",id:$id}' | curl -fsSL -X POST https://botguincho.vercel.app/api/worker/management -H 'content-type: application/json' --data-binary @- >/tmp/delete-fin.out || true
+          fi
+          if [ -n "${CALL_ID:-}" ]; then
+            jq -nc --arg id "$CALL_ID" '{action:"delete",collection:"calls",id:$id}' | curl -fsSL -X POST https://botguincho.vercel.app/api/worker/management -H 'content-type: application/json' --data-binary @- >/tmp/delete-call.out || true
+          fi
+          echo FINAL_MANAGEMENT_ACCEPTANCE_OK
