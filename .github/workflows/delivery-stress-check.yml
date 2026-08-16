@@ -1,0 +1,60 @@
+name: Delivery Stress Check
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/delivery-stress-check.yml']
+  workflow_dispatch:
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait deploy propagation
+        run: sleep 45
+      - name: Core health
+        run: |
+          set -e
+          curl -fsSL --retry 5 --retry-delay 5 --max-time 90 https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json; echo
+          jq -e '.whatsapp.status=="pronto" and .tracker.connected==true and .tracker.stale==false' /tmp/status.json >/dev/null
+          curl -fsSL --retry 5 --retry-delay 5 --max-time 90 https://botguincho.vercel.app/api/worker/health -o /tmp/health.json
+          cat /tmp/health.json; echo
+          jq -e '.status=="operational" and .checks.whatsapp.ok==true and .checks.tracker.ok==true and .checks.routes.ok==true' /tmp/health.json >/dev/null
+      - name: Route matrix RMBH
+        run: |
+          set -e
+          test_route(){
+            local address="$1"
+            echo "TEST: $address"
+            curl -fsSL --max-time 90 -X POST https://botguincho.vercel.app/api/worker/route-test -H 'content-type: application/json' -d "$(jq -nc --arg a "$address" '{fromTracker:true,to:$a}')" -o /tmp/route.json
+            cat /tmp/route.json; echo
+            jq -e '.ok==true and .route.minutes>0 and .route.distanceKm>0' /tmp/route.json >/dev/null
+          }
+          test_route 'Av. Otacilio Negrao de Lima, s/n, Belo Horizonte'
+          test_route 'Avenida Juscelino Kubitschek, 229, Centro, Betim'
+          test_route 'Avenida Joao Cesar de Oliveira, Centro, Contagem'
+          test_route 'LMG-800, Km 7.9, Confins - MG'
+          test_route 'Praca Bernardino de Lima, Nova Lima - MG'
+          test_route 'Rua Ari Teixeira da Costa, Ribeirao das Neves - MG'
+      - name: Reject outside Minas Gerais
+        run: |
+          CODE=$(curl -sSL --max-time 90 -o /tmp/outside.json -w '%{http_code}' -X POST https://botguincho.vercel.app/api/worker/route-test -H 'content-type: application/json' -d '{"fromTracker":true,"to":"Avenida Paulista, 1000, Sao Paulo - SP"}')
+          cat /tmp/outside.json; echo
+          echo "HTTP $CODE"
+          test "$CODE" = "422"
+          jq -e '.ok==false' /tmp/outside.json >/dev/null
+      - name: Management and audit
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 https://botguincho.vercel.app/api/worker/management -o /tmp/mgmt.json
+          jq -e '.ok==true and (.data.calls|type)=="array" and (.data.finance|type)=="array"' /tmp/mgmt.json >/dev/null
+          curl -fsSL --retry 5 --retry-delay 5 'https://botguincho.vercel.app/api/worker/audit?limit=20' -o /tmp/audit.json
+          jq -e '.ok==true and (.entries|type)=="array"' /tmp/audit.json >/dev/null
+      - name: PWA production
+        run: |
+          curl -fsSL https://botguincho.vercel.app/ -o /tmp/index.html
+          curl -fsSL https://botguincho.vercel.app/app.js -o /tmp/app.js
+          curl -fsSL https://botguincho.vercel.app/manifest.webmanifest -o /tmp/manifest.json
+          grep -q 'Saúde da automação' /tmp/index.html
+          node --check /tmp/app.js
+          jq -e '.display=="standalone" and .name=="Bot Guincho"' /tmp/manifest.json >/dev/null
+          echo 'DELIVERY_STRESS_OK'
