@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { writeFile } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 const APP_PACKAGE = process.env.GCONNECT_PACKAGE || 'br.com.getrak.gconnect';
@@ -9,10 +10,13 @@ const BRIDGE_URL = process.env.BOTGUINCHO_BRIDGE_URL || 'https://botguincho.verc
 const PAIR_CODE = (process.env.BOTGUINCHO_PAIR_CODE || '').trim().toUpperCase();
 const POLL_SECONDS = Math.max(10, Number(process.env.GCONNECT_POLL_SECONDS || 20));
 const CONFIGURED_SERIAL = (process.env.GCONNECT_ADB_SERIAL || '').trim();
+const HEARTBEAT_FILE = process.env.GCONNECT_HEARTBEAT_FILE || '/tmp/botguincho-gconnect-heartbeat';
+const MAX_CONSECUTIVE_FAILURES = Math.max(2, Number(process.env.GCONNECT_MAX_FAILURES || 4));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let cachedSerial = CONFIGURED_SERIAL;
 let announcedSerial = '';
+let consecutiveFailures = 0;
 
 async function execAdbRaw(args, timeout = 30000) {
   const { stdout = '', stderr = '' } = await execFileAsync('adb', args, {
@@ -156,10 +160,7 @@ function numberFrom(text) {
 function boundsCenter(bounds = '') {
   const m = String(bounds).match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
   if (!m) return null;
-  return {
-    x: Math.round((+m[1] + +m[3]) / 2),
-    y: Math.round((+m[2] + +m[4]) / 2),
-  };
+  return { x: Math.round((+m[1] + +m[3]) / 2), y: Math.round((+m[2] + +m[4]) / 2) };
 }
 
 function parseCardDescription(desc) {
@@ -176,10 +177,7 @@ function parseCardDescription(desc) {
   const bat = text.match(/Battery\s*,\s*([0-9.,]+)\s*V/i)?.[1];
   if (bat) r.batteryVoltage = numberFrom(bat);
   const addr = text.match(/Battery\s*,\s*[0-9.,]+\s*V\s*,\s*(.+?)\s*,\s*Last update on\s+(.+?)(?:\s*,\s*Active security options:|$)/i);
-  if (addr) {
-    r.address = addr[1].trim();
-    r.lastUpdateText = addr[2].trim();
-  }
+  if (addr) { r.address = addr[1].trim(); r.lastUpdateText = addr[2].trim(); }
   return r;
 }
 
@@ -188,40 +186,16 @@ function parseUiDump(xml) {
   const plateNode = nodes.find((n) => String(n['content-desc'] || '').toUpperCase().includes(PLATE));
   const card = parseCardDescription(plateNode?.['content-desc'] || '');
   if (!card.plate && nodes.some((n) => String(n.text || '').toUpperCase() === PLATE)) card.plate = PLATE;
-
   const texts = nodes.map((n) => n.text).filter(Boolean);
-  if (card.speedKph == null) {
-    const v = texts.find((t) => /km\/h$/i.test(t));
-    if (v) card.speedKph = numberFrom(v);
-  }
-  if (card.batteryVoltage == null) {
-    const v = texts.find((t) => /\d(?:[.,]\d+)?\s*V$/i.test(t));
-    if (v) card.batteryVoltage = numberFrom(v);
-  }
-  if (card.odometerKm == null) {
-    const v = texts.find((t) => /km$/i.test(t) && !/km\/h$/i.test(t) && /[0-9]/.test(t));
-    if (v) card.odometerKm = numberFrom(v);
-  }
-  if (!card.lastUpdateText) {
-    const v = texts.find((t) => /^Last update on /i.test(t));
-    if (v) card.lastUpdateText = v.replace(/^Last update on\s*/i, '');
-  }
+  if (card.speedKph == null) { const v = texts.find((t) => /km\/h$/i.test(t)); if (v) card.speedKph = numberFrom(v); }
+  if (card.batteryVoltage == null) { const v = texts.find((t) => /\d(?:[.,]\d+)?\s*V$/i.test(t)); if (v) card.batteryVoltage = numberFrom(v); }
+  if (card.odometerKm == null) { const v = texts.find((t) => /km$/i.test(t) && !/km\/h$/i.test(t) && /[0-9]/.test(t)); if (v) card.odometerKm = numberFrom(v); }
+  if (!card.lastUpdateText) { const v = texts.find((t) => /^Last update on /i.test(t)); if (v) card.lastUpdateText = v.replace(/^Last update on\s*/i, ''); }
   if (!card.address) {
     const c = texts.filter((t) => t.length > 20 && !/^Last update/i.test(t) && !/security/i.test(t));
     card.address = c.find((t) => /,/.test(t) && /[A-Za-zÀ-ÿ]/.test(t)) || null;
   }
-
-  return {
-    provider: 'gconnect-emulator',
-    plate: card.plate || PLATE,
-    ignition: card.ignition || null,
-    speedKph: card.speedKph ?? null,
-    odometerKm: card.odometerKm ?? null,
-    batteryVoltage: card.batteryVoltage ?? null,
-    address: card.address || null,
-    lastUpdateText: card.lastUpdateText || null,
-    capturedAt: new Date().toISOString(),
-  };
+  return { provider: 'gconnect-emulator', plate: card.plate || PLATE, ignition: card.ignition || null, speedKph: card.speedKph ?? null, odometerKm: card.odometerKm ?? null, batteryVoltage: card.batteryVoltage ?? null, address: card.address || null, lastUpdateText: card.lastUpdateText || null, capturedAt: new Date().toISOString() };
 }
 
 async function dumpUi() {
@@ -276,9 +250,7 @@ async function readLocation() {
   xml = await filterPlateIfNeeded(xml);
   const reading = parseUiDump(xml);
   if (!xml.toUpperCase().includes(PLATE)) throw new Error(`Veículo ${PLATE} não apareceu na tela atual do GConnect.`);
-  if (!reading.address && reading.speedKph == null && reading.batteryVoltage == null) {
-    throw new Error('GConnect aberto, mas o cartão do veículo não trouxe dados legíveis pelo UIAutomator.');
-  }
+  if (!reading.address && reading.speedKph == null && reading.batteryVoltage == null) throw new Error('GConnect aberto, mas o cartão do veículo não trouxe dados legíveis pelo UIAutomator.');
   return reading;
 }
 
@@ -286,37 +258,38 @@ async function sendReading(reading) {
   if (!PAIR_CODE) throw new Error('BOTGUINCHO_PAIR_CODE não configurado no agente.');
   const r = await fetch(BRIDGE_URL, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-botguincho-pair-code': PAIR_CODE,
-      'x-botguincho-agent': 'gconnect-emulator-v2',
-    },
+    headers: { 'content-type': 'application/json', 'x-botguincho-pair-code': PAIR_CODE, 'x-botguincho-agent': 'gconnect-emulator-v3' },
     body: JSON.stringify(reading),
     signal: AbortSignal.timeout(20000),
   });
   const t = await r.text();
   if (!r.ok) throw new Error(`Bridge HTTP ${r.status}: ${t.slice(0, 500)}`);
+  await writeFile(HEARTBEAT_FILE, `${Date.now()}\n`, 'utf8').catch(() => {});
 }
 
 async function cycle() {
   const reading = await readLocation();
   await sendReading(reading);
+  consecutiveFailures = 0;
   console.log(`[${new Date().toISOString()}] ${reading.plate} | ${reading.ignition || '?'} | ${reading.speedKph ?? '?'} km/h | ${reading.address || 'sem endereço'}`);
 }
 
 async function main() {
-  console.log(`GConnect Android Agent iniciado. placa=${PLATE} intervalo=${POLL_SECONDS}s`);
+  console.log(`GConnect Android Agent v3 iniciado. placa=${PLATE} intervalo=${POLL_SECONDS}s maxFalhas=${MAX_CONSECUTIVE_FAILURES}`);
   while (true) {
     try {
       await cycle();
     } catch (e) {
-      console.error(`[${new Date().toISOString()}] ${e instanceof Error ? e.message : String(e)}`);
+      consecutiveFailures += 1;
+      console.error(`[${new Date().toISOString()}] falha ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}: ${e instanceof Error ? e.message : String(e)}`);
+      cachedSerial = '';
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        console.error('Falhas consecutivas excedidas. Encerrando para o systemd reiniciar o agente.');
+        process.exit(42);
+      }
     }
     await sleep(POLL_SECONDS * 1000);
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });
