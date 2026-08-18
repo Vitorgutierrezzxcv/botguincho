@@ -1,0 +1,43 @@
+name: Apply Reply Fix Once
+on:
+  push:
+    paths: ['.github/workflows/apply-reply-fix-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recarregar worker com código atual
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"companyId":"cliente-teste"}' \
+            'https://botguincho.vercel.app/api/worker/reload?companyId=cliente-teste' -o /tmp/reload.json
+          cat /tmp/reload.json
+          sleep 20
+      - name: Validar worker
+        run: |
+          set -e
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 4 --max-time 120 'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste' -o /tmp/health.json
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste' -o /tmp/status.json
+          jq -e '.checks.whatsapp.ok == true' /tmp/health.json >/dev/null
+          jq -e '.checks.tracker.ok == true' /tmp/health.json >/dev/null
+          jq -e '.checks.routes.ok == true' /tmp/health.json >/dev/null
+          node - <<'NODE'
+          const fs=require('fs'); const h=JSON.parse(fs.readFileSync('/tmp/health.json')); const s=JSON.parse(fs.readFileSync('/tmp/status.json'));
+          fs.mkdirSync('ops',{recursive:true}); fs.writeFileSync('ops/reply-fix-status.json',JSON.stringify({checkedAt:new Date().toISOString(),health:h.status,whatsapp:s.whatsapp?.status,tracker:s.tracker?.connected,groupsSelected:s.groupsSelected},null,2));
+          NODE
+      - name: Registrar validação
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/reply-fix-status.json
+          git diff --cached --quiet || git commit -m 'Valida correção de resposta do bot'
+          git push
