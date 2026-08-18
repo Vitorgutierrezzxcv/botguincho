@@ -1,0 +1,93 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "América Betim e Região SOLUÇÃO ASSISTÊNCIA",
+  "period": "2026-01-07 a 2026-08-18",
+  "messageCount": 3192,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "Disponível?",
+      "Olá, bom dia. Disponível para uma remoção?",
+      "ficha completa do veículo + origem/destino + Disponível?"
+    ],
+    "eta": [
+      "Qual a prévia?",
+      "60?",
+      "pergunta de tempo normalmente vem após confirmação de disponibilidade"
+    ],
+    "authorization": [
+      "Pode seguir",
+      "PODE SEGUIR",
+      "seguir",
+      "após autorização é enviado protocolo completo/WebPrestador"
+    ],
+    "cancellationOrAbort": [
+      "pode retornar",
+      "associado dispensou",
+      "conseguiu resolver",
+      "pode fechar na saída",
+      "meia saída aparece em alguns cancelamentos e exige revisão humana"
+    ],
+    "completion": [
+      "finalizado",
+      "fecha em quantos kms?",
+      "envie km totais e valor",
+      "finalizado na saída",
+      "confere?"
+    ],
+    "evidenceRequirements": [
+      "fotos dos quatro ângulos na origem",
+      "fotos dos quatro ângulos no destino",
+      "foto do estepe em alguns atendimentos",
+      "quilometragem total e valor para fechamento"
+    ]
+  },
+  "commercialRules": {
+    "status": "versioned_and_requires_approval_before_finance",
+    "latestObserved": {
+      "leve": {
+        "baseBRL": 130,
+        "includedKm": 40,
+        "excessKmBRL": 3.0,
+        "formula": "130 + max(0, kmTotal-40)*3.00"
+      },
+      "utilitario": {
+        "baseBRL": 160,
+        "includedKm": 40,
+        "excessKmBRL": 3.2,
+        "formula": "160 + max(0, kmTotal-40)*3.20"
+      },
+      "dirtRoadKmBRL": 3.5
+    },
+    "historicalObserved": [
+      {
+        "effectiveAround": "2026-03-20",
+        "leve": "R$130 até 40 km; R$2,90/km; terra R$3,50/km",
+        "moto": "R$130 até 40 km; R$2,60/km; terra R$3,50/km",
+        "utilitario": "R$150 até 40 km; R$3,00/km; terra R$3,50/km",
+        "note": "tabela fotografada na conversa; posteriormente ocorreram alterações"
+      },
+      {
+        "effectiveAfter": "2026-03-20",
+        "note": "supervisão informou alteração para R$3,00/km no leve e atualizou a descrição do grupo"
+      }
+    ],
+    "validatedExamples": [
+      "leve 45 km => R$145,00",
+      "leve 53 km => R$169,00",
+      "leve 54 km => R$172,00",
+      "leve 59 km => R$187,00",
+      "leve 60 km => R$190,00",
+      "utilitário 64 km => R$236,80",
+      "utilitário 65 km => R$240,00"
+    ]
+  },
+  "botBehavior": [
+    "Não confirmar serviço apenas porque a ficha contém origem/destino se a mensagem ainda pergunta disponibilidade.",
+    "Após 'Pode seguir', marcar atendimento como autorizado/ativo e aguardar protocolo completo sem responder como nova disponibilidade.",
+    "Quando pedirem prévia, responder ETA calculado pelo rastreador, não tempo fixo histórico.",
+    "No fechamento, registrar km total, valor calculado/confirmado, fotos/checklist e status concluído.",
+    "Tarifa deve ser versionada por data; nunca sobrescrever histórico financeiro com tabela nova.",
+    "Meia saída e exceções comerciais devem exigir confirmação humana até regra específica ser aprovada."
+  ]
+}
