@@ -837,8 +837,21 @@ function extractCep(value = '') {
   return match ? `${match[1]}-${match[2]}` : '';
 }
 
+function normalizeLabeledBrazilAddress(value = '') {
+  return cleanAddressQuery(value)
+    .replace(/\bBAIRRO\s*:\s*/gi, ', ')
+    .replace(/\bCIDADE\s*:\s*/gi, ', ')
+    .replace(/\bESTADO\s*:\s*/gi, ', ')
+    .replace(/\b(?:PA[IÍ]S|PAS)\s*:\s*BRASIL\b/gi, '')
+    .replace(/\s*,\s*,+/g, ', ')
+    .replace(/\s+-\s*,/g, ',')
+    .replace(/,\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function parseBrazilAddress(address = '') {
-  const query = cleanAddressQuery(address);
+  const query = normalizeLabeledBrazilAddress(address);
   const cep = extractCep(query);
   const withoutCep = query.replace(/\b\d{5}-?\d{3}\b/g, '').replace(/\s+,/g, ',').trim();
   const parts = withoutCep.split(',').map((part) => part.trim()).filter(Boolean);
