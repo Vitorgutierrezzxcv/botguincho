@@ -43,6 +43,7 @@ const activity = [];
 const groupMemory = new Map();
 const sharedLocations = new Map();
 const routeProviderState = new Map();
+const processedMessageIds = new Map();
 
 const SYSTEM_AI_RULES = `
 REGRAS PRIORITÁRIAS DO BOT GUINCHO:
