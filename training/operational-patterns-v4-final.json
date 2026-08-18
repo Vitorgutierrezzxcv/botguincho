@@ -1,0 +1,89 @@
+{
+  "version": 4,
+  "source": {
+    "screenshots": 184,
+    "whatsappExports": [
+      {"group":"Solução Assistência","messages":3192},
+      {"group":"Top Brasil","messages":409},
+      {"group":"Saturno","messages":764},
+      {"group":"Plus Assistência","messages":5202,"note":"exportação ampliada; sobreposição deduplicada conceitualmente"},
+      {"group":"Company Truck","messages":1266},
+      {"group":"Horizonte","messages":704},
+      {"group":"Socorre Assistência","messages":1723},
+      {"group":"Premium Assistência","messages":984},
+      {"group":"Assistência Segura","messages":568},
+      {"group":"Power","messages":1496}
+    ],
+    "cataloguedMessages": 16308,
+    "privacy": "anonymized",
+    "reviewedAt": "2026-08-18"
+  },
+  "principles": [
+    "Disponibilidade, cotação, aguardando aprovação, autorização, protocolo, agendamento, execução, evidência, fechamento e pagamento são estados distintos.",
+    "Ficha completa com 'disponível?' ou pedido de valor/prévia continua sendo consulta/cotação.",
+    "Alguns grupos formalizam o serviço com protocolo definitivo após disponibilidade/prévia mesmo sem a frase 'pode seguir'; a sequência e o tipo de documento precisam ser considerados.",
+    "Mensagens como 'por enquanto não siga' ou 'vou passar para o administrativo' bloqueiam execução até autorização posterior.",
+    "Prévia/ETA sempre usa rastreador e rota atual; tempos históricos humanos servem apenas para reconhecer intenção.",
+    "Agendamento futuro guarda data/hora própria e não usa ETA da posição atual como compromisso de execução.",
+    "Tarifas são versionadas por grupo, associação, tipo de veículo e vigência; descrição atual aprovada é preferencial quando disponível.",
+    "Valor enviado pela central é dado de conferência, não verdade absoluta: divergência matemática gera revisão.",
+    "Pedágio, NF, hora trabalhada, hora parada e outros extras são linhas financeiras separadas e exigem regra aprovada.",
+    "Cancelamento/recusa antes da execução não gera receita, salvo regra comercial explícita e aprovada em sentido contrário.",
+    "Requisitos de fotos, vídeo, checklist e WebPrestador viram pendências operacionais do chamado.",
+    "Comunicados administrativos e regras do grupo devem ser aprendidos sem gerar respostas automáticas desnecessárias."
+  ],
+  "intentFixtures": [
+    {"text":"Bom dia, disponível? Origem: Rua X, 100 - Betim - MG Destino: Rua Y, 200 - Contagem - MG","intent":"availability"},
+    {"text":"Disponível? Valor e prévia? Quantos kms totais?","intent":"quote"},
+    {"text":"Cotação Visão é apenas estimativa (não aprovada)","intent":"quote"},
+    {"text":"Aguarda um momento, vou passar para o administrativo; por enquanto não siga","intent":"pending_approval"},
+    {"text":"Pode seguir","intent":"authorization"},
+    {"text":"Segue acionamento e link para executá-lo","intent":"authorization_or_formal_dispatch"},
+    {"text":"AGENDAMENTO PARA AMANHÃ AS 7:30","intent":"scheduled_dispatch"},
+    {"text":"Cancelado sem saída","intent":"cancellation"},
+    {"text":"Pode desconsiderar","intent":"cancellation"},
+    {"text":"Finalizado","intent":"closure"},
+    {"text":"Confere fechamento?","intent":"closure"},
+    {"text":"Sr. prestador, evitem mensagens informando disponibilidade neste grupo","intent":"administrative_notice"}
+  ],
+  "groupSpecificSafety": [
+    {"group":"Power","rule":"never_send_proactive_availability_broadcasts"},
+    {"group":"Power","rule":"pending_admin_approval_blocks_execution"},
+    {"group":"Company Truck","rule":"cotacao_visao_never_confirms_or_creates_revenue"},
+    {"group":"Assistência Segura","rule":"administrative_notices_do_not_trigger_operational_reply"},
+    {"group":"Horizonte","rule":"formal_protocol_after_acceptance_can_mark_dispatch_even_without_pode_seguir"},
+    {"group":"Socorre","rule":"identify_association_before_pricing"},
+    {"group":"Premium","rule":"payment_calendar_is_ambiguous_in_export_do_not_autofill_due_date"}
+  ],
+  "financeRegression": [
+    {"group":"Horizonte","formula":"135 + max(0, km-40)*3.00","km":47,"expected":156.00,"observedFrom":"2026-04"},
+    {"group":"Horizonte","formula":"135 + max(0, km-40)*3.00","km":63,"expected":204.00,"observedFrom":"2026-04"},
+    {"group":"Socorre Auto Care","formula":"135 + max(0, km-40)*3.00","km":60,"expected":195.00},
+    {"group":"Socorre Auto Care","formula":"135 + max(0, km-40)*3.00","km":42,"expected":141.00},
+    {"group":"Socorre ATS","formula":"120 + max(0, km-40)*3.00","km":49,"expected":147.00,"vehicle":"leve"},
+    {"group":"Socorre ATS","formula":"160 + max(0, km-40)*3.20","km":49,"expected":188.80,"vehicle":"utilitario"},
+    {"group":"Premium","formula":"135 + max(0, km-40)*3.00","km":51,"expected":168.00},
+    {"group":"Premium","formula":"160 + max(0, km-40)*3.20","km":53,"expected":201.60,"vehicle":"utilitario"},
+    {"group":"Assistência Segura","formula":"135 + max(0, km-40)*3.00","km":86,"expected":273.00},
+    {"group":"Power","formula":"130 + max(0, km-40)*2.90","km":82,"expected":251.80,"historical":true},
+    {"group":"Power","formula":"150 + max(0, km-40)*3.00","km":82,"expected":276.00,"vehicle":"utilitario","historical":true},
+    {"group":"Power","formula":"135 + max(0, km-40)*3.00 + 30","km":72,"expected":261.00,"historicalInvoiceExtra":true}
+  ],
+  "commercialSafetyFixtures": [
+    {"case":"Assistência Segura: 96 km informado como R$298 com fórmula observada 135 + excedente*3","expected":"flag_manual_review"},
+    {"case":"Premium: linha isolada com saída R$130 enquanto padrão observado é R$135","expected":"flag_manual_review"},
+    {"case":"Socorre: associação ATS usa tabela diferente de Auto Care","expected":"select_rate_by_association"},
+    {"case":"Power: custo de NF mudou de R$20 para R$30 no histórico","expected":"version_extra_and_require_current_approval"},
+    {"case":"descrição de grupo muda","expected":"append_new_commercial_version_pending_approval"},
+    {"case":"central informa valor diferente da fórmula aprovada","expected":"flag_manual_review"},
+    {"case":"pagamento/cadastro comunicado no grupo","expected":"learn_notice_without_operational_reply"}
+  ],
+  "operationalSafetyFixtures": [
+    {"case":"protocolo exige fotos dos 4 lados e checklist","expected":"create_evidence_tasks"},
+    {"case":"Power exige fotos do embarque no WebPrestador","expected":"evidence_required_before_ready_to_invoice"},
+    {"case":"Power diz por enquanto não siga","expected":"keep_pending_approval"},
+    {"case":"Horizonte envia protocolo definitivo após disponibilidade/prévia","expected":"associate_to_active_opportunity_and_formalize"},
+    {"case":"agendamento para data futura","expected":"store_schedule_without_live_eta_commitment"},
+    {"case":"cancelado sem custos/sem saída","expected":"close_without_revenue"}
+  ]
+}
