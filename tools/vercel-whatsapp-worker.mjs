@@ -1166,17 +1166,17 @@ async function geocodeAddress(address) {
 
   const parts = parseBrazilAddress(query);
   const explicitState = detectBrazilState(query);
-  if (explicitState && explicitState !== SERVICE_STATE) {
+  if (explicitState && explicitState !== configuredServiceState) {
     logEvent('coverage', `Endereço fora da cobertura: ${query}`, { explicitState });
     return null;
   }
   const priorityCity = preferredRmbhCity(query);
   const expectedLocation = {
-    state: explicitState || SERVICE_STATE,
+    state: explicitState || configuredServiceState,
     cities: uniqueQueries([
       priorityCity,
       ...(explicitState ? [parts.city, ...looseAddressCandidates(query).map((candidate) => candidate.city)] : []),
-      ...(!explicitState && !priorityCity ? RMBH_PRIORITY_CITIES : []),
+      ...(!explicitState && !priorityCity ? configuredPriorityCities : []),
     ]),
   };
 
