@@ -1,0 +1,102 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "America Guincho/ Contagem/Betim MG X Company Truck",
+  "period": "2026-02-02 a 2026-08-18",
+  "messageCount": 1266,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "Disponível? Valor e prévia?",
+      "Disponível? Valor e prévia? Quantos kms totais?",
+      "prestador anuncia proativamente motorista disponível e rota aproximada"
+    ],
+    "quote": [
+      "Solicitação de cotação",
+      "Cotação Visão é apenas estimativa e não aprovada",
+      "pedido pode trazer fotos, localização, dimensões do veículo, origem, destino e condições de acesso"
+    ],
+    "authorization": [
+      "Sim pode seguir",
+      "Pode seguir",
+      "serviço só pode ser executado após aprovação formal"
+    ],
+    "scheduled": [
+      "cotação pode ser agendada para data futura",
+      "execução pode ocorrer dias depois da aprovação",
+      "agendamento deve ser estado separado de atendimento imediato"
+    ],
+    "cancellationOrDecline": [
+      "prestador pode informar que não conseguirá realizar o atendimento e pedir repasse para outro prestador",
+      "não gerar receita quando o serviço não for executado"
+    ],
+    "completion": [
+      "finalizado",
+      "após execução há envio de vídeo/evidência, dados para nota fiscal e protocolo/valor",
+      "valor final deve ser conferido com cálculo interno"
+    ]
+  },
+  "commercialRules": {
+    "status": "observed_and_requires_approval_before_finance",
+    "leveObserved": {
+      "baseBRL": 135,
+      "includedKm": 40,
+      "excessKmBRL": 3.0,
+      "invoiceExtraObservedBRL": 20,
+      "formulaObserved": "135 + max(0, kmTotal-40)*3.00 + 20 de NF quando aplicável",
+      "evidence": [
+        "66 km => 135 + 26*3 + 20 = R$233",
+        "97 km => 135 + 57*3 + 20 = R$326",
+        "até 40 km => 135 + 20 = R$155"
+      ]
+    },
+    "utilitarioObserved": {
+      "baseBRL": 160,
+      "includedKm": 40,
+      "excessKmBRL": 3.2,
+      "invoiceExtraObservedBRL": 20,
+      "formulaObserved": "160 + max(0, kmTotal-40)*3.20 + 20 de NF quando aplicável",
+      "evidence": [
+        "125 km => 160 + 85*3,20 + 20 = R$452"
+      ]
+    },
+    "invoiceRules": [
+      "há cobrança observada de R$20 associada à nota fiscal em vários fechamentos",
+      "o favorecido do PIX deve ser o mesmo favorecido que emite a nota fiscal",
+      "a cobrança de NF é evidência histórica e precisa de aprovação antes de automatizar"
+    ],
+    "financeSafety": [
+      "não confundir valor de cotação com valor aprovado/faturável",
+      "Cotação Visão nunca deve criar receita",
+      "somente serviço formalmente aprovado e efetivamente executado pode ir ao financeiro",
+      "valor/protocolo informado pela central deve ser reconciliado com cálculo interno e extras aprovados"
+    ]
+  },
+  "operationalRequirements": [
+    "em atendimentos executados a Company exige vídeo mostrando placa e veículo sobre o reboque",
+    "o vídeo deve identificar atendimento para Company Truck, data e horário; histórico informa que sem o vídeo o pagamento pode não ser autorizado",
+    "solicitações podem informar rodas travadas, associado/terceiro, livre acesso, alinhamento com responsável e agendamento",
+    "Cotação Visão tem prazo de retorno e pode prever execução posterior após aprovação",
+    "origem/destino podem vir por endereço, Plus Code ou link do Google Maps",
+    "dimensões do veículo podem ser informadas para avaliar compatibilidade do reboque"
+  ],
+  "protocolStates": [
+    "cotacao_received",
+    "quote_sent",
+    "waiting_formal_approval",
+    "authorized",
+    "scheduled",
+    "in_execution",
+    "evidence_pending",
+    "invoice_pending",
+    "completed"
+  ],
+  "botBehavior": [
+    "'Solicitação de cotação' e especialmente 'Cotação Visão' são estimativas, nunca confirmação de serviço.",
+    "Perguntas contendo disponibilidade + valor + prévia + km totais devem gerar resposta de cotação, não 'Confirmado'.",
+    "Só mudar para autorizado após mensagem explícita como 'pode seguir' ou aprovação formal equivalente.",
+    "Agendamentos futuros devem guardar data/hora e não usar ETA de posição atual como horário de execução.",
+    "Ao executar serviço Company, criar checklist de vídeo obrigatório antes de considerar atendimento pronto para faturamento.",
+    "Nota fiscal e eventual adicional observado de NF devem ser separados e depender de regra aprovada.",
+    "Se o prestador recusar por rota, acesso, prancha incompatível ou indisponibilidade, encerrar a oportunidade sem receita."
+  ]
+}
