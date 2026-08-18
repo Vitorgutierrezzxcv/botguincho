@@ -2,7 +2,8 @@
   "source": "WhatsApp export anonimizado",
   "group": "América Guincho X Plus Assistência",
   "period": "2026-01-13 a 2026-08-18",
-  "messageCount": 3766,
+  "messageCount": 5202,
+  "mergePolicy": "exportação ampliada do mesmo grupo; conhecimento anterior substituído/expandido, sem duplicar exemplos sobrepostos",
   "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
   "conversationPatterns": {
     "availability": [
@@ -25,17 +26,17 @@
     ],
     "cancellationOrAbort": [
       "resolvido obrigada",
-      "desconsiderar/cancelamento aparece em parte do histórico",
-      "se central cancelar antes da execução, não criar receita"
+      "pessoal pode deixar, conseguiu resolver lá",
+      "desconsiderar/cancelamento antes da execução não gera receita"
     ],
     "completion": [
       "confere fechamento?",
       "conferência contém KM TOTAL, KM excedente, valor de saída e valor total",
-      "fechamento é recorrente e precisa de conferência contra a tabela vigente"
+      "fechamento deve ser comparado com a tabela vigente"
     ],
     "scheduled": [
       "AGENDAMENTO AMANHÃ + horário",
-      "agendamentos devem manter horário separado do ETA em tempo real"
+      "agendamento mantém horário próprio e não deve receber ETA em tempo real antes da execução"
     ]
   },
   "commercialRules": {
@@ -43,14 +44,14 @@
     "dimensions": [
       "data/vigência",
       "tipo do veículo/serviço",
-      "associação/cliente citado no protocolo (ex.: APM, POP e outras)",
+      "associação/cliente citado no protocolo",
       "extras como pedágio e hora trabalhada",
       "possível regra histórica de período noturno"
     ],
     "historicalObserved": [
       {
         "effectiveAround": "2026-01 a início de 2026-02",
-        "nightExample": {"baseBRL": 140, "includedKm": 40, "excessKmBRL": 2.7, "note": "regra noturna explicitamente usada em fechamento de 157 km => R$455,90"}
+        "nightExample": {"baseBRL": 140, "includedKm": 40, "excessKmBRL": 2.7, "note": "regra noturna usada em fechamento de 157 km => R$455,90"}
       },
       {
         "effectiveAround": "2026-02-05",
@@ -75,35 +76,37 @@
         "dirtRoadKmBRL": 3.5,
         "stoppedHourBRL": 80,
         "workedHourBRL": 80,
-        "note": "mensagem diz 'valores alterados' e confirmados junto ao financeiro"
+        "note": "mensagem informa valores alterados e confirmados junto ao financeiro"
       },
       {
         "effectiveAround": "2026-04",
-        "leveObserved": {"baseBRL": 135, "includedKm": 40, "excessKmBRL": 3.0},
-        "utilitarioObserved": {"baseBRL": 160, "includedKm": 40, "excessKmBRL": 3.2}
+        "leve": {"baseBRL": 135, "includedKm": 40, "excessKmBRL": 3.0},
+        "utilitario": {"baseBRL": 160, "includedKm": 40, "excessKmBRL": 3.2}
       },
       {
         "effectiveAround": "2026-05 a 2026-08",
         "leveObserved": {"baseBRL": 130, "includedKm": 40, "excessKmBRL": 3.0},
         "utilitarioLatestObserved": {"baseBRL": 170, "includedKm": 40, "excessKmBRL": 3.2},
         "workedHourObservedBRL": 50,
-        "note": "há mensagens contraditórias/erros de digitação em alguns fechamentos; descrição aprovada deve ser fonte principal"
+        "note": "descrição/tabela aprovada deve ser fonte principal, pois há mensagens contraditórias"
       }
     ],
     "extras": {
       "toll": "pedágio ida/volta aparece como item separado em fechamentos; lançar separadamente",
-      "workedHour": "há valores históricos de R$70, R$80 e depois R$50; deve ser versionado/aprovado",
+      "workedHour": "há valores históricos diferentes; versionar e exigir aprovação",
       "stoppedHour": "aparece em tabela histórica; não assumir valor atual sem descrição aprovada",
-      "closingSchedule": "pagamentos/fechamentos informados como quinzenais; histórico cita dias 15 e 30/31"
+      "closingSchedule": "histórico informa pagamentos/fechamentos nos dias 15 e 30/31"
     },
     "dataQualityWarnings": [
-      "alguns textos digitam 3,00/km mas o total corresponde a 3,20/km",
-      "alguns fechamentos enviados pela central divergem do cálculo do prestador",
-      "mesmo grupo atende múltiplas associações/seguradoras; não assumir que todas usam a mesma tarifa"
+      "há mensagens que digitam R$3,00/km mas cujo total corresponde a R$3,20/km",
+      "alguns fechamentos da central divergem do cálculo do prestador",
+      "o mesmo grupo atende múltiplas associações/seguradoras; não assumir tarifa única para todas",
+      "quando valor, tarifa escrita e fórmula divergirem, nunca escolher silenciosamente um deles"
     ],
     "validatedExamples": [
       "noturno histórico: 157 km, saída R$140, excedente R$2,70 => R$455,90",
       "leve 65 km, saída R$135, excedente R$3,00 => R$210,00",
+      "leve 62 km, saída R$130, excedente R$3,00 => R$196,00",
       "utilitário 79 km, saída R$170, excedente R$3,20 => R$294,80",
       "utilitário 78 km, saída R$170, excedente R$3,20 => R$291,60",
       "pedágio deve aparecer em linha financeira separada"
@@ -113,14 +116,14 @@
     "protocolos frequentemente incluem Link do WebPrestador",
     "é recorrente a proibição de transportar pessoa dentro do veículo sobre a prancha",
     "veículo rebaixado pode exigir checklist/fotos adicionais",
-    "serviços podem vir de APM BRASIL, POP PROTEÇÃO e outras entidades no mesmo grupo"
+    "o mesmo grupo passou a atender novas associações e seguradora sem alterar o fluxo de fechamento"
   ],
   "botBehavior": [
     "Não interpretar 'consegue esse?' ou 'disponível?' como autorização.",
-    "Prévia deve ser calculada pelo rastreador; não repetir tempos humanos fixos de 60/70/80 minutos.",
-    "Distinguir cotação de autorização e de protocolo definitivo.",
+    "Prévia deve ser calculada pelo rastreador; não repetir tempos humanos fixos.",
+    "Distinguir consulta, cotação, autorização, protocolo definitivo, cancelamento e fechamento.",
     "No fechamento, conferir automaticamente KM total, saída, excedente, extras e valor total.",
-    "Quando houver divergência matemática ou tarifa ambígua, criar alerta de conferência em vez de corrigir silenciosamente.",
+    "Quando houver divergência matemática ou tarifa ambígua, criar alerta de conferência.",
     "Tabela comercial deve ser vinculada à vigência e, quando possível, à associação/cliente do protocolo.",
     "Pedágio e hora trabalhada são adicionais separados e precisam de regra aprovada."
   ]
