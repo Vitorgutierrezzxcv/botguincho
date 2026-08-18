@@ -51,9 +51,13 @@ export function inferLearningIntent(text = '') {
     return 'scheduled_dispatch';
   }
 
-  if (/\b(pode seguir|seguir|pode ir|liberado|libera|fechado|confirmado|manda|enviando)\b/.test(value)) return 'authorization';
-  if (/\b(finalizamos|finalizado|finalizada|fechamento|quantos km|km totais|valor total|fotos no destino|fotos na origem)\b/.test(value)) return 'closure';
-  if (/\b(valor|quanto fica|cotacao|preco|previa|km totais|quilometragem|valor de saida|valor da saida)\b/.test(value)) return 'quote';
+  if (/\b(pode seguir|pode ir|liberado|libera|autorizado|autorizada)\b/.test(value) || /^seguir\??$/.test(value)) return 'authorization';
+
+  const hasClosingSignal = /\b(finalizamos|finalizado|finalizada|fechamento|fechado|concluido|concluida)\b/.test(value);
+  const hasClosingData = /\b(km\s*total|km\s*totais|quilometragem\s*total|valor\s*total|fotos\s+no\s+destino|fotos\s+na\s+origem)\b/.test(value);
+  if (hasClosingSignal || (hasClosingData && /\b(confere|final|fechar|fechamento)\b/.test(value))) return 'closure';
+
+  if (/\b(valor|quanto fica|cotacao|preco|previa|km totais|quilometragem|valor de saida|valor da saida|qual valor total)\b/.test(value)) return 'quote';
   if (/\b(disponivel|disponibilidade|consegue esse|consegue uma remocao|tem reboque|tem guincho)\b/.test(value)) return 'availability';
   if (/\b(quanto tempo|previsao|eta|chega em|demora)\b/.test(value)) return 'eta';
   if (/\b(origem|destino|reboque|guincho|veiculo|pane|colisao|remocao|protocolo)\b/.test(value)) return 'dispatch';
@@ -87,14 +91,18 @@ export function parseCommercialDescription(description = '') {
   }
   const worked = raw.match(/(?:hora\s+trabalhada|\bhp\b)\s*[:r$\s]*(\d{1,4}[.,]\d{2})/i);
   const stopped = raw.match(/(?:hora\s+parada|\bht\b)\s*[:r$\s]*(\d{1,4}[.,]\d{2})/i);
+  const invoice = raw.match(/(?:nota\s+fiscal|\bnf\b|emiss[aã]o\s+de\s+nf)\s*[:+r$\s]*(\d{1,4}[.,]\d{2})/i);
+  const tollAllowed = /\bped[aá]gio\b/i.test(raw) && !/\bped[aá]gio\b[^\n]{0,40}\b(?:nao|não)\s+(?:paga|incluso|aceito)\b/i.test(raw);
   const noSkates = /n[aã]o\s+tem\s+patins?/i.test(raw);
   return {
     raw,
     services,
     workedHour: worked ? brNumber(worked[1]) : null,
     stoppedHour: stopped ? brNumber(stopped[1]) : null,
+    invoiceFee: invoice ? brNumber(invoice[1]) : null,
+    tollAllowed,
     noSkates,
-    detected: Boolean(Object.keys(services).length || worked || stopped || noSkates),
+    detected: Boolean(Object.keys(services).length || worked || stopped || invoice || tollAllowed || noSkates),
   };
 }
 
