@@ -1,0 +1,73 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "Prest. America Guinchos x Power",
+  "period": "2026-01-16 a 2026-08-18",
+  "parsedMessageCount": 1496,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "assistência envia acionamento e pergunta valor/prévia",
+      "desde maio há aviso explícito para prestadores não publicarem mensagens proativas de disponibilidade neste grupo"
+    ],
+    "pendingApproval": [
+      "'vou passar o valor para o administrativo' + 'por enquanto não siga' significa aguardando aprovação",
+      "cotação/valor aceito ainda não é autorização"
+    ],
+    "authorization": [
+      "'pode seguir' libera execução",
+      "após liberação chega link do WebPrestador/protocolo"
+    ],
+    "completion": [
+      "serviço pode exigir nota fiscal antes do pagamento",
+      "central envia instrução de NF com protocolo/placa e link do acionamento",
+      "pagamentos a vista via PIX aparecem em parte do histórico, mas variam por assistência"
+    ],
+    "cancellation": [
+      "'cancelado sem saída' encerra o atendimento sem cobrança"
+    ]
+  },
+  "commercialRules": {
+    "status": "multi_assistance_versioned_and_requires_approval_before_finance",
+    "dimensions": [
+      "assistência/associação dentro do grupo",
+      "data/vigência",
+      "tipo do veículo",
+      "necessidade e custo de nota fiscal",
+      "pedágio e outras despesas"
+    ],
+    "historicalObserved": [
+      {
+        "effectiveAround": "2026-02",
+        "leve": {"baseBRL": 130, "includedKm": 40, "excessKmBRL": 2.90},
+        "utilitario": {"baseBRL": 150, "includedKm": 40, "excessKmBRL": 3.00},
+        "invoiceExtraObservedBRL": 20,
+        "examples": ["leve 82 km => R$251,80 antes da NF", "utilitário 82 km => R$276,00 antes da NF"]
+      },
+      {
+        "effectiveAround": "2026-04",
+        "leveObserved": {"baseBRL": 135, "includedKm": 40, "excessKmBRL": 3.00},
+        "invoiceExtraObservedBRL": 30,
+        "example": "72 km => R$231,00 + R$30,00 de NF = R$261,00"
+      }
+    ],
+    "dataQualityWarnings": [
+      "o grupo atende diversas assistências; valores não podem ser generalizados para todas",
+      "custo de NF mudou no histórico e não deve ser assumido como atual",
+      "alguns serviços têm valor fechado específico, independente da tabela histórica"
+    ]
+  },
+  "operationalRequirements": [
+    "marcação de chegada é realizada pelo link do acionamento em vários protocolos",
+    "para recebimento, vários protocolos exigem anexar fotos do embarque no WebPrestador",
+    "NF pode exigir protocolo e placa na descrição e anexação no link do acionamento",
+    "grupo pediu explicitamente para não enviar anúncios de disponibilidade, pois isso gera fluxo e chamados automáticos internos"
+  ],
+  "botBehavior": [
+    "Nunca enviar disponibilidade proativamente neste grupo.",
+    "'Por enquanto não siga' deve bloquear autorização mesmo que já exista cotação.",
+    "Somente 'pode seguir' ou aprovação equivalente muda para execução.",
+    "Vincular tarifa à assistência específica do protocolo.",
+    "NF, pedágio e valor fechado são itens separados; não misturar silenciosamente.",
+    "Cancelado sem saída não gera receita."
+  ]
+}
