@@ -1,0 +1,32 @@
+name: Reload Real Insurer Patterns Once
+on:
+  push:
+    paths:
+      - '.github/workflows/reload-real-insurer-patterns-once.yml'
+permissions:
+  contents: write
+jobs:
+  reload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Atualizar worker persistente
+        run: |
+          set -e
+          curl -fsS -X POST 'https://botguincho.vercel.app/api/worker/reload?companyId=cliente-teste' \
+            -H 'content-type: application/json' \
+            -H 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --data '{"source":"github-main"}' || true
+          sleep 30
+      - name: Validar produção
+        run: |
+          set -e
+          STATUS=$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste')
+          HEALTH=$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste')
+          STATUS="$STATUS" HEALTH="$HEALTH" node - <<'NODE'
+          const s=JSON.parse(process.env.STATUS), h=JSON.parse(process.env.HEALTH);
+          if(s.whatsapp?.status !== 'pronto') throw new Error('WhatsApp não está pronto: '+s.whatsapp?.status);
+          if(!h.checks?.tracker?.ok) throw new Error('Rastreador não está online');
+          if(!h.checks?.routes?.ok) throw new Error('Rotas não estão online');
+          console.log('REAL_INSURER_PATTERNS_PROD_OK');
+          NODE
