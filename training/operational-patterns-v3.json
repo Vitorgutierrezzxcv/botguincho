@@ -1,0 +1,70 @@
+{
+  "version": 3,
+  "source": {
+    "screenshots": 184,
+    "whatsappExports": [
+      {"group":"Solução Assistência","messages":3192},
+      {"group":"Top Brasil","messages":409},
+      {"group":"Saturno","messages":764},
+      {"group":"Plus Assistência","messages":5202,"note":"exportação ampliada do mesmo grupo; sobreposição deduplicada conceitualmente"},
+      {"group":"Company Truck","messages":1266}
+    ],
+    "privacy": "anonymized",
+    "reviewedAt": "2026-08-18"
+  },
+  "principles": [
+    "Ficha completa com pergunta de disponibilidade continua sendo consulta, não autorização.",
+    "Cotação, autorização, protocolo, agendamento, execução, evidência e fechamento são estados diferentes.",
+    "Cotação Visão da Company Truck é explicitamente não aprovada e nunca deve criar chamado confirmado ou receita.",
+    "Autorização exige linguagem explícita como pode seguir, segue, liberado ou aprovação formal equivalente.",
+    "Prévia deve vir da posição atual do rastreador e da rota, nunca de tempos históricos fixos.",
+    "Agendamento futuro não usa ETA da posição atual como horário de execução.",
+    "Tabela comercial deve ser versionada por data e pode variar por grupo, tipo de veículo e entidade atendida.",
+    "Valor recebido da central deve ser comparado com cálculo interno; divergência gera alerta e nunca correção silenciosa.",
+    "Pedágio, hora trabalhada, hora parada, nota fiscal e outras exceções são adicionais separados e só entram automaticamente se houver regra aprovada.",
+    "Cancelamento ou recusa antes da execução encerra a oportunidade sem criar receita.",
+    "Requisitos de fotos, vídeo, checklist, WebPrestador e nota fiscal devem virar checklist operacional do chamado."
+  ],
+  "intentFixtures": [
+    {"text":"Bom dia, disponível? Origem: Rua X, 100 - Betim - MG Destino: Rua Y, 200 - Contagem - MG","intent":"availability"},
+    {"text":"Conseguem esse?","intent":"availability"},
+    {"text":"Disponível? Valor e prévia? Quantos kms totais?","intent":"quote"},
+    {"text":"SOLICITAÇÃO DE COTAÇÃO – REBOQUE Tipo: Visão","intent":"quote"},
+    {"text":"Cotação Visão é apenas estimativa (não aprovada)","intent":"quote"},
+    {"text":"Qual valor?","intent":"quote"},
+    {"text":"PREVIA?","intent":"eta"},
+    {"text":"Sim pode seguir","intent":"authorization"},
+    {"text":"Pode seguir por favor","intent":"authorization"},
+    {"text":"AGENDADO PARA O DIA 03/07/2026","intent":"scheduled_dispatch"},
+    {"text":"pessoal pode deixar, conseguiu resolver lá","intent":"cancellation"},
+    {"text":"passar para outro prestador, não vamos conseguir realizar","intent":"cancellation"},
+    {"text":"confere fechamento?","intent":"closure"},
+    {"text":"Finalizado","intent":"closure"}
+  ],
+  "financeRegression": [
+    {"group":"Saturno","formula":"135 + max(0, km-40)*3.00","km":83,"expected":264.00},
+    {"group":"Saturno","formula":"160 + max(0, km-40)*3.20","km":79,"expected":284.80},
+    {"group":"Plus","formula":"140 + max(0, km-40)*2.70","km":157,"expected":455.90,"historical":true},
+    {"group":"Plus","formula":"130 + max(0, km-40)*3.00","km":62,"expected":196.00},
+    {"group":"Plus","formula":"170 + max(0, km-40)*3.20","km":79,"expected":294.80},
+    {"group":"Company Truck","formula":"135 + max(0, km-40)*3.00 + 20","km":66,"expected":233.00,"invoiceExtraObserved":true},
+    {"group":"Company Truck","formula":"135 + max(0, km-40)*3.00 + 20","km":97,"expected":326.00,"invoiceExtraObserved":true},
+    {"group":"Company Truck","formula":"160 + max(0, km-40)*3.20 + 20","km":125,"expected":452.00,"invoiceExtraObserved":true}
+  ],
+  "commercialSafetyFixtures": [
+    {"case":"texto diz R$3,00/km mas total corresponde a R$3,20/km","expected":"flag_manual_review"},
+    {"case":"central envia valor diferente do cálculo pela tabela vigente","expected":"flag_manual_review"},
+    {"case":"tarifa antiga encontrada no histórico","expected":"do_not_apply_to_current_jobs"},
+    {"case":"descrição atualizada do grupo","expected":"create_new_rate_version_pending_approval"},
+    {"case":"hora parada em grupo sem regra aprovada","expected":"do_not_auto_charge"},
+    {"case":"pedágio informado","expected":"separate_finance_extra"},
+    {"case":"Company Truck informa adicional de nota fiscal","expected":"separate_pending_approval_extra"},
+    {"case":"Company Truck Cotação Visão","expected":"never_create_revenue_or_confirmed_dispatch"}
+  ],
+  "operationalSafetyFixtures": [
+    {"case":"Company exige vídeo de placa e veículo na prancha para liberar pagamento","expected":"evidence_required_before_ready_to_invoice"},
+    {"case":"serviço agendado para data futura","expected":"store_schedule_without_live_eta_commitment"},
+    {"case":"prestador informa prancha incompatível ou indisponibilidade","expected":"decline_without_revenue"},
+    {"case":"origem/destino por Plus Code ou Maps","expected":"attempt_location_resolution_before_eta"}
+  ]
+}
