@@ -1,0 +1,270 @@
+{
+  "checkedAt": "2026-08-18T14:13:38.792Z",
+  "whatsapp": "pronto",
+  "tracker": {
+    "provider": "gconnect-emulator",
+    "mode": "android-ui-automation",
+    "configured": true,
+    "connected": true,
+    "pairCode": "18ZZEO57",
+    "ageSeconds": 15,
+    "lastLocation": {
+      "provider": "gconnect-emulator",
+      "plate": "GSW0H17",
+      "ignition": "off",
+      "speedKph": 0,
+      "odometerKm": 21095.5,
+      "batteryVoltage": 13,
+      "latitude": null,
+      "longitude": null,
+      "address": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais",
+      "lastUpdateText": "08/17/2026 10:36 PM",
+      "capturedAt": "2026-08-18T14:13:11.126Z",
+      "receivedAt": "2026-08-18T14:13:13.974Z",
+      "agent": "gconnect-emulator-v2"
+    },
+    "stale": false
+  },
+  "routeTest": {},
+  "events": [
+    {
+      "at": "2026-08-18T14:13:26.493Z",
+      "type": "warning",
+      "message": "Endereco nao geocodificado apos todos os fallbacks.",
+      "meta": {
+        "query": "RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS",
+        "parts": {
+          "query": "RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS",
+          "street": "RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA",
+          "number": "",
+          "district": "CIDADE: JUATUBA",
+          "city": "ESTADO: MINAS GERAIS",
+          "state": "",
+          "cep": ""
+        }
+      }
+    },
+    {
+      "at": "2026-08-18T14:13:19.081Z",
+      "type": "message",
+      "message": "Tests guincho: *SIMONI*:\nPROTOCOLO: 2026015693\nFIAT/STRADA 1.4 MPI FIRE FLEX 8V CS\nPLACA HIX-****\nPABLO - TEL: 31 99366-1892\nTIPO DE EVENTO: PANE \n\nO VEÍCULO ESTÁ COM ALGUMA RODA TRAVADA?: NÃO\n\nO VEÍCULO É BAIXO OU REBAIXADO?: NÃO\n\nFOI FEITO BOLETIM DE OCORRENCIA?: NAO\n\nO VEÍCULO ESTÁ DE FÁCIL ACESSO PARA REMOÇÃO?: SIM\n\nLEMBRANDO QUE SE O PRESTADOR CHEGAR O A LOCAL E NAO LOCALIZAR NINGUEM ELE AGUARDA 10 MINUTOS DEPOIS E AUTORIZADO A RETORNAR PARA BASE, PERDENDO O DIREITO DO SERVIÇO DO MES .: OK\n\nOS DOCUMENTOS ESTÃO NO LOCAL?: SIM\n\nA CHAVE DO VEÍCULO ESTÁ EM MÃOS?: SIM\n\nO VEÍCULO ESTÁ CARREGADO?: NÃO\n\nQUANTAS PESSOAS ESTÃO NO VEÍCULO?: 1\n\n O NÚMERO DE TELEFONE INFORMADO COMO CONTATO, PODE SER REPASSADO AO PRESTADOR DE SERVIÇO SE NECESSÁRIO ?: sim\n\n \n\nOrigem: RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS REF:https://maps.app.goo.gl/yCMECeRgAWAii2jc9\n\nDestino: RUA PAPA PAULO VI 260 BAIRRO: CASCATA, CIDADE: IBIRITE, ESTADO: MINAS GERAIS REF:OFICINA  - 1 ACOMPANHA",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:13:13.974Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:12:50.149Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:12:32.366Z",
+      "type": "reply",
+      "message": "Tests guincho: Confirmado ✅\nEstou atualizando a localização para calcular a previsão.",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "dispatch-safe-mode",
+        "etaMinutes": null,
+        "dispatchId": "196c5336-1cb2-43fc-b49e-45dd90078f99",
+        "dispatchKey": "7825dfe63b82577f107810e7"
+      }
+    },
+    {
+      "at": "2026-08-18T14:12:32.245Z",
+      "type": "management",
+      "message": "Tests guincho: chamado criado automaticamente.",
+      "meta": {
+        "callId": "94b88ed1-1cf4-4c68-bf47-6f8f79b3804e"
+      }
+    },
+    {
+      "at": "2026-08-18T14:12:32.244Z",
+      "type": "safety",
+      "message": "ETA suspenso após tentativas; nenhum dado antigo será reutilizado.",
+      "meta": {
+        "error": "Error: ETA indisponível sem erro explícito."
+      }
+    },
+    {
+      "at": "2026-08-18T14:12:28.638Z",
+      "type": "message",
+      "message": "Tests guincho: *MODELO:* HONDA/CB 300F TWISTER FLEX \n*SERVIÇOS:* REBOQUE MOTO\n*ENDEREÇO ORIGEM:* RUA JOSE AUGUSTO DE OLIVEIRA 175, BAIRRO: PETROPOLIS, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL, \n*ENDEREÇO DESTINO:* AVENIDA BANDEIRANTES 1040, BAIRRO: CHACARAS, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL,",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:12:26.968Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:12:03.746Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:11:40.615Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:11:17.131Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:10:53.439Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:10:52.127Z",
+      "type": "reply",
+      "message": "Tests guincho: Confirmado ✅\nPrevisão de chegada: 15 min.",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "dispatch",
+        "etaMinutes": 15,
+        "dispatchId": "71c3a87e-24fb-4b2c-98be-c432deedea77",
+        "dispatchKey": "ac1884e6f739a10cf0b99644"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:51.983Z",
+      "type": "management",
+      "message": "Tests guincho: chamado criado automaticamente.",
+      "meta": {
+        "callId": "7934d0b0-f927-4b43-a1c6-6d0d559088fe"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:51.982Z",
+      "type": "route",
+      "message": "Tests guincho: ETA 15 min · 15.4 km.",
+      "meta": {
+        "groupId": "120363430280224273@g.us"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:51.610Z",
+      "type": "geocode",
+      "message": "RUA GUAPE, 110, DOM BOSCO, BETIM - MG -> -19.9558386,-44.1525463 (nominatim-structured)",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:10:51.252Z",
+      "type": "message",
+      "message": "Tests guincho: Fiat / Palio 1.0/ Trofeo 1.0 Fire/ Fi ... Motivo PANE ELETRICA / MECANICA Serviço selecionado REBOQUE LEVE\nOrigem: RUA GUAPE, nº 110, DOM BOSCO, BETIM - MG\nref. residencia 2 acompanha\nDestino: Avenida Coronel Abilio Rodrigues Pereira, nº 423, Bom Retiro, BETIM - MG\nref. OFICINA 1 ACOMPANHA",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:30.164Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:10:06.937Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:10:04.090Z",
+      "type": "reply",
+      "message": "Tests guincho: Confirmado ✅\nPrevisão de chegada: 23 min.",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "dispatch",
+        "etaMinutes": 23,
+        "dispatchId": "7794c37a-8ac7-4139-9fe1-401029b7dce1",
+        "dispatchKey": "96c5cf84146a5f6f9fe1029d"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:03.971Z",
+      "type": "management",
+      "message": "Tests guincho: chamado atualizado automaticamente.",
+      "meta": {
+        "callId": "3f95186e-7699-4a41-b5d6-52e21eaef925"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:03.969Z",
+      "type": "route",
+      "message": "Tests guincho: ETA 23 min · 20.7 km.",
+      "meta": {
+        "groupId": "120363430280224273@g.us"
+      }
+    },
+    {
+      "at": "2026-08-18T14:10:03.602Z",
+      "type": "message",
+      "message": "Tests guincho: Veículo:\nFORD KA\n\nServiço:\nREBOQUE LEVE\n\nEndereço de Origem:\nR. DOIS, 161 - TROPICAL - CONTAGEM - MG\n\nEndereço de Destino:\nBENEVIDES CAETANO DA SILVEIRA, 583 - SAO JORGE - BETIM - MG\n\nmaps.app.goo.gl\nhttps://maps.app.goo.gl/9N2zzAq49Zw5VXy59\n50KM\n165,00",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:09:54.792Z",
+      "type": "reply",
+      "message": "Tests guincho: Disponível ✅",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "availability"
+      }
+    },
+    {
+      "at": "2026-08-18T14:09:54.748Z",
+      "type": "message",
+      "message": "Tests guincho: Disponível?",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:09:45.754Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:09:43.543Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:09:20.144Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:08:56.844Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    }
+  ]
+}
