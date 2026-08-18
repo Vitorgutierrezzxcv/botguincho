@@ -33,14 +33,21 @@ jobs:
           fi
           cat /tmp/health.json; echo
           WA_OK=$(jq -r '.checks.whatsapp.ok // false' /tmp/health.json)
+          WA_STATUS=$(jq -r '.checks.whatsapp.status // "unknown"' /tmp/health.json)
           TRACKER_OK=$(jq -r '.checks.tracker.ok // false' /tmp/health.json)
           ROUTES_OK=$(jq -r '.checks.routes.ok // false' /tmp/health.json)
           echo "wa_ok=$WA_OK" >> "$GITHUB_OUTPUT"
+          echo "wa_status=$WA_STATUS" >> "$GITHUB_OUTPUT"
           echo "tracker_ok=$TRACKER_OK" >> "$GITHUB_OUTPUT"
           echo "routes_ok=$ROUTES_OK" >> "$GITHUB_OUTPUT"
 
+      - name: Avisar que QR exige pareamento manual
+        if: steps.health.outputs.wa_status == 'qr'
+        run: |
+          echo 'WhatsApp está aguardando QR. Não será feito reload automático para não invalidar/interromper o pareamento.'
+
       - name: Recuperar WhatsApp automaticamente
-        if: steps.health.outputs.wa_ok != 'true'
+        if: steps.health.outputs.wa_ok != 'true' && steps.health.outputs.wa_status != 'qr'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
