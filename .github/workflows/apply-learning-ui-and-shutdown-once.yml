@@ -1,0 +1,43 @@
+name: Apply learning UI and safe shutdown
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[learning-ui-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply UI and shutdown patch
+        run: python3 tools/apply_learning_ui_and_shutdown_tmp.py
+      - name: Syntax checks
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/learning-engine.mjs
+          node --check tools/operational-knowledge.mjs
+          node --check app.js
+          node --check public/app.js
+      - name: Operational regression
+        run: node tools/test-operational-knowledge.mjs
+      - name: Commit final integration
+        run: |
+          if git diff --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs index.html public/index.html app.js public/app.js
+          git commit -m "Finaliza painel de aprendizado e shutdown seguro [learning-ui-applied]"
+          git push
