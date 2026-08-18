@@ -1,0 +1,29 @@
+name: Apply Fix ETA Service State Once
+on:
+  push:
+    paths:
+      - 'tools/fix_eta_service_state_tmp.py'
+      - '.github/workflows/apply-fix-eta-service-state-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar correção
+        run: python3 tools/fix_eta_service_state_tmp.py
+      - name: Validar sintaxe
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          ! grep -q 'RMBH_PRIORITY_CITIES' tools/vercel-whatsapp-worker.mjs
+          ! grep -q '!== SERVICE_STATE' tools/vercel-whatsapp-worker.mjs
+          ! grep -q '|| SERVICE_STATE' tools/vercel-whatsapp-worker.mjs
+      - name: Commitar worker corrigido
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git diff --cached --quiet || git commit -m 'Corrige cálculo de ETA por cobertura do tenant'
+          git push
