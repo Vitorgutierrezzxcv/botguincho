@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-08-18T13:47:26.284Z",
+  "companyId": "cliente-teste",
+  "whatsappStatus": "qr",
+  "hasQrDataUrl": true,
+  "qrDataUrlLength": 8122,
+  "qrPrefix": "data:image/png;base64,iVBORw0KGg",
+  "lastError": null,
+  "groupsSelected": 2,
+  "trackerConnected": true
+}
