@@ -1,0 +1,56 @@
+{
+  "version": 2,
+  "source": {
+    "screenshots": 184,
+    "whatsappExports": [
+      {"group":"Solução Assistência","messages":3192},
+      {"group":"Top Brasil","messages":409},
+      {"group":"Saturno","messages":764},
+      {"group":"Plus Assistência","messages":3766}
+    ],
+    "privacy": "anonymized",
+    "reviewedAt": "2026-08-18"
+  },
+  "principles": [
+    "Ficha completa com pergunta de disponibilidade continua sendo consulta, não autorização.",
+    "Cotação, autorização, protocolo e fechamento são estados diferentes do mesmo atendimento.",
+    "Autorização costuma chegar por mensagem curta: pode seguir, segue, seguir, liberado, pode ir.",
+    "Prévia deve vir da posição atual do rastreador e da rota, nunca de tempos históricos fixos.",
+    "Tabela comercial deve ser versionada por data e pode variar por grupo, tipo de veículo e entidade atendida.",
+    "Valor recebido da central deve ser comparado com cálculo interno; divergência gera alerta e nunca correção silenciosa.",
+    "Pedágio, hora trabalhada, hora parada e outras exceções são adicionais separados e só entram automaticamente se houver regra aprovada.",
+    "Cancelamento antes da execução encerra a cotação/chamado sem criar receita.",
+    "Agendamento futuro não deve ser tratado como atendimento imediato.",
+    "Protocolos e descrições podem conter regras operacionais de fotos, checklist, vídeo 360 e WebPrestador; armazenar como checklist do chamado."
+  ],
+  "intentFixtures": [
+    {"text":"Bom dia, disponível? Origem: Rua X, 100 - Betim - MG Destino: Rua Y, 200 - Contagem - MG","intent":"availability"},
+    {"text":"Conseguem esse?","intent":"availability"},
+    {"text":"Qual valor?","intent":"quote"},
+    {"text":"Qual valor total por favor?","intent":"quote"},
+    {"text":"qual valor e previa?","intent":"quote"},
+    {"text":"PREVIA?","intent":"eta"},
+    {"text":"Pode seguir por favor","intent":"authorization"},
+    {"text":"Seguir?","intent":"authorization"},
+    {"text":"pode retornar","intent":"cancellation"},
+    {"text":"resolvido obrigada","intent":"cancellation"},
+    {"text":"confere fechamento?","intent":"closure"},
+    {"text":"envie km total e valor","intent":"closure"},
+    {"text":"AGENDAMENTO PARA AMANHÃ ÀS 08:30","intent":"scheduled_dispatch"}
+  ],
+  "financeRegression": [
+    {"group":"Saturno","formula":"135 + max(0, km-40)*3.00","km":83,"expected":264.00},
+    {"group":"Saturno","formula":"160 + max(0, km-40)*3.20","km":79,"expected":284.80},
+    {"group":"Plus","formula":"140 + max(0, km-40)*2.70","km":157,"expected":455.90,"historical":true},
+    {"group":"Plus","formula":"170 + max(0, km-40)*3.20","km":79,"expected":294.80},
+    {"group":"Plus","formula":"170 + max(0, km-40)*3.20","km":78,"expected":291.60}
+  ],
+  "commercialSafetyFixtures": [
+    {"case":"texto diz R$3,00/km mas total corresponde a R$3,20/km","expected":"flag_manual_review"},
+    {"case":"central envia valor diferente do cálculo pela tabela vigente","expected":"flag_manual_review"},
+    {"case":"tarifa antiga encontrada no histórico","expected":"do_not_apply_to_current_jobs"},
+    {"case":"descrição atualizada do grupo","expected":"create_new_rate_version_pending_approval"},
+    {"case":"hora parada em Saturno","expected":"do_not_auto_charge_without_approved_rule"},
+    {"case":"pedágio informado","expected":"separate_finance_extra"}
+  ]
+}
