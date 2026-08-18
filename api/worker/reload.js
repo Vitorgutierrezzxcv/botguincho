@@ -6,6 +6,11 @@ const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
 const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
 const RAW_ROOT = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho';
 const PORT = 3001;
+const RUNTIME_FILES = [
+  'tools/vercel-whatsapp-worker.mjs',
+  'tools/learning-engine.mjs',
+  'tools/operational-knowledge.mjs',
+];
 
 async function isGitHubActionsToken(req) {
   const auth = String(req.headers.authorization || '');
@@ -79,27 +84,27 @@ async function launchWorker(sandbox, credential) {
 }
 
 async function syncFiles(sandbox, sourceRef) {
-  const relative = 'tools/vercel-whatsapp-worker.mjs';
-  const url = `${RAW_ROOT}/${sourceRef}/${relative}`;
-  const script = [
-    'set -euo pipefail',
-    `TARGET='/vercel/sandbox/${relative}'`,
-    'TMP="${TARGET}.tmp.$$"',
-    'trap \'rm -f "$TMP"\' EXIT',
-    'mkdir -p "$(dirname "$TARGET")"',
-    `curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' '${url}' -o "$TMP"`,
-    'if [ -f "$TARGET" ] && cmp -s "$TARGET" "$TMP"; then',
-    `  echo '${relative}:same'`,
-    'else',
-    '  mv "$TMP" "$TARGET"',
-    `  echo '${relative}:updated'`,
-    'fi',
-  ].join('\n');
-
+  const scripts = ['set -euo pipefail'];
+  for (const relative of RUNTIME_FILES) {
+    const url = `${RAW_ROOT}/${sourceRef}/${relative}`;
+    scripts.push(
+      `TARGET='/vercel/sandbox/${relative}'`,
+      'TMP="${TARGET}.tmp.$$"',
+      'mkdir -p "$(dirname "$TARGET")"',
+      `curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' '${url}' -o "$TMP"`,
+      'if [ -f "$TARGET" ] && cmp -s "$TARGET" "$TMP"; then',
+      `  echo '${relative}:same'`,
+      '  rm -f "$TMP"',
+      'else',
+      '  mv "$TMP" "$TARGET"',
+      `  echo '${relative}:updated'`,
+      'fi',
+    );
+  }
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', script],
-    signal: AbortSignal.timeout(45000),
+    args: ['-lc', scripts.join('\n')],
+    signal: AbortSignal.timeout(90000),
   });
   if (result.exitCode !== 0) {
     let stderr = '';
@@ -109,6 +114,28 @@ async function syncFiles(sandbox, sourceRef) {
     throw new Error(`Falha ao atualizar arquivos do worker: ${stderr || stdout || result.exitCode}`);
   }
   return commandOutput(result);
+}
+
+async function stopWorkerGracefully(sandbox) {
+  const script = [
+    'set +e',
+    "WPIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+    '[ -z "$WPIDS" ] || kill -TERM $WPIDS >/dev/null 2>&1 || true',
+    'for i in $(seq 1 12); do',
+    "  LEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+    '  [ -z "$LEFT" ] && break',
+    '  sleep 1',
+    'done',
+    "LEFT=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
+    '[ -z "$LEFT" ] || kill -KILL $LEFT >/dev/null 2>&1 || true',
+    "CPIDS=$(pgrep -f 'session-[c]liente-teste' || true)",
+    '[ -z "$CPIDS" ] || kill -TERM $CPIDS >/dev/null 2>&1 || true',
+    'sleep 1',
+    "CPIDS=$(pgrep -f 'session-[c]liente-teste' || true)",
+    '[ -z "$CPIDS" ] || kill -KILL $CPIDS >/dev/null 2>&1 || true',
+    'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
+  ].join('\n');
+  await sandbox.runCommand({ cmd: 'bash', args: ['-lc', script], signal: AbortSignal.timeout(20000) });
 }
 
 export default async function handler(req, res) {
@@ -138,18 +165,7 @@ export default async function handler(req, res) {
     const sourceState = await syncFiles(sandbox, sourceRef);
     const patchState = await applyWwebjsPatch(sandbox);
 
-    await sandbox.runCommand({
-      cmd: 'bash',
-      args: ['-lc', [
-        "WPIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
-        '[ -z "$WPIDS" ] || kill -9 $WPIDS >/dev/null 2>&1 || true',
-        "pkill -9 -f 'session-[c]liente-teste' >/dev/null 2>&1 || true",
-        'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
-        'sleep 2',
-      ].join('\n')],
-      signal: AbortSignal.timeout(10000),
-    });
-
+    await stopWorkerGracefully(sandbox);
     await launchWorker(sandbox, credential);
 
     let status = null;
@@ -167,17 +183,7 @@ export default async function handler(req, res) {
 
     let workers = await workerCount(sandbox);
     if (workers > 1) {
-      await sandbox.runCommand({
-        cmd: 'bash',
-        args: ['-lc', [
-          "PIDS=$(ps -eo pid=,comm=,args= | awk '$2 == \"node\" && index($0, \"tools/vercel-whatsapp-worker.mjs\") {print $1}')",
-          '[ -z "$PIDS" ] || kill -9 $PIDS >/dev/null 2>&1 || true',
-          "pkill -9 -f 'session-[c]liente-teste' >/dev/null 2>&1 || true",
-          'rm -rf /vercel/sandbox/.whatsapp-worker-lock',
-          'sleep 2',
-        ].join('\n')],
-        signal: AbortSignal.timeout(10000),
-      });
+      await stopWorkerGracefully(sandbox);
       await launchWorker(sandbox, credential);
       for (let i = 0; i < 60; i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
