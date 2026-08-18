@@ -1,0 +1,55 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "America Reboque / Premium Assistência",
+  "period": "2026-04-29 a 2026-08-18",
+  "parsedMessageCount": 984,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "origem/destino podem chegar por links de Maps separados e depois rótulos Origem/Destino",
+      "consulta pode ser 'disponível?'/'consegue fazer?' antes do protocolo"
+    ],
+    "quote": [
+      "assistência pergunta valor de saída, km e prévia antes de autorizar",
+      "cotação de utilitário aparece separadamente"
+    ],
+    "authorization": [
+      "'pode seguir' é autorização explícita e recorrente",
+      "às vezes a autorização pede apenas que a prévia seja enviada ao associado"
+    ],
+    "completion": [
+      "assistência pergunta se atendimento foi finalizado",
+      "prestador envia fechamento com saída, km total e valor"
+    ]
+  },
+  "commercialRules": {
+    "status": "observed_and_requires_approval_before_finance",
+    "leveObserved": {
+      "baseBRL": 135,
+      "includedKm": 40,
+      "excessKmBRL": 3.00,
+      "validatedExamples": ["16 km => R$135,00", "51 km => R$168,00", "31 km => R$135,00"]
+    },
+    "utilitarioObserved": {
+      "baseBRL": 160,
+      "includedKm": 40,
+      "excessKmBRL": 3.20,
+      "validatedExamples": ["53 km => R$201,60"]
+    },
+    "dataQualityWarnings": [
+      "há mensagem isolada usando saída R$130 + R$3,00; não sobrescrever a tarifa predominante sem regra/descrição aprovada",
+      "descrição do grupo mudou em 15/06, mas o texto novo não aparece no export"
+    ],
+    "financeWorkflowObserved": [
+      "prestador envia planilha de fechamento",
+      "aguarda retorno/autorização antes de emitir nota fiscal",
+      "há mensagens conflitantes sobre calendário exato de pagamento; não automatizar vencimento sem configuração aprovada"
+    ]
+  },
+  "botBehavior": [
+    "Não confirmar serviço antes de 'pode seguir' ou equivalente.",
+    "Cotação e prévia são estados anteriores à autorização.",
+    "Valor financeiro deve usar tabela aprovada e registrar divergências.",
+    "NF só deve virar pendência depois do fechamento/retorno financeiro, conforme regra vigente."
+  ]
+}
