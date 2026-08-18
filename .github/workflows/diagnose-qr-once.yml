@@ -1,0 +1,44 @@
+name: Diagnose QR Once
+on:
+  push:
+    paths:
+      - '.github/workflows/diagnose-qr-once.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Consultar status real
+        run: |
+          set -e
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 3 --max-time 120 \
+            'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste' -o /tmp/status.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=JSON.parse(fs.readFileSync('/tmp/status.json','utf8'));
+          const qr=s?.whatsapp?.qrDataUrl||'';
+          const out={
+            checkedAt:new Date().toISOString(),
+            companyId:s?.infrastructure?.companyId||s?.clientId||'cliente-teste',
+            whatsappStatus:s?.whatsapp?.status||null,
+            hasQrDataUrl:Boolean(qr),
+            qrDataUrlLength:qr.length,
+            qrPrefix:qr?qr.slice(0,32):null,
+            lastError:s?.whatsapp?.lastError||null,
+            groupsSelected:s?.groupsSelected||0,
+            trackerConnected:Boolean(s?.tracker?.connected),
+          };
+          fs.mkdirSync('ops',{recursive:true});
+          fs.writeFileSync('ops/qr-diagnostic.json',JSON.stringify(out,null,2)+'\n');
+          console.log(out);
+          NODE
+      - name: Gravar diagnóstico
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/qr-diagnostic.json
+          git diff --cached --quiet || git commit -m 'Registra diagnóstico do QR em produção'
+          git push
