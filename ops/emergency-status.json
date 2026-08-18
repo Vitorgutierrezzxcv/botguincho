@@ -1,0 +1,22 @@
+{
+  "checkedAt": "2026-08-18T13:15:47.186Z",
+  "companyId": "cliente-teste",
+  "healthStatus": "attention",
+  "whatsapp": {
+    "ok": false,
+    "status": "qr",
+    "qrRequired": true,
+    "lastError": null
+  },
+  "tracker": {
+    "ok": true,
+    "status": "online",
+    "ageSeconds": 15,
+    "plate": "GSW0H17"
+  },
+  "routes": {
+    "ok": true
+  },
+  "groupsSelected": 2,
+  "operational": false
+}
