@@ -12,3 +12,4 @@ s=s.replace("async function replyAndRemember(msg, groupName, incomingText, reply
 s=s.replace("logEvent('message', `${groupName}: ${readableText}`, { groupId: msg.from, author });", "logEvent('message', `${groupName}: ${readableText}`, { groupId: msg.from, author });\n    lastInboundByGroup.set(msg.from, { text: readableText, at: Date.now() });\n    void learningStore.append({ groupId: msg.from, groupName, direction: 'incoming', source: 'live', text: readableText, intent: inferLearningIntent(readableText) });")
 p.write_text(s)
 print('ok')
+# trigger workflow
