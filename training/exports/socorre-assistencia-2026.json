@@ -1,0 +1,67 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "America Guincho / Socorre Assistência",
+  "period": "2026-02-13 a 2026-08-18",
+  "parsedMessageCount": 1723,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "consulta com associação, modelo, origem/destino e disponibilidade",
+      "cotação pode anteceder protocolo",
+      "prestador pode responder disponibilidade e prévia"
+    ],
+    "authorization": [
+      "'pode seguir' aparece como autorização explícita em vários atendimentos",
+      "após autorização é enviado/confirmado protocolo com valor fechado"
+    ],
+    "scheduled": [
+      "agendamentos aparecem com horário futuro explícito e protocolo",
+      "agendamento deve ser estado separado de atendimento imediato"
+    ],
+    "cancellation": [
+      "associado pode cancelar antes da execução",
+      "central confirma cancelamento no grupo"
+    ],
+    "completion": [
+      "protocolos/fechamentos informam prévia, km e valor fechado",
+      "em alguns atendimentos a central pede confirmação se ficou dentro da saída ou haverá acréscimo"
+    ]
+  },
+  "commercialRules": {
+    "status": "association_specific_and_requires_approval_before_finance",
+    "autoCareObserved": {
+      "historicalQuoteAround": "2026-02",
+      "historicalLeve": {"baseBRL": 130, "excessKmBRL": 2.90},
+      "laterLeveObserved": {"baseBRL": 135, "includedKm": 40, "excessKmBRL": 3.00},
+      "validatedExamples": ["60 km => R$195,00", "42 km => R$141,00"],
+      "warning": "há fechamento isolado com saída R$130 + R$3,00; tratar divergência como revisão"
+    },
+    "atsObserved": {
+      "effectiveAround": "2026-06-27",
+      "leve": {"baseBRL": 120, "includedKm": 40, "excessKmBRL": 3.00},
+      "utilitario": {"baseBRL": 160, "includedKm": 40, "excessKmBRL": 3.20},
+      "evidence": [
+        "central identifica ATS como associação nova e informa valor combinado",
+        "Saveiro inicialmente calculada como leve foi corrigida para utilitário: 49 km => R$188,80"
+      ]
+    },
+    "safety": [
+      "nunca aplicar automaticamente a tarifa de uma associação a outra dentro do mesmo grupo",
+      "tipo de veículo pode alterar a tabela depois da cotação inicial",
+      "valor fechado da central deve ser reconciliado com tabela aprovada"
+    ]
+  },
+  "operationalRequirements": [
+    "protocolos recorrentes exigem fotos dos quatro lados do veículo",
+    "preencher checklist corretamente",
+    "protocolos carregam perguntas de acesso, chaves, rodas, carga e veículo rebaixado",
+    "prazo de pagamento aparece como 'a prazo' em vários protocolos"
+  ],
+  "botBehavior": [
+    "Identificar associação antes de calcular preço.",
+    "Após 'pode seguir', mudar para autorizado e associar o protocolo seguinte.",
+    "Agendamento guarda data/hora e não promete ETA da posição atual.",
+    "Cancelamento antes da execução encerra o atendimento sem receita.",
+    "Checklist/fotos devem virar pendências operacionais do chamado."
+  ]
+}
