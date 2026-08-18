@@ -2637,6 +2637,25 @@ app.get('/health', async (_req, res) => {
   });
 });
 
+let gracefulShutdownStarted = false;
+async function gracefulShutdown(signal = 'shutdown') {
+  if (gracefulShutdownStarted) return;
+  gracefulShutdownStarted = true;
+  logEvent('system', `Encerramento gracioso iniciado (${signal}).`);
+  const current = waClient;
+  waClient = null;
+  if (current) {
+    await Promise.race([
+      current.destroy().catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  process.exit(0);
+}
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+
 await ensureDir();
 await getPairCode();
 await refreshServiceArea();
