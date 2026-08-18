@@ -1,0 +1,19 @@
+name: Check Current WA Once
+on:
+  push:
+    paths: ['.github/workflows/check-current-wa-once.yml']
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Consultar estado
+        run: |
+          set -e
+          STATUS=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste')
+          GROUPS=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 'https://botguincho.vercel.app/api/worker/groups?companyId=cliente-teste')
+          node -e "const fs=require('fs'); const s=JSON.parse(process.env.STATUS),g=JSON.parse(process.env.GROUPS); fs.mkdirSync('ops',{recursive:true}); fs.writeFileSync('ops/current-wa.json',JSON.stringify({checkedAt:new Date().toISOString(),whatsapp:s.whatsapp?.status||null,groupsCount:(g.groups||[]).length,selected:(g.groups||[]).filter(x=>x.selected).length,names:(g.groups||[]).slice(0,15).map(x=>x.name)},null,2))" 
+        env:
+          STATUS: ${{ steps.none.outputs.status }}
