@@ -1,0 +1,406 @@
+{
+  "checkedAt": "2026-08-18T14:04:49.030Z",
+  "whatsapp": "pronto",
+  "tracker": {
+    "provider": "gconnect-emulator",
+    "mode": "android-ui-automation",
+    "configured": true,
+    "connected": true,
+    "pairCode": "18ZZEO57",
+    "ageSeconds": 10,
+    "lastLocation": {
+      "provider": "gconnect-emulator",
+      "plate": "GSW0H17",
+      "ignition": "off",
+      "speedKph": 0,
+      "odometerKm": 21095.5,
+      "batteryVoltage": 13,
+      "latitude": null,
+      "longitude": null,
+      "address": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais",
+      "lastUpdateText": "08/17/2026 10:36 PM",
+      "capturedAt": "2026-08-18T14:04:36.882Z",
+      "receivedAt": "2026-08-18T14:04:38.987Z",
+      "agent": "gconnect-emulator-v2"
+    },
+    "stale": false
+  },
+  "health": {
+    "ok": true,
+    "status": "operational",
+    "checkedAt": "2026-08-18T14:04:47.847Z",
+    "checks": {
+      "whatsapp": {
+        "ok": true,
+        "status": "pronto"
+      },
+      "tracker": {
+        "ok": true,
+        "status": "online",
+        "ageSeconds": 9,
+        "plate": "GSW0H17",
+        "address": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais"
+      },
+      "ai": {
+        "ok": true,
+        "status": "online"
+      },
+      "routes": {
+        "ok": true,
+        "providers": {
+          "osrm-main": {
+            "status": "ok",
+            "failures": 0,
+            "openUntil": null,
+            "lastSuccessAt": null,
+            "lastFailureAt": null
+          },
+          "osrm-osmde": {
+            "status": "ok",
+            "failures": 0,
+            "openUntil": null,
+            "lastSuccessAt": null,
+            "lastFailureAt": null
+          }
+        }
+      }
+    },
+    "groupsSelected": 1,
+    "recentErrors": [
+      {
+        "id": 1787061820635.1501,
+        "at": "2026-08-18T14:03:40.635Z",
+        "type": "safety",
+        "message": "ETA suspenso após tentativas; nenhum dado antigo será reutilizado.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061820635.1406,
+        "at": "2026-08-18T14:03:40.635Z",
+        "type": "warning",
+        "message": "Tentativa 3/3 de ETA falhou.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061818233.2734,
+        "at": "2026-08-18T14:03:38.233Z",
+        "type": "warning",
+        "message": "Tentativa 2/3 de ETA falhou.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061817032.6143,
+        "at": "2026-08-18T14:03:37.032Z",
+        "type": "warning",
+        "message": "Tentativa 1/3 de ETA falhou.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061815620.9602,
+        "at": "2026-08-18T14:03:35.620Z",
+        "type": "safety",
+        "message": "ETA suspenso após tentativas; nenhum dado antigo será reutilizado.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061815620.356,
+        "at": "2026-08-18T14:03:35.620Z",
+        "type": "warning",
+        "message": "Tentativa 3/3 de ETA falhou.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061813218.171,
+        "at": "2026-08-18T14:03:33.218Z",
+        "type": "warning",
+        "message": "Tentativa 2/3 de ETA falhou.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      },
+      {
+        "id": 1787061812016.1423,
+        "at": "2026-08-18T14:03:32.016Z",
+        "type": "warning",
+        "message": "Tentativa 1/3 de ETA falhou.",
+        "meta": {
+          "error": "ReferenceError: SERVICE_STATE is not defined"
+        }
+      }
+    ],
+    "serviceArea": {
+      "state": "MG",
+      "priorityCities": [
+        "Belo Horizonte",
+        "Betim",
+        "Contagem",
+        "Nova Lima",
+        "Ribeirão das Neves",
+        "Sabará",
+        "Santa Luzia",
+        "Ibirité",
+        "Confins",
+        "Lagoa Santa",
+        "Vespasiano",
+        "Pedro Leopoldo",
+        "São José da Lapa",
+        "Matozinhos",
+        "Sarzedo",
+        "Mário Campos",
+        "Brumadinho",
+        "Igarapé",
+        "Juatuba",
+        "Mateus Leme",
+        "Esmeraldas",
+        "Caeté",
+        "Nova União",
+        "Rio Acima",
+        "Raposos",
+        "Itaguara",
+        "Itatiaiuçu",
+        "Florestal",
+        "Baldim",
+        "Capim Branco"
+      ],
+      "label": "MG · cidades prioritárias configuradas"
+    }
+  },
+  "routeTest": {
+    "ok": false,
+    "error": "SERVICE_STATE is not defined"
+  },
+  "recentActivity": [
+    {
+      "at": "2026-08-18T14:04:38.987Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:04:15.858Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:03:52.599Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:03:40.764Z",
+      "type": "reply",
+      "message": "Tests guincho: Estou atualizando a localização para calcular a previsão. Tente novamente em alguns segundos.",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "eta-unavailable",
+        "targetSource": "dispatch-state"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:40.635Z",
+      "type": "safety",
+      "message": "ETA suspenso após tentativas; nenhum dado antigo será reutilizado.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:40.635Z",
+      "type": "warning",
+      "message": "Tentativa 3/3 de ETA falhou.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:38.233Z",
+      "type": "warning",
+      "message": "Tentativa 2/3 de ETA falhou.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:37.032Z",
+      "type": "warning",
+      "message": "Tentativa 1/3 de ETA falhou.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:37.025Z",
+      "type": "message",
+      "message": "Tests guincho: Qual tempo de distância?",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:35.780Z",
+      "type": "reply",
+      "message": "Tests guincho: Confirmado ✅\nEstou atualizando a localização para calcular a previsão.",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "dispatch-safe-mode",
+        "etaMinutes": null,
+        "dispatchId": "7794c37a-8ac7-4139-9fe1-401029b7dce1",
+        "dispatchKey": "96c5cf84146a5f6f9fe1029d"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:35.621Z",
+      "type": "management",
+      "message": "Tests guincho: chamado criado automaticamente.",
+      "meta": {
+        "callId": "3f95186e-7699-4a41-b5d6-52e21eaef925"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:35.620Z",
+      "type": "safety",
+      "message": "ETA suspenso após tentativas; nenhum dado antigo será reutilizado.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:35.620Z",
+      "type": "warning",
+      "message": "Tentativa 3/3 de ETA falhou.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:33.218Z",
+      "type": "warning",
+      "message": "Tentativa 2/3 de ETA falhou.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:32.016Z",
+      "type": "warning",
+      "message": "Tentativa 1/3 de ETA falhou.",
+      "meta": {
+        "error": "ReferenceError: SERVICE_STATE is not defined"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:31.993Z",
+      "type": "message",
+      "message": "Tests guincho: Veículo:\nFORD KA\n\nServiço:\nREBOQUE LEVE\n\nEndereço de Origem:\nR. DOIS, 161 - TROPICAL - CONTAGEM - MG\n\nEndereço de Destino:\nBENEVIDES CAETANO DA SILVEIRA, 583 - SAO JORGE - BETIM - MG\n\nmaps.app.goo.gl\nhttps://maps.app.goo.gl/9N2zzAq49Zw5VXy59\n50KM\n165,00",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:29.293Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:03:06.093Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:03:00.542Z",
+      "type": "reply",
+      "message": "Tests guincho: Disponível ✅",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "intent": "availability"
+      }
+    },
+    {
+      "at": "2026-08-18T14:03:00.375Z",
+      "type": "message",
+      "message": "Tests guincho: Bom dia base, disponível?",
+      "meta": {
+        "groupId": "120363430280224273@g.us",
+        "author": "178357241118743@lid"
+      }
+    },
+    {
+      "at": "2026-08-18T14:02:53.516Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:02:42.709Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:02:18.620Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:55.282Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:31.373Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:22.840Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:22.491Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:21.245Z",
+      "type": "whatsapp",
+      "message": "WhatsApp conectado e pronto.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:19.958Z",
+      "type": "whatsapp",
+      "message": "WhatsApp autenticado.",
+      "meta": {}
+    },
+    {
+      "at": "2026-08-18T14:01:12.983Z",
+      "type": "system",
+      "message": "Chromium serverless: /tmp/chromium",
+      "meta": {}
+    }
+  ]
+}
