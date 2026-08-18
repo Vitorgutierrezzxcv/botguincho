@@ -21,13 +21,42 @@ export function anonymizeLearningText(value = '') {
 export function inferLearningIntent(text = '') {
   const value = normalize(text);
   if (!value) return 'empty';
-  if (/\b(cancelou|cancelado|pode deixar|conseguiu resolver|nao precisa mais|passou para outro|ja foi|protocolo errado|desconsidera)\b/.test(value)) return 'cancellation';
+
+  if (/\b(cancelou|cancelado|cancelada|pode deixar|conseguiu resolver|nao precisa mais|passou para outro|passar para outro|ja foi|protocolo errado|desconsidera|desconsiderar|sem saida|sem custos)\b/.test(value)) {
+    return 'cancellation';
+  }
+
+  if (
+    /\b(grupo (?:e|é) destinado exclusivamente|evitem o envio de mensagens informando disponibilidade|rotina financeira|pagamentos dia|atualizacao de cadastro|tabelas de valores|documentos|contas)\b/.test(value)
+    || (/\bparceiros prestadores\b/.test(value) && /\b(?:financeiro|cadastro|pagamento|documentos)\b/.test(value))
+  ) {
+    return 'administrative_notice';
+  }
+
+  if (
+    /\bpor enquanto nao siga\b/.test(value)
+    || /\b(?:aguarde|aguarda|aguardando)\b.*\bautoriza/.test(value)
+    || /\b(?:vou|vamos)\s+passar\b.*\b(?:adm|administrativo|setor)\b/.test(value)
+    || /\b(?:caso|se)\s+autorizarem\b/.test(value)
+    || /\bassim que (?:for|estiver) autorizado\b/.test(value)
+  ) {
+    return 'pending_approval';
+  }
+
+  if (
+    /\b(agendamento|agendado|agendada)\b/.test(value)
+    || /\bamanha\s+(?:as|às)\s*\d{1,2}/.test(value)
+    || /\bpara o dia\s+\d{1,2}[\/.-]\d{1,2}/.test(value)
+  ) {
+    return 'scheduled_dispatch';
+  }
+
   if (/\b(pode seguir|seguir|pode ir|liberado|libera|fechado|confirmado|manda|enviando)\b/.test(value)) return 'authorization';
-  if (/\b(finalizamos|finalizado|fechamento|quantos km|km totais|valor total|fotos no destino|fotos na origem)\b/.test(value)) return 'closure';
-  if (/\b(valor|quanto fica|cotacao|preco|previa|km totais|quilometragem)\b/.test(value)) return 'quote';
+  if (/\b(finalizamos|finalizado|finalizada|fechamento|quantos km|km totais|valor total|fotos no destino|fotos na origem)\b/.test(value)) return 'closure';
+  if (/\b(valor|quanto fica|cotacao|preco|previa|km totais|quilometragem|valor de saida|valor da saida)\b/.test(value)) return 'quote';
   if (/\b(disponivel|disponibilidade|consegue esse|consegue uma remocao|tem reboque|tem guincho)\b/.test(value)) return 'availability';
   if (/\b(quanto tempo|previsao|eta|chega em|demora)\b/.test(value)) return 'eta';
-  if (/\b(origem|destino|reboque|guincho|veiculo|pane|colisao|remocao)\b/.test(value)) return 'dispatch';
+  if (/\b(origem|destino|reboque|guincho|veiculo|pane|colisao|remocao|protocolo)\b/.test(value)) return 'dispatch';
   return 'other';
 }
 
@@ -82,6 +111,17 @@ export function createLearningStore({ knowledgeFile, historyFile, indexFile }) {
     const hash = desc ? crypto.createHash('sha256').update(desc).digest('hex').slice(0, 20) : prev.descriptionHash || '';
     const changed = Boolean(desc && hash !== prev.descriptionHash);
     const draft = desc ? parseCommercialDescription(desc) : prev.draftCommercialRules || null;
+    const commercialVersions = Array.isArray(prev.commercialVersions) ? prev.commercialVersions.slice(-29) : [];
+
+    if (changed && draft?.detected) {
+      commercialVersions.push({
+        descriptionHash: hash,
+        rules: draft,
+        status: 'review_required',
+        observedAt: new Date().toISOString(),
+      });
+    }
+
     all[groupId] = {
       ...prev,
       groupId,
@@ -89,6 +129,7 @@ export function createLearningStore({ knowledgeFile, historyFile, indexFile }) {
       description: desc || prev.description || '',
       descriptionHash: hash,
       draftCommercialRules: draft,
+      commercialVersions,
       commercialStatus: changed && draft?.detected ? 'review_required' : prev.commercialStatus || (draft?.detected ? 'review_required' : 'none'),
       examples: Array.isArray(prev.examples) ? prev.examples.slice(-40) : [],
       updatedAt: new Date().toISOString(),
@@ -125,14 +166,29 @@ export function createLearningStore({ knowledgeFile, historyFile, indexFile }) {
   }
 
   async function getAll() { return readJson(knowledgeFile, {}); }
+
   async function approveCommercial(groupId) {
     const all = await readJson(knowledgeFile, {});
     const entry = all[groupId];
     if (!entry?.draftCommercialRules?.detected) throw new Error('commercial_rules_missing');
-    all[groupId] = { ...entry, approvedCommercialRules: entry.draftCommercialRules, commercialStatus: 'approved', commercialApprovedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const approvedAt = new Date().toISOString();
+    const versions = Array.isArray(entry.commercialVersions)
+      ? entry.commercialVersions.map((version) => version.descriptionHash === entry.descriptionHash
+        ? { ...version, status: 'approved', approvedAt }
+        : version)
+      : [];
+    all[groupId] = {
+      ...entry,
+      approvedCommercialRules: entry.draftCommercialRules,
+      commercialVersions: versions,
+      commercialStatus: 'approved',
+      commercialApprovedAt: approvedAt,
+      updatedAt: approvedAt,
+    };
     await writeJson(knowledgeFile, all);
     return all[groupId];
   }
+
   async function getIndex() { return readJson(indexFile, {}); }
   async function saveIndex(index) { return writeJson(indexFile, index); }
 
