@@ -1,0 +1,50 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "Assistência Segura x America Guincho",
+  "period": "2026-05-05 a 2026-08-18",
+  "parsedMessageCount": 568,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "grupo é usado explicitamente para consultar disponibilidade de ocorrências",
+      "consulta traz veículo, origem, destino e Maps antes da autorização"
+    ],
+    "authorization": [
+      "'pode seguir' confirma o atendimento",
+      "depois chega ficha formal com protocolo, valor de tabela e previsão"
+    ],
+    "cancellation": [
+      "'pode desconsiderar' e 'cancelado sem custos' encerram a oportunidade sem receita"
+    ],
+    "administrativeNotices": [
+      "avisos de cadastro/tabelas/documentos não são solicitações operacionais e não devem receber resposta automática",
+      "canais administrativos podem mudar; não gravar contato histórico como regra permanente"
+    ]
+  },
+  "commercialRules": {
+    "status": "observed_and_requires_approval_before_finance",
+    "leveObserved": {
+      "baseBRL": 135,
+      "includedKm": 40,
+      "excessKmBRL": 3.00,
+      "validatedExamples": ["86 km => R$273,00 (valor de tabela também aparece no protocolo)"],
+      "dataQualityWarning": "fechamento de 96 km foi informado como R$298,00, mas a fórmula 135 + 56*3 resultaria R$303,00; marcar revisão manual"
+    },
+    "financeCalendarObserved": {
+      "paymentDay15": "enviar conferência entre dias 1 e 5; aguardar liberação para NF; NF até dia 10 ao meio-dia; atraso move para pagamento do dia 30",
+      "paymentDay30": "enviar conferência entre dias 16 e 20; aguardar liberação para NF; NF até dia 24 ao meio-dia; atraso move para dia 15 do mês seguinte",
+      "note": "o endereço de contato financeiro foi alterado depois; não persistir endereço antigo como regra"
+    }
+  },
+  "operationalRequirements": [
+    "ficha formal inclui valor de tabela e previsão de chegada",
+    "origem/destino podem chegar por endereço e Google Maps",
+    "grupo operacional não deve ser usado pelo bot para responder avisos administrativos"
+  ],
+  "botBehavior": [
+    "Responder somente consultas/acionamentos operacionais; ignorar comunicados administrativos.",
+    "Após autorização, registrar protocolo e valor de tabela apenas para conferência.",
+    "Cancelado sem custos nunca gera receita.",
+    "Se valor informado divergir da fórmula aprovada, sinalizar conferência."
+  ]
+}
