@@ -1,0 +1,27 @@
+name: Fix Group Registry Once
+on:
+  push:
+    paths:
+      - 'tools/fix_group_registry_tmp.py'
+      - '.github/workflows/fix-group-registry-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar correção
+        run: python3 tools/fix_group_registry_tmp.py
+      - name: Validar worker
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "Fonte da verdade = conta do WhatsApp atualmente conectada" tools/vercel-whatsapp-worker.mjs
+          grep -q "autorização(ões) de grupo antigo removida(s)" tools/vercel-whatsapp-worker.mjs
+      - name: Commitar correção
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git diff --cached --quiet || git commit -m 'Remove grupos antigos ao sincronizar WhatsApp atual'
+          git push
