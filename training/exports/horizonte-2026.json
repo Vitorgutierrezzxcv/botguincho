@@ -1,0 +1,64 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "América Guincho / Horizonte",
+  "period": "2026-02-04 a 2026-08-18",
+  "parsedMessageCount": 704,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "ficha de veículo + origem/destino seguida de 'disponível?'",
+      "prestador também informava proativamente localização/rota e disponibilidade",
+      "pedido de atendimento deve permanecer no grupo operacional"
+    ],
+    "eta": [
+      "assistência pergunta tempo restante ou prévia antes do protocolo",
+      "ETA humano histórico como 60 minutos é exemplo de intenção, não valor a reutilizar"
+    ],
+    "authorization": [
+      "neste grupo o protocolo definitivo pode chegar logo após disponibilidade/prévia, sem frase separada 'pode seguir'",
+      "protocolo/link de execução após aceite deve ser tratado como serviço formalizado"
+    ],
+    "completion": [
+      "prestador informa 'Finalizado' e depois registra fechamento por saída/km",
+      "valores do fechamento são enviados ao financeiro por canal externo ao grupo"
+    ]
+  },
+  "commercialRules": {
+    "status": "versioned_and_requires_approval_before_finance",
+    "historicalExplicit": [
+      {
+        "effectiveAround": "2026-02-05",
+        "leve": {"baseBRL": 130, "includedKm": 40, "excessKmBRL": 2.90, "dirtRoadKmBRL": 3.50},
+        "moto": {"baseBRL": 130, "includedKm": 40, "excessKmBRL": 2.60, "dirtRoadKmBRL": 3.50},
+        "utilitario": {"baseBRL": 150, "includedKm": 40, "excessKmBRL": 3.00, "dirtRoadKmBRL": 3.50},
+        "evidence": "tabela escrita integralmente na conversa após alteração da descrição do grupo"
+      }
+    ],
+    "laterObserved": {
+      "effectiveFromApprox": "2026-04",
+      "leve": {"baseBRL": 135, "includedKm": 40, "excessKmBRL": 3.00},
+      "note": "descrição foi alterada em 31/03, mas o novo texto não aparece no export; valores posteriores confirmam apenas a tarifa de leve"
+    },
+    "validatedExamples": [
+      "leve 47 km => R$156,00",
+      "leve 45 km => R$150,00",
+      "leve 63 km => R$204,00",
+      "leve dentro da franquia => R$135,00"
+    ],
+    "safety": [
+      "não inferir tarifa atual de moto/utilitário apenas a partir da tarifa de leve",
+      "mudança de descrição deve criar nova versão de tarifa pendente de aprovação"
+    ]
+  },
+  "operationalRequirements": [
+    "protocolos incluem condições do veículo, acesso, chaves/documentos e quantidade de pessoas",
+    "há regra textual de aguardar 10 minutos quando ninguém é localizado e depois retornar à base; consequências financeiras devem ser tratadas conforme protocolo, sem inferência",
+    "alteração de endereço/localização durante o atendimento deve atualizar o chamado ativo"
+  ],
+  "botBehavior": [
+    "Pergunta 'disponível?' continua sendo consulta mesmo com todos os dados do serviço.",
+    "Quando protocolo definitivo chegar depois do aceite, associar ao atendimento ativo e marcar formalização.",
+    "Prévia sempre vem do rastreador/rota atual.",
+    "Não reutilizar tarifa histórica após mudança de descrição sem aprovação."
+  ]
+}
