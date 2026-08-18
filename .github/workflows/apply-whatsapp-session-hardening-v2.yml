@@ -1,0 +1,98 @@
+name: Apply WhatsApp Session Hardening V2
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-whatsapp-session-hardening-v2.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar patch robusto
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          worker=Path('tools/vercel-whatsapp-worker.mjs')
+          s=worker.read_text()
+          if 'async function gracefulShutdown' not in s:
+              marker='let lastWhatsappRecoveryAt = 0;\n'
+              assert marker in s
+              s=s.replace(marker, marker+'let shuttingDown = false;\n',1)
+              endpoint="app.post('/api/internal/credential', (req, res) => {"
+              block="""async function gracefulShutdown(signal = 'shutdown') {
+            if (shuttingDown) return;
+            shuttingDown = true;
+            if (whatsappRecoveryTimer) { clearTimeout(whatsappRecoveryTimer); whatsappRecoveryTimer = null; }
+            waStatus = 'encerrando';
+            logEvent('system', `Encerramento gracioso solicitado (${signal}).`);
+            const current = waClient;
+            waClient = null;
+            if (current) {
+              await Promise.race([
+                current.destroy().catch((error) => logEvent('warning', 'Falha ao encerrar WhatsApp graciosamente.', { error: String(error) })),
+                new Promise((resolve) => setTimeout(resolve, 8000)),
+              ]);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            process.exit(0);
+          }
+
+          process.once('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
+          process.once('SIGINT', () => { void gracefulShutdown('SIGINT'); });
+
+          """
+              assert endpoint in s
+              s=s.replace(endpoint,block+endpoint,1)
+          worker.write_text(s)
+
+          reload=Path('api/worker/reload.js')
+          lines=reload.read_text().splitlines()
+          out=[]
+          for line in lines:
+              if 'kill -9 $WPIDS' in line and 'kill -TERM $WPIDS' not in '\n'.join(out[-5:]):
+                  indent=line[:len(line)-len(line.lstrip())]
+                  out.append(line.replace('kill -9 $WPIDS','kill -TERM $WPIDS'))
+                  out.append(indent+"'for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f \\\"node tools/vercel-whatsapp-worker.mjs\\\" >/dev/null 2>&1 || break; sleep 1; done',")
+                  out.append(line)
+                  continue
+              if 'kill -9 $PIDS' in line and 'kill -TERM $PIDS' not in '\n'.join(out[-5:]):
+                  indent=line[:len(line)-len(line.lstrip())]
+                  out.append(line.replace('kill -9 $PIDS','kill -TERM $PIDS'))
+                  out.append(indent+"'for i in 1 2 3 4 5 6 7 8; do pgrep -f \\\"node tools/vercel-whatsapp-worker.mjs\\\" >/dev/null 2>&1 || break; sleep 1; done',")
+                  out.append(line)
+                  continue
+              if "pkill -9 -f 'session-[c]liente-teste'" in line:
+                  indent=line[:len(line)-len(line.lstrip())]
+                  out.append(line.replace('pkill -9','pkill -TERM'))
+                  out.append(indent+"'sleep 2',")
+                  out.append(line)
+                  continue
+              out.append(line)
+          reload.write_text('\n'.join(out)+'\n')
+
+          wd=Path('.github/workflows/production-watchdog.yml')
+          s=wd.read_text()
+          if 'wa_status=' not in s:
+              s=s.replace('          echo "wa_ok=$WA_OK" >> "$GITHUB_OUTPUT"\n','          WA_STATUS=$(jq -r \'.checks.whatsapp.status // "unknown"\' /tmp/health.json)\n          echo "wa_ok=$WA_OK" >> "$GITHUB_OUTPUT"\n          echo "wa_status=$WA_STATUS" >> "$GITHUB_OUTPUT"\n',1)
+          s=s.replace("        if: steps.health.outputs.wa_ok != 'true'\n","        if: steps.health.outputs.wa_ok != 'true' && steps.health.outputs.wa_status != 'qr'\n",1)
+          wd.write_text(s)
+          PY
+      - name: Validar sintaxe e invariantes
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check api/worker/reload.js
+          grep -q 'async function gracefulShutdown' tools/vercel-whatsapp-worker.mjs
+          grep -q 'kill -TERM $WPIDS' api/worker/reload.js
+          grep -q 'kill -TERM $PIDS' api/worker/reload.js
+          grep -q 'wa_status' .github/workflows/production-watchdog.yml
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs api/worker/reload.js .github/workflows/production-watchdog.yml
+          git diff --cached --quiet || git commit -m 'Endurece persistência da sessão WhatsApp'
+          git push
