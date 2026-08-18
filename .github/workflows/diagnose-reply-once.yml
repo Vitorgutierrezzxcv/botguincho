@@ -1,0 +1,30 @@
+name: Diagnose Reply Once
+on:
+  push:
+    paths: ['.github/workflows/diagnose-reply-once.yml']
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capturar status, grupos e atividade
+        run: |
+          set -e
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste' -o /tmp/status.json
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 'https://botguincho.vercel.app/api/worker/groups?companyId=cliente-teste' -o /tmp/groups.json
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 'https://botguincho.vercel.app/api/worker/activity?companyId=cliente-teste' -o /tmp/activity.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=JSON.parse(fs.readFileSync('/tmp/status.json'));
+          const g=JSON.parse(fs.readFileSync('/tmp/groups.json'));
+          const a=JSON.parse(fs.readFileSync('/tmp/activity.json'));
+          const out={checkedAt:new Date().toISOString(),whatsapp:s.whatsapp?.status||null,selected:(g.groups||[]).filter(x=>x.selected).map(x=>({id:x.id,name:x.name})),activity:(a.activity||[]).slice(0,30)};
+          fs.mkdirSync('ops',{recursive:true}); fs.writeFileSync('ops/reply-diagnostic.json',JSON.stringify(out,null,2));
+          NODE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/reply-diagnostic.json
+          git diff --cached --quiet || git commit -m 'Registra diagnóstico de resposta do bot'
+          git push
