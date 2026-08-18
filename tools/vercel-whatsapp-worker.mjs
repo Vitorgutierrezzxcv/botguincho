@@ -2054,6 +2054,28 @@ async function startWhatsApp() {
     } catch {}
   });
 
+  waClient.on('message_create', async (created) => {
+    try {
+      if (!created?.fromMe) return;
+      const chat = await created.getChat().catch(() => null);
+      const groupId = chat?.id?._serialized || created?.to || '';
+      if (!groupId.endsWith('@g.us')) return;
+      const allowed = await getAllowedGroupIds();
+      if (!allowed.has(groupId)) return;
+      const body = String(created.body || '').trim();
+      if (!body) return;
+      const fingerprint = `${groupId}|${normalizeForIntent(body)}`;
+      const botAt = botReplyFingerprints.get(fingerprint);
+      if (botAt && Date.now() - botAt < 90000) { botReplyFingerprints.delete(fingerprint); return; }
+      const inbound = lastInboundByGroup.get(groupId);
+      const triggerText = inbound && Date.now() - inbound.at < 900000 ? inbound.text : '';
+      await learningStore.addHumanExample({ groupId, groupName: chat?.name || 'Grupo do WhatsApp', triggerText, replyText: body });
+      logEvent('learning', `${chat?.name || groupId}: resposta humana aprendida.`, { groupId, intent: inferLearningIntent(triggerText) });
+    } catch (error) {
+      logEvent('warning', 'Falha ao registrar resposta humana para aprendizado.', { error: String(error) });
+    }
+  });
+
   waClient.on('auth_failure', (message) => {
     waStatus = 'erro';
     lastError = String(message);
@@ -2219,6 +2241,58 @@ app.post('/api/management', async (req, res) => {
     const message = error instanceof Error ? error.message : String(error);
     return res.status(message.includes('invalid') ? 400 : 500).json({ ok: false, error: message });
   }
+});
+
+async function importLearningHistory(groupId, requestedLimit = 500) {
+  if (!waClient || waStatus !== 'pronto') throw new Error('whatsapp_not_ready');
+  if (!groupId?.endsWith('@g.us')) throw new Error('group_invalid');
+  const allowed = await getAllowedGroupIds();
+  if (!allowed.has(groupId)) throw new Error('group_not_authorized');
+  const chat = await waClient.getChatById(groupId);
+  const groupName = chat?.name || 'Grupo do WhatsApp';
+  await learningStore.syncGroup({ groupId, name: groupName, description: chat?.description || chat?.groupMetadata?.desc || '' });
+  const limit = Math.max(20, Math.min(2000, Number(requestedLimit || 500)));
+  const messages = await chat.fetchMessages({ limit });
+  const index = await learningStore.getIndex();
+  let imported = 0;
+  const intentCounts = {};
+  for (const msg of messages || []) {
+    const body = String(msg?.body || '').trim();
+    if (!body) continue;
+    const id = msg?.id?._serialized || crypto.createHash('sha1').update(`${msg?.timestamp || ''}|${body}`).digest('hex');
+    if (index[id]) continue;
+    const intent = inferLearningIntent(body);
+    await learningStore.append({ id, at: msg?.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : new Date().toISOString(), groupId, groupName, direction: msg?.fromMe ? 'outgoing' : 'incoming', source: 'history-import', text: body, intent });
+    index[id] = new Date().toISOString();
+    intentCounts[intent] = (intentCounts[intent] || 0) + 1;
+    imported += 1;
+  }
+  await learningStore.saveIndex(index);
+  logEvent('learning', `${groupName}: ${imported} mensagens históricas importadas.`, { groupId, intentCounts });
+  return { groupId, groupName, available: messages?.length || 0, imported, intentCounts };
+}
+
+app.get('/api/group-knowledge', async (_req, res) => {
+  try { return res.json({ ok: true, groups: Object.values(await learningStore.getAll()) }); }
+  catch (error) { return res.status(500).json({ ok: false, error: String(error) }); }
+});
+
+app.post('/api/group-knowledge', async (req, res) => {
+  try {
+    const groupId = String(req.body?.groupId || '');
+    const action = String(req.body?.action || 'refresh');
+    const allowed = await getAllowedGroupIds();
+    if (!allowed.has(groupId)) return res.status(403).json({ ok: false, error: 'group_not_authorized' });
+    if (action === 'approve-commercial') return res.json({ ok: true, group: await learningStore.approveCommercial(groupId) });
+    const chat = await waClient?.getChatById(groupId).catch(() => null);
+    const group = await learningStore.syncGroup({ groupId, name: chat?.name || '', description: chat?.description || chat?.groupMetadata?.desc || '' });
+    return res.json({ ok: true, group });
+  } catch (error) { return res.status(400).json({ ok: false, error: String(error?.message || error) }); }
+});
+
+app.post('/api/learning/import-history', async (req, res) => {
+  try { return res.json({ ok: true, ...(await importLearningHistory(String(req.body?.groupId || ''), req.body?.limit || 500)) }); }
+  catch (error) { return res.status(400).json({ ok: false, error: String(error?.message || error) }); }
 });
 
 app.get('/api/status', async (_req, res) => {
