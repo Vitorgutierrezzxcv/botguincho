@@ -1,0 +1,49 @@
+name: Apply ETA Fix Production Once
+on:
+  push:
+    paths: ['.github/workflows/apply-eta-fix-production-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recarregar worker com código atual
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 180 \
+            -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Content-Type: application/json' \
+            -H "x-botguincho-source-ref: 76a528c5dedfe99b908375972821e419ef093118" \
+            -d '{"companyId":"cliente-teste"}' \
+            'https://botguincho.vercel.app/api/worker/reload?companyId=cliente-teste' -o /tmp/reload.json
+          cat /tmp/reload.json
+          sleep 25
+      - name: Testar ETA do acionamento real
+        run: |
+          set -e
+          BASE='https://botguincho.vercel.app'
+          HEALTH=$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 4 "$BASE/api/worker/health?companyId=cliente-teste")
+          ROUTE=$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 -X POST -H 'content-type: application/json' \
+            --data '{"fromTracker":true,"to":"R. DOIS, 161 - TROPICAL - CONTAGEM - MG"}' \
+            "$BASE/api/worker/route-test?companyId=cliente-teste")
+          export HEALTH ROUTE
+          node <<'NODE'
+          const fs=require('fs');
+          const h=JSON.parse(process.env.HEALTH),r=JSON.parse(process.env.ROUTE);
+          if(h.checks?.whatsapp?.ok!==true) throw new Error('WhatsApp não pronto');
+          if(h.checks?.tracker?.ok!==true) throw new Error('Tracker não pronto');
+          if(r.ok!==true || !Number.isFinite(Number(r.route?.minutes))) throw new Error('ETA real não retornou minutes: '+JSON.stringify(r));
+          const out={checkedAt:new Date().toISOString(),health:h.status,whatsapp:h.checks.whatsapp.status,trackerAgeSeconds:h.checks.tracker.ageSeconds,testAddress:'R. DOIS, 161 - TROPICAL - CONTAGEM - MG',route:r.route};
+          fs.mkdirSync('ops',{recursive:true}); fs.writeFileSync('ops/eta-fix-production.json',JSON.stringify(out,null,2));
+          NODE
+      - name: Registrar resultado
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/eta-fix-production.json
+          git commit -m 'Valida ETA corrigido em produção' || true
+          git push
