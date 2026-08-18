@@ -1,0 +1,88 @@
+{
+  "checkedAt": "2026-08-18T14:16:49.240Z",
+  "honda": {
+    "error": "method_not_allowed"
+  },
+  "juatuba": {
+    "error": "method_not_allowed"
+  },
+  "health": {
+    "ok": true,
+    "status": "operational",
+    "checkedAt": "2026-08-18T14:16:50.500Z",
+    "checks": {
+      "whatsapp": {
+        "ok": true,
+        "status": "pronto"
+      },
+      "tracker": {
+        "ok": true,
+        "status": "online",
+        "ageSeconds": 3,
+        "plate": "GSW0H17",
+        "address": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais"
+      },
+      "ai": {
+        "ok": true,
+        "status": "online"
+      },
+      "routes": {
+        "ok": true,
+        "providers": {
+          "osrm-main": {
+            "status": "ok",
+            "failures": 0,
+            "openUntil": null,
+            "lastSuccessAt": null,
+            "lastFailureAt": null
+          },
+          "osrm-osmde": {
+            "status": "ok",
+            "failures": 0,
+            "openUntil": null,
+            "lastSuccessAt": null,
+            "lastFailureAt": null
+          }
+        }
+      }
+    },
+    "groupsSelected": 1,
+    "recentErrors": [],
+    "serviceArea": {
+      "state": "MG",
+      "priorityCities": [
+        "Belo Horizonte",
+        "Betim",
+        "Contagem",
+        "Nova Lima",
+        "Ribeirão das Neves",
+        "Sabará",
+        "Santa Luzia",
+        "Ibirité",
+        "Confins",
+        "Lagoa Santa",
+        "Vespasiano",
+        "Pedro Leopoldo",
+        "São José da Lapa",
+        "Matozinhos",
+        "Sarzedo",
+        "Mário Campos",
+        "Brumadinho",
+        "Igarapé",
+        "Juatuba",
+        "Mateus Leme",
+        "Esmeraldas",
+        "Caeté",
+        "Nova União",
+        "Rio Acima",
+        "Raposos",
+        "Itaguara",
+        "Itatiaiuçu",
+        "Florestal",
+        "Baldim",
+        "Capim Branco"
+      ],
+      "label": "MG · cidades prioritárias configuradas"
+    }
+  }
+}
