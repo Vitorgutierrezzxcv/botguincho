@@ -1,0 +1,75 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "AMERICA GUINCHO - BETIM MG F15 X TOP BRASIL",
+  "period": "2026-04-28 a 2026-08-17",
+  "messageCount": 409,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "Disponível?",
+      "Boa noite, disponível? + ficha completa",
+      "respostas humanas comuns: Bora, Marcha, positivo"
+    ],
+    "quote": [
+      "COTAÇÃO / VALOR, KMS E PREVIA",
+      "consegue me ajudar nesta cotação? valor e previa?",
+      "cotação é consulta; não é serviço confirmado"
+    ],
+    "eta": [
+      "Qual prévia?",
+      "prévia??",
+      "a central explicitamente pediu para informar a prévia automaticamente quando possível"
+    ],
+    "authorization": [
+      "segue",
+      "pode seguir",
+      "bora",
+      "vou enviar",
+      "depois da autorização chega protocolo completo"
+    ],
+    "completion": [
+      "km total é informado ao final",
+      "valor final segue tabela + eventuais pedágios",
+      "fotos dos 4 lados e checklist aparecem no protocolo"
+    ]
+  },
+  "commercialRules": {
+    "status": "observed_and_requires_approval_before_finance",
+    "leve": {
+      "baseBRL": 135,
+      "includedKm": 40,
+      "excessKmBRL": 3.0,
+      "formula": "135 + max(0, kmTotal-40)*3.00",
+      "evidence": [
+        "mensagem explícita: saída do caminhão até 40 km R$135",
+        "mensagem explícita: km a mais R$3",
+        "48 km => R$159,00",
+        "92 km => R$291,00",
+        "121 km => R$378,00",
+        "135 km => R$420,00"
+      ]
+    },
+    "utilitario": {
+      "baseBRL": 160,
+      "includedKm": 40,
+      "excessKmBRL": 3.2,
+      "formula": "160 + max(0, kmTotal-40)*3.20",
+      "evidence": [
+        "48 km => R$185,60",
+        "até 40 km => R$160,00"
+      ]
+    },
+    "extras": {
+      "toll": "pedágio ida/volta pode ser somado separadamente ao valor calculado",
+      "example": "135 km leve = R$420,00 + R$25,60 pedágio => R$445,60"
+    }
+  },
+  "botBehavior": [
+    "Se a mensagem pedir cotação/valor/km/prévia, responder como cotação e não como acionamento confirmado.",
+    "Se também houver 'disponível?', a resposta ideal pode combinar disponibilidade + ETA + estimativa comercial quando a tabela estiver aprovada.",
+    "Quando a central disser 'segue' ou 'pode seguir', marcar autorização e aguardar protocolo completo.",
+    "ETA deve vir do rastreador/rota atual e substituir hábitos humanos de responder 60/70 minutos fixos.",
+    "Se o operador informar que está agarrado, fora de rota ou que o caminhão não remove aquele veículo, não confirmar disponibilidade automaticamente.",
+    "Pedágio deve ser item separado no financeiro e não incorporado silenciosamente ao valor por km."
+  ]
+}
