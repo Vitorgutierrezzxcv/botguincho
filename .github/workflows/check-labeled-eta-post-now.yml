@@ -1,0 +1,32 @@
+name: Check Labeled ETA POST Now
+on:
+  push:
+    paths: ['.github/workflows/check-labeled-eta-post-now.yml']
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Testar produção via POST
+        run: |
+          set -e
+          curl -fsSL -X POST -H 'Content-Type: application/json' \
+            --data '{"fromTracker":true,"to":"RUA JOSE AUGUSTO DE OLIVEIRA 175, BAIRRO: PETROPOLIS, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL"}' \
+            'https://botguincho.vercel.app/api/worker/route-test?companyId=cliente-teste' -o /tmp/a.json
+          curl -fsSL -X POST -H 'Content-Type: application/json' \
+            --data '{"fromTracker":true,"to":"RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS"}' \
+            'https://botguincho.vercel.app/api/worker/route-test?companyId=cliente-teste' -o /tmp/b.json
+          curl -fsSL 'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste' -o /tmp/h.json
+          jq -e '.ok == true and .route.minutes > 0' /tmp/a.json >/dev/null
+          jq -e '.ok == true and .route.minutes > 0' /tmp/b.json >/dev/null
+          jq -e '.checks.whatsapp.ok == true and .checks.tracker.ok == true' /tmp/h.json >/dev/null
+          node <<'NODE'
+          const fs=require('fs'); const read=p=>JSON.parse(fs.readFileSync(p,'utf8')); fs.mkdirSync('ops',{recursive:true}); fs.writeFileSync('ops/labeled-eta-post-validation.json',JSON.stringify({checkedAt:new Date().toISOString(),honda:read('/tmp/a.json'),juatuba:read('/tmp/b.json'),health:read('/tmp/h.json')},null,2));
+          NODE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/labeled-eta-post-validation.json
+          git commit -m 'Valida ETA rotulado via POST' || exit 0
+          git push
