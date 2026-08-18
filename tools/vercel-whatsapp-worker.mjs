@@ -7,6 +7,7 @@ import path from 'node:path';
 import OpenAI from 'openai';
 import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
+import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -28,6 +29,9 @@ const dispatchStateFile = path.join(clientDir, 'dispatch-state.json');
 const geocodeCacheFile = path.join(clientDir, 'geocode-cache.json');
 const managementFile = path.join(clientDir, 'management.json');
 const auditFile = path.join(clientDir, 'audit.jsonl');
+const groupKnowledgeFile = path.join(clientDir, 'group-knowledge.json');
+const learningHistoryFile = path.join(clientDir, 'learning-history.jsonl');
+const learningIndexFile = path.join(clientDir, 'learning-index.json');
 
 let aiCredential = process.env.OPENAI_API_KEY ?? '';
 let waClient = null;
@@ -44,6 +48,9 @@ const groupMemory = new Map();
 const sharedLocations = new Map();
 const routeProviderState = new Map();
 const processedMessageIds = new Map();
+const lastInboundByGroup = new Map();
+const botReplyFingerprints = new Map();
+const learningStore = createLearningStore({ knowledgeFile: groupKnowledgeFile, historyFile: learningHistoryFile, indexFile: learningIndexFile });
 
 const SYSTEM_AI_RULES = `
 REGRAS PRIORITÁRIAS DO BOT GUINCHO:
@@ -387,11 +394,12 @@ async function discoverGroups() {
 
   if (waClient && waStatus === 'pronto') {
     const discovered = new Map();
-    const addGroup = (id, name) => {
+    const addGroup = (id, name, description = '') => {
       if (typeof id !== 'string' || !id.endsWith('@g.us')) return;
       discovered.set(id, {
         id,
         name: String(name || previousRegistry[id]?.name || 'Grupo do WhatsApp'),
+        description: String(description || ''),
         lastSeenAt: new Date().toISOString(),
       });
     };
@@ -400,7 +408,7 @@ async function discoverGroups() {
       const chats = await waClient.getChats();
       for (const chat of chats ?? []) {
         const id = chat?.id?._serialized || '';
-        if (chat?.isGroup || id.endsWith('@g.us')) addGroup(id, chat?.name || chat?.formattedTitle);
+        if (chat?.isGroup || id.endsWith('@g.us')) addGroup(id, chat?.name || chat?.formattedTitle, chat?.description || chat?.groupMetadata?.desc || '');
       }
     } catch (error) {
       logEvent('warning', 'getChats não conseguiu listar os grupos.', { error: String(error) });
@@ -447,6 +455,7 @@ async function discoverGroups() {
       // Remove grupos antigos do registry e também permissões que não existem na conta atual.
       const nextRegistry = Object.fromEntries([...discovered.entries()]);
       await writeJson(registryFile, nextRegistry);
+      for (const group of discovered.values()) await learningStore.syncGroup({ groupId: group.id, name: group.name, description: group.description || '' });
 
       const validAllowed = [...allowed].filter((id) => discovered.has(id));
       if (validAllowed.length !== allowed.size) {
@@ -1503,6 +1512,7 @@ async function extractMessageInput(msg) {
 }
 
 async function replyAndRemember(msg, groupName, incomingText, reply, meta = {}) {
+  botReplyFingerprints.set(`${msg.from}|${normalizeForIntent(reply)}`, Date.now());
   await msg.reply(reply);
   remember(msg.from, 'user', incomingText);
   remember(msg.from, 'assistant', reply);
@@ -1897,6 +1907,8 @@ async function processIncomingMessage(msg) {
     );
 
     logEvent('message', `${groupName}: ${readableText}`, { groupId: msg.from, author });
+    lastInboundByGroup.set(msg.from, { text: readableText, at: Date.now() });
+    void learningStore.append({ groupId: msg.from, groupName, direction: 'incoming', source: 'live', text: readableText, intent: inferLearningIntent(readableText) });
 
     if (settings.humanTakeover) return;
 
