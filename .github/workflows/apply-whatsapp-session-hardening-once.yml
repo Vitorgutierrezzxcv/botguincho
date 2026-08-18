@@ -1,0 +1,29 @@
+name: Apply WhatsApp Session Hardening Once
+on:
+  push:
+    paths:
+      - 'tools/harden_whatsapp_session_tmp.py'
+      - '.github/workflows/apply-whatsapp-session-hardening-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar hardening
+        run: python3 tools/harden_whatsapp_session_tmp.py
+      - name: Validar
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check api/worker/reload.js
+          grep -q 'async function gracefulShutdown' tools/vercel-whatsapp-worker.mjs
+          grep -q 'kill -TERM' api/worker/reload.js
+          grep -q 'wa_status' .github/workflows/production-watchdog.yml
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs api/worker/reload.js .github/workflows/production-watchdog.yml
+          git diff --cached --quiet || git commit -m 'Endurece persistência da sessão WhatsApp'
+          git push
