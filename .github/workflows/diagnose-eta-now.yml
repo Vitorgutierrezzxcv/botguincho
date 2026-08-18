@@ -1,0 +1,37 @@
+name: Diagnose ETA Now
+on:
+  push:
+    paths: ['.github/workflows/diagnose-eta-now.yml']
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Consultar produção
+        run: |
+          set -e
+          BASE='https://botguincho.vercel.app'
+          ACT=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$BASE/api/worker/activity?companyId=cliente-teste")
+          HEALTH=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$BASE/api/worker/health?companyId=cliente-teste")
+          STATUS=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$BASE/api/worker/status?companyId=cliente-teste")
+          ROUTE=$(curl -sS -X POST -H 'content-type: application/json' --data '{"fromTracker":true,"to":"Avenida Juscelino Kubitschek, 229, Centro, Betim - MG"}' "$BASE/api/worker/route-test?companyId=cliente-teste")
+          export ACT HEALTH STATUS ROUTE
+          node <<'NODE'
+          const fs=require('fs');
+          const parse=x=>{try{return JSON.parse(x)}catch{return {raw:x}}};
+          const a=parse(process.env.ACT),h=parse(process.env.HEALTH),s=parse(process.env.STATUS),r=parse(process.env.ROUTE);
+          const recent=(a.activity||a.events||[]).slice(0,30).map(x=>({at:x.at,type:x.type,message:x.message,meta:x.meta}));
+          const out={checkedAt:new Date().toISOString(),whatsapp:s.whatsapp?.status,tracker:s.tracker,health:h,routeTest:r,recentActivity:recent};
+          fs.mkdirSync('ops',{recursive:true});
+          fs.writeFileSync('ops/eta-diagnostic.json',JSON.stringify(out,null,2));
+          NODE
+      - name: Registrar diagnóstico
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/eta-diagnostic.json
+          git commit -m 'Registra diagnóstico atual do ETA' || true
+          git push
