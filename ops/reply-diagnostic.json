@@ -1,0 +1,135 @@
+{
+  "checkedAt": "2026-08-18T13:59:16.133Z",
+  "whatsapp": "pronto",
+  "selected": [
+    {
+      "id": "120363430280224273@g.us",
+      "name": "Tests guincho"
+    }
+  ],
+  "activity": [
+    {
+      "id": 1787061556421.8506,
+      "at": "2026-08-18T13:59:16.421Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "id": 1787061549640.8464,
+      "at": "2026-08-18T13:59:09.640Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "id": 1787061544340.4033,
+      "at": "2026-08-18T13:59:04.340Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "id": 1787061526251.1182,
+      "at": "2026-08-18T13:58:46.251Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "id": 1787061525000.0176,
+      "at": "2026-08-18T13:58:45.000Z",
+      "type": "error",
+      "message": "Erro ao processar mensagem.",
+      "meta": {
+        "error": "processedMessageIds is not defined"
+      }
+    },
+    {
+      "id": 1787061503164.1074,
+      "at": "2026-08-18T13:58:23.164Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "id": 1787061479627.2375,
+      "at": "2026-08-18T13:57:59.627Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "id": 1787061455572.0374,
+      "at": "2026-08-18T13:57:35.572Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "id": 1787061454876.4983,
+      "at": "2026-08-18T13:57:34.876Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "id": 1787061442164.8145,
+      "at": "2026-08-18T13:57:22.164Z",
+      "type": "error",
+      "message": "Erro ao processar mensagem.",
+      "meta": {
+        "error": "processedMessageIds is not defined"
+      }
+    },
+    {
+      "id": 1787061435815.6143,
+      "at": "2026-08-18T13:57:15.815Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "id": 1787061435421.2039,
+      "at": "2026-08-18T13:57:15.421Z",
+      "type": "system",
+      "message": "24 grupo(s) sincronizado(s) da conta atual do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "id": 1787061435421.2754,
+      "at": "2026-08-18T13:57:15.421Z",
+      "type": "security",
+      "message": "2 autorização(ões) de grupo antigo removida(s) após troca/reconexão do WhatsApp.",
+      "meta": {}
+    },
+    {
+      "id": 1787061435005.4067,
+      "at": "2026-08-18T13:57:15.005Z",
+      "type": "whatsapp",
+      "message": "WhatsApp conectado e pronto.",
+      "meta": {}
+    },
+    {
+      "id": 1787061433314.027,
+      "at": "2026-08-18T13:57:13.314Z",
+      "type": "whatsapp",
+      "message": "WhatsApp autenticado.",
+      "meta": {}
+    },
+    {
+      "id": 1787061432366.791,
+      "at": "2026-08-18T13:57:12.366Z",
+      "type": "tracker",
+      "message": "GConnect Android: GSW0H17 · 0 km/h · Rua das Rosas, 310, São Salvador, Betim - Minas Gerais.",
+      "meta": {}
+    },
+    {
+      "id": 1787061425593.2493,
+      "at": "2026-08-18T13:57:05.593Z",
+      "type": "system",
+      "message": "Chromium serverless: /tmp/chromium",
+      "meta": {}
+    }
+  ]
+}
