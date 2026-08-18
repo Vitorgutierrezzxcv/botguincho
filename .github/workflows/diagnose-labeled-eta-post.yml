@@ -1,0 +1,26 @@
+name: Diagnose Labeled ETA POST
+on:
+  push:
+    paths: ['.github/workflows/diagnose-labeled-eta-post.yml']
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Coletar respostas
+        run: |
+          set +e
+          A=$(curl -sS -w '\nHTTP_STATUS:%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"fromTracker":true,"to":"RUA JOSE AUGUSTO DE OLIVEIRA 175, BAIRRO: PETROPOLIS, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL"}' 'https://botguincho.vercel.app/api/worker/route-test?companyId=cliente-teste')
+          B=$(curl -sS -w '\nHTTP_STATUS:%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"fromTracker":true,"to":"RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS"}' 'https://botguincho.vercel.app/api/worker/route-test?companyId=cliente-teste')
+          H=$(curl -sS 'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste')
+          export A B H
+          node <<'NODE'
+          const fs=require('fs'); const split=x=>{const i=x.lastIndexOf('\nHTTP_STATUS:'); return {body:x.slice(0,i),status:Number(x.slice(i+13))}}; const parse=x=>{try{return JSON.parse(x)}catch{return x}}; const a=split(process.env.A),b=split(process.env.B); fs.mkdirSync('ops',{recursive:true}); fs.writeFileSync('ops/labeled-eta-post-diagnostic.json',JSON.stringify({checkedAt:new Date().toISOString(),honda:{status:a.status,data:parse(a.body)},juatuba:{status:b.status,data:parse(b.body)},health:parse(process.env.H)},null,2));
+          NODE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/labeled-eta-post-diagnostic.json
+          git commit -m 'Registra diagnóstico POST do ETA rotulado' || exit 0
+          git push
