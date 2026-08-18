@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
+import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -182,43 +183,87 @@ function dispatchFingerprint({ groupId = '', vehicle = '', service = '', originA
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, eta }) {
+async function getGroupKnowledgeEntry(groupId) {
+  const all = await learningStore.getAll();
+  return all[groupId] || null;
+}
+
+function recentManagementCall(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
+  const now = Date.now();
+  return (state.calls || []).find((call) => {
+    if (call.sourceGroupId !== groupId) return false;
+    const age = now - new Date(call.updatedAt || call.createdAt || 0).getTime();
+    return age >= 0 && age < maxAgeMs && !['concluido','cancelado'].includes(call.status);
+  }) || null;
+}
+
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null }) {
   try {
     const state = await getManagement();
-    const vehicle = extractLabeledField(text, 'Veículo') || extractLabeledField(text, 'Veiculo') || '';
-    const service = extractLabeledField(text, 'Serviço') || extractLabeledField(text, 'Servico') || 'Reboque';
+    const parsed = facts || extractOperationalFacts(text);
+    const vehicle = parsed.vehicle || extractLabeledField(text, 'Veículo') || extractLabeledField(text, 'Veiculo') || '';
+    const service = parsed.service || extractLabeledField(text, 'Serviço') || extractLabeledField(text, 'Servico') || 'Reboque';
     const now = Date.now();
     const dispatchKey = dispatchFingerprint({ groupId, vehicle, service, originAddress, destinationAddress });
-    const existing = state.calls.find((call) => {
+    const exact = state.calls.find((call) => {
       const age = now - new Date(call.createdAt || 0).getTime();
-      if (call.dispatchKey && call.dispatchKey === dispatchKey && age < 2 * 60 * 60 * 1000) return true;
-      return call.sourceGroupId === groupId && age < 15 * 60 * 1000 && call.origin === (originAddress || '') && call.destination === (destinationAddress || '') && !['concluido','cancelado'].includes(call.status);
+      if (call.dispatchKey && call.dispatchKey === dispatchKey && age < 6 * 60 * 60 * 1000) return true;
+      return call.sourceGroupId === groupId && age < 30 * 60 * 1000 && call.origin === (originAddress || '') && call.destination === (destinationAddress || '') && !['concluido','cancelado'].includes(call.status);
     });
+    const transitionCanAttach = ['aguardando_aprovacao','autorizado','agendado','cancelado','concluido'].includes(status);
+    const existing = exact || (transitionCanAttach ? recentManagementCall(state, groupId) : null);
+    const knowledge = await getGroupKnowledgeEntry(groupId);
+    const checklist = Array.isArray(evidenceChecklist) ? evidenceChecklist : buildEvidenceChecklist(groupName, text);
+    const previousChecklist = Array.isArray(existing?.evidenceChecklist) ? existing.evidenceChecklist : [];
+    const mergedChecklist = [...previousChecklist];
+    for (const item of checklist) {
+      if (!mergedChecklist.some((x) => x.label === item.label)) mergedChecklist.push(item);
+    }
+
+    let value = Number(existing?.value || 0);
+    if (status === 'concluido' && commercial?.status === 'ok' && Number(commercial.calculatedAmount) > 0) value = Number(commercial.calculatedAmount);
+    if (status === 'concluido' && commercial?.reviewRequired) value = 0;
+
     const patch = {
       id: existing?.id || crypto.randomUUID(),
-      dispatchKey,
+      dispatchKey: existing?.dispatchKey || dispatchKey,
       vehicle: vehicle || existing?.vehicle || 'Veículo não informado',
-      service,
+      vehicleType: parsed.vehicleType || existing?.vehicleType || '',
+      plate: parsed.plate || existing?.plate || '',
+      service: service || existing?.service || 'Reboque',
       client: groupName || existing?.client || 'Seguradora',
       insurer: groupName || existing?.insurer || '',
-      origin: originAddress || existing?.origin || '',
-      destination: destinationAddress || existing?.destination || '',
-      status: existing?.status || 'novo',
-      value: Number(existing?.value || 0),
+      association: parsed.association || existing?.association || '',
+      protocol: parsed.protocol || existing?.protocol || '',
+      origin: originAddress || parsed.origin || existing?.origin || '',
+      destination: destinationAddress || parsed.destination || existing?.destination || '',
+      status,
+      value,
       source: 'whatsapp',
       sourceGroupId: groupId,
-      etaMinutes: eta?.minutes || existing?.etaMinutes || null,
-      distanceKm: eta?.distanceKm || existing?.distanceKm || null,
+      etaMinutes: eta?.minutes ?? existing?.etaMinutes ?? null,
+      distanceKm: eta?.distanceKm ?? existing?.distanceKm ?? null,
+      totalKm: parsed.totalKm ?? existing?.totalKm ?? null,
+      estimatedTotalKm: estimatedTotalKm ?? existing?.estimatedTotalKm ?? null,
+      reportedValue: parsed.centralReportedValue ?? existing?.reportedValue ?? null,
+      calculatedValue: commercial?.calculatedAmount ?? existing?.calculatedValue ?? null,
+      commercialRuleStatus: knowledge?.commercialStatus || existing?.commercialRuleStatus || 'none',
+      financeReviewRequired: commercial?.reviewRequired ?? existing?.financeReviewRequired ?? false,
+      financeReviewReason: commercial?.reviewRequired ? `Valor informado diverge do cálculo aprovado em ${commercial.delta ?? 'valor não calculável'}.` : (existing?.financeReviewReason || ''),
+      evidenceChecklist: mergedChecklist,
+      scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+
     if (existing) state.calls = state.calls.map((x) => x.id === existing.id ? { ...x, ...patch } : x);
     else state.calls.unshift(patch);
+    if (status === 'concluido') maybeCreateFinanceFromCompletedCall(state, patch);
     await saveManagement(state);
-    logEvent('management', `${groupName}: chamado ${existing ? 'atualizado' : 'criado'} automaticamente.`, { callId: patch.id });
+    logEvent('management', `${groupName}: chamado ${existing ? 'atualizado' : 'criado'} → ${status}.`, { callId: patch.id, commercialStatus: patch.commercialRuleStatus, financeReviewRequired: patch.financeReviewRequired });
     return patch;
   } catch (error) {
-    logEvent('warning', 'Não foi possível registrar o acionamento na gestão.', { error: String(error) });
+    logEvent('warning', 'Não foi possível registrar o estado operacional na gestão.', { error: String(error) });
     return null;
   }
 }
@@ -227,6 +272,7 @@ function maybeCreateFinanceFromCompletedCall(state, item) {
   if (!item || item.status !== 'concluido' || !managementAutomationEnabled(state, 'auto-finance')) return;
   if ((state.finance || []).some((entry) => entry.sourceCallId === item.id)) return;
   const amount = Number(item.value || 0);
+  if (item.financeReviewRequired === true) return;
   if (!(amount > 0)) return;
   state.finance.unshift({
     id: crypto.randomUUID(),
@@ -263,6 +309,12 @@ async function applyManagementAction(body = {}) {
     else state[collection].unshift(item);
     if (collection === 'calls') {
       const savedCall = idx >= 0 ? state[collection][idx] : state[collection][0];
+      if (body.item?.status === 'concluido' && Number(body.item?.value || 0) > 0) {
+        savedCall.financeReviewRequired = false;
+        savedCall.financeReviewReason = '';
+        savedCall.financeReviewResolvedAt = new Date().toISOString();
+        savedCall.valueSource = 'manual';
+      }
       maybeCreateFinanceFromCompletedCall(state, savedCall);
     }
     return saveManagement(state);
@@ -1443,6 +1495,8 @@ async function buildAiReply({ groupId, groupName, author, text, imageDataUrl, me
   const settings = await getSettings();
   const openai = getAiClient();
   if (!openai) throw new Error('Credencial OIDC da IA ainda não sincronizada.');
+  const knowledgeEntry = await getGroupKnowledgeEntry(groupId);
+  const learnedContext = learningContextForGroup(groupName, knowledgeEntry);
 
   const memory = memoryOverride ?? groupMemory.get(groupId) ?? [];
   const context = memory
@@ -1451,7 +1505,7 @@ async function buildAiReply({ groupId, groupName, author, text, imageDataUrl, me
   const live = trackerContext ? `\n\nDADOS AO VIVO LIDOS DO APP GCONNECT NO ANDROID:\n${trackerContext}` : '';
   const content = [{
     type: 'input_text',
-    text: `Grupo: ${groupName || groupId}\nAutor: ${author || 'participante'}\nHistórico recente:\n${context || '(sem histórico)'}${live}\n\nMensagem atual:\n${text || '[mensagem sem texto]'}`,
+    text: `Grupo: ${groupName || groupId}\nAutor: ${author || 'participante'}\n\nCONHECIMENTO APRENDIDO DO GRUPO:\n${learnedContext}\n\nHistórico recente:\n${context || '(sem histórico)'}${live}\n\nMensagem atual:\n${text || '[mensagem sem texto]'}`,
   }];
   if (imageDataUrl) content.push({ type: 'input_image', image_url: imageDataUrl });
 
@@ -1860,6 +1914,148 @@ async function handleTrackerLocationQuestion(msg, groupName, readableText) {
   await replyAndRemember(msg, groupName, readableText, reply, { intent: 'tracker-location' });
 }
 
+async function currentOperationalContext(groupId, groupName, text) {
+  const management = await getManagement();
+  const recentCall = recentManagementCall(management, groupId);
+  const knowledge = await getGroupKnowledgeEntry(groupId);
+  const approvedRules = knowledge?.commercialStatus === 'approved' ? knowledge.approvedCommercialRules : null;
+  const facts = extractOperationalFacts(text);
+  const intent = classifyRuntimeIntent(text, groupName, recentCall);
+  return { management, recentCall, knowledge, approvedRules, facts, intent, profile: resolveGroupProfile(groupName) };
+}
+
+async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null) {
+  const originAddress = extractLabeledField(text, 'Origem') || facts.origin || null;
+  const destinationAddress = extractLabeledField(text, 'Destino') || facts.destination || null;
+  const shared = await getRecentSharedLocation(groupId);
+  const originCoordinates = incomingLocation || (!originAddress ? shared?.coordinates || null : null);
+  let eta = null;
+  if (originAddress || originCoordinates) eta = await computeEtaWithRetry({ targetAddress: originAddress, targetCoordinates: originCoordinates });
+  let secondLeg = null;
+  if (originAddress && destinationAddress) {
+    const [from, to] = await Promise.all([geocodeAddress(originAddress), geocodeAddress(destinationAddress)]);
+    if (from && to) secondLeg = await routeBetween(from, to).catch(() => null);
+  }
+  const estimatedTotalKm = eta?.distanceKm != null && secondLeg?.distanceKm != null
+    ? Math.round((Number(eta.distanceKm) + Number(secondLeg.distanceKm)) * 10) / 10
+    : null;
+  return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, estimatedTotalKm };
+}
+
+async function handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const facts = context.facts;
+  const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem'));
+  if (hasOpportunityData) {
+    const route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
+    await recordDispatchInManagement({
+      groupId: msg.from, groupName, text: readableText,
+      originAddress: route.originAddress, destinationAddress: route.destinationAddress,
+      eta: route.eta, status: 'cotacao', facts,
+      estimatedTotalKm: route.estimatedTotalKm,
+      evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    });
+  }
+  await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability' });
+}
+
+async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation).catch((error) => {
+    logEvent('warning', 'Falha ao estimar rota da cotação.', { error: String(error), groupId: msg.from });
+    return { eta: null, secondLeg: null, estimatedTotalKm: null, originAddress: context.facts.origin || null, destinationAddress: context.facts.destination || null };
+  });
+  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts: context.facts, estimatedTotalKm: route.estimatedTotalKm });
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: route.originAddress, destinationAddress: route.destinationAddress,
+    eta: route.eta, status: 'cotacao', facts: context.facts, commercial,
+    estimatedTotalKm: route.estimatedTotalKm,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+  });
+
+  const lines = [];
+  if (asksAvailability(readableText)) lines.push('Disponível ✅');
+  if (route.eta?.minutes) lines.push(`Previsão de chegada: ${route.eta.minutes} min.`);
+  if (route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
+  if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
+  if (commercial.status === 'ok' && commercial.calculatedAmount != null) lines.push(`Valor estimado: R$ ${Number(commercial.calculatedAmount).toFixed(2).replace('.', ',')}.`);
+  else if (/\b(valor|pre[cç]o|quanto fica)\b/i.test(readableText)) lines.push('Valor: em conferência pela tabela comercial.');
+  if (!lines.length) lines.push('Cotação recebida ✅');
+  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'quote', etaMinutes: route.eta?.minutes ?? null, estimatedTotalKm: route.estimatedTotalKm, commercialStatus: commercial.status });
+}
+
+async function handlePendingApprovalRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call?.origin || context.facts.origin || null,
+    destinationAddress: call?.destination || context.facts.destination || null,
+    eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
+    status: 'aguardando_aprovacao', facts: context.facts,
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Certo, aguardando autorização.', { intent: 'pending_approval' });
+}
+
+async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
+  if (context.intent === 'formal_dispatch' || looksLikeDispatch(readableText)) {
+    await handleDispatch(msg, groupName, readableText, incomingLocation);
+    return;
+  }
+  const call = context.recentCall;
+  let eta = null;
+  if (call?.origin) eta = await computeEtaWithRetry({ targetAddress: call.origin }).catch(() => null);
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call?.origin || null, destinationAddress: call?.destination || null,
+    eta, status: 'autorizado', facts: context.facts,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+  });
+  await replyAndRemember(msg, groupName, readableText, eta ? formatEtaReply(eta, true) : 'Confirmado ✅', { intent: 'authorization', etaMinutes: eta?.minutes ?? null });
+}
+
+async function handleScheduledRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: context.facts.origin || call?.origin || null,
+    destinationAddress: context.facts.destination || call?.destination || null,
+    eta: null, status: 'agendado', facts: context.facts,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Agendamento registrado ✅', { intent: 'scheduled_dispatch', scheduledAt: context.facts.scheduledAt });
+}
+
+async function handleCancellationRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call?.origin || null, destinationAddress: call?.destination || null,
+    eta: null, status: 'cancelado', facts: context.facts,
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Entendido.', { intent: 'cancellation' });
+}
+
+async function handleClosureRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  const facts = {
+    ...context.facts,
+    vehicleType: context.facts.vehicleType || call?.vehicleType || null,
+    totalKm: context.facts.totalKm ?? call?.totalKm ?? null,
+  };
+  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts });
+  const saved = await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call?.origin || facts.origin || null,
+    destinationAddress: call?.destination || facts.destination || null,
+    eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
+    status: 'concluido', facts, commercial,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+  });
+  if (commercial.reviewRequired) {
+    logEvent('finance-review', `${groupName}: fechamento exige conferência financeira.`, { callId: saved?.id, calculated: commercial.calculatedAmount, reported: commercial.reportedAmount, delta: commercial.delta });
+  }
+  await replyAndRemember(msg, groupName, readableText, 'Recebido ✅', { intent: 'closure', financeReviewRequired: commercial.reviewRequired, commercialStatus: commercial.status });
+}
+
 async function processIncomingMessage(msg) {
   try {
     const messageId = msg?.id?._serialized || '';
@@ -1923,14 +2119,43 @@ async function processIncomingMessage(msg) {
       return;
     }
 
-    // Em grupos de assistência é comum enviarem todos os dados do serviço e, no fim,
-    // perguntarem apenas se há disponibilidade. Isso ainda não é um acionamento aceito.
-    if (asksAvailability(readableText)) {
-      await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability' });
+    const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
+    const runtimeIntent = operationalContext.intent;
+
+    if (shouldStaySilent(runtimeIntent, groupName)) {
+      logEvent('ignored', `${groupName}: comunicado administrativo aprendido sem resposta.`, { groupId: msg.from, intent: runtimeIntent });
       return;
     }
 
-    if (looksLikeDispatch(readableText)) {
+    if (runtimeIntent === 'quote') {
+      await handleQuoteRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'availability') {
+      await handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'pending_approval') {
+      await handlePendingApprovalRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'scheduled_dispatch') {
+      await handleScheduledRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'cancellation') {
+      await handleCancellationRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'closure') {
+      await handleClosureRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'authorization' || runtimeIntent === 'formal_dispatch') {
+      await handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'dispatch' && looksLikeDispatch(readableText)) {
       await handleDispatch(msg, groupName, readableText, incomingLocation);
       return;
     }
