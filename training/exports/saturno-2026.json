@@ -1,0 +1,84 @@
+{
+  "source": "WhatsApp export anonimizado",
+  "group": "AMÉRICA GUINCHO BETIM X SATURNO (SB)",
+  "period": "2026-01-28 a 2026-08-16",
+  "messageCount": 764,
+  "privacy": "PII removida; exemplos preservam apenas padrões operacionais",
+  "conversationPatterns": {
+    "availability": [
+      "Bom dia, disponível? + ficha completa do serviço",
+      "está disponível? + origem/destino",
+      "o prestador também anuncia proativamente que o motorista/guincho está disponível"
+    ],
+    "quoteAndEta": [
+      "Qual valor?",
+      "Qual valor total por favor?",
+      "qual valor e prévia?",
+      "prévia normalmente é informada antes da autorização"
+    ],
+    "authorization": [
+      "Pode seguir por favor",
+      "pode seguir,",
+      "após autorização a assistência envia protocolo completo"
+    ],
+    "scheduled": [
+      "AGENDAMENTO PARA AMANHÃ + horário",
+      "agendamento pode chegar já com protocolo completo"
+    ],
+    "completion": [
+      "protocolo pode trazer KM TOTAL e VALOR calculados",
+      "prestador também informa km total e valor do serviço ao final",
+      "não reutilizar valor antigo se a tabela mudou"
+    ],
+    "evidenceRequirements": [
+      "origem: frente, traseira e duas laterais com checklist visível",
+      "registrar chaves/documentos no checklist e colher assinatura",
+      "foto do veículo na prancha para baixa",
+      "vídeo 360 do veículo aparece como exigência obrigatória em protocolos",
+      "moto: foto na origem, hodômetro e foto na carretinha; no destino, fotos ao desembarcar com checklist"
+    ]
+  },
+  "commercialRules": {
+    "status": "versioned_and_requires_approval_before_finance",
+    "historicalObserved": [
+      {
+        "effectiveAround": "2026-02 a 2026-03-30",
+        "leve": {"baseBRL": 130, "includedKm": 40, "excessKmBRL": 2.9},
+        "moto": {"baseBRL": 130, "includedKm": 40, "excessKmBRL": 2.6},
+        "utilitario": {"baseBRL": 150, "includedKm": 40, "excessKmBRL": 3.0},
+        "dirtRoadKmBRL": 3.5
+      },
+      {
+        "effectiveFromApprox": "2026-03-31",
+        "leve": {"baseBRL": 135, "includedKm": 40, "excessKmBRL": 3.0},
+        "utilitario": {"baseBRL": 160, "includedKm": 40, "excessKmBRL": 3.2},
+        "motoObservedExample": {"totalKm": 56, "totalBRL": 183, "note": "compatível com base 135 + excedente 3,00/km; tratar como evidência observada, não regra definitiva sem descrição aprovada"}
+      }
+    ],
+    "stoppedHour": {"observed": "assistência informou explicitamente que não paga hora parada", "requiresApproval": true},
+    "validatedExamples": [
+      "leve 42 km => R$141,00",
+      "leve 83 km => R$264,00",
+      "leve 100 km => R$315,00",
+      "utilitário 79 km => R$284,80",
+      "utilitário 114 km => R$396,80"
+    ],
+    "financeSafety": [
+      "usar tarifa vigente na data do atendimento",
+      "se protocolo e fórmula divergirem, não sobrescrever: marcar conferência",
+      "hora parada não deve ser lançada automaticamente para Saturno",
+      "pedágio não teve regra geral suficientemente suportada no histórico"
+    ]
+  },
+  "protocolFieldsObserved": [
+    "protocolo", "atendente", "cliente", "associado", "solicitante", "placa", "modelo", "ano", "cor", "data/hora", "motivo", "serviço", "origem", "destino", "prestador", "base do prestador", "tempo de chegada", "km total", "valor", "assistência"
+  ],
+  "botBehavior": [
+    "Ficha completa terminando em 'disponível?' é consulta, não confirmação.",
+    "Quando pedirem valor e prévia, calcular ETA pelo rastreador e preço somente pela tabela aprovada vigente.",
+    "Após 'pode seguir', marcar serviço autorizado e aguardar/associar o protocolo.",
+    "Extrair KM TOTAL e VALOR do protocolo para conferência, mas comparar com cálculo interno.",
+    "Agendamentos não devem receber confirmação de atendimento imediato fora do horário agendado.",
+    "Exigências de evidência devem virar checklist do chamado, não mensagens automáticas repetitivas no grupo."
+  ]
+}
