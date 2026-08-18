@@ -1,0 +1,144 @@
+{
+  "checkedAt": "2026-08-18T14:19:19.516Z",
+  "honda": {
+    "status": 422,
+    "data": {
+      "ok": false,
+      "error": "tracker_eta_failed",
+      "parsedTarget": "RUA JOSE AUGUSTO DE OLIVEIRA 175, BAIRRO: PETROPOLIS, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL",
+      "parsedSource": "to"
+    }
+  },
+  "juatuba": {
+    "status": 200,
+    "data": {
+      "ok": true,
+      "fromTracker": true,
+      "parsedTarget": "RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS",
+      "parsedSource": "to",
+      "route": {
+        "minutes": 26,
+        "distanceKm": 20.8,
+        "trackerAddress": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais",
+        "trackerPlate": "GSW0H17",
+        "targetAddress": "RODOVIA SENADOR ELISEU RESENDE - BAIRRO: BOA VISTA DA SERRA, CIDADE: JUATUBA, ESTADO: MINAS GERAIS"
+      }
+    }
+  },
+  "health": {
+    "ok": true,
+    "status": "operational",
+    "checkedAt": "2026-08-18T14:19:20.770Z",
+    "checks": {
+      "whatsapp": {
+        "ok": true,
+        "status": "pronto"
+      },
+      "tracker": {
+        "ok": true,
+        "status": "online",
+        "ageSeconds": 11,
+        "plate": "GSW0H17",
+        "address": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais"
+      },
+      "ai": {
+        "ok": true,
+        "status": "online"
+      },
+      "routes": {
+        "ok": true,
+        "providers": {
+          "osrm-main": {
+            "status": "ok",
+            "failures": 0,
+            "openUntil": null,
+            "lastSuccessAt": "2026-08-18T14:19:19.986Z",
+            "lastFailureAt": null
+          },
+          "osrm-osmde": {
+            "status": "ok",
+            "failures": 0,
+            "openUntil": null,
+            "lastSuccessAt": null,
+            "lastFailureAt": null
+          }
+        }
+      }
+    },
+    "groupsSelected": 1,
+    "recentErrors": [
+      {
+        "id": 1787062757344.5894,
+        "at": "2026-08-18T14:19:17.344Z",
+        "type": "warning",
+        "message": "Endereco nao geocodificado apos todos os fallbacks.",
+        "meta": {
+          "query": "RUA JOSE AUGUSTO DE OLIVEIRA 175, BAIRRO: PETROPOLIS, CIDADE: BETIM, ESTADO: MG, PAS:",
+          "parts": {
+            "query": "RUA JOSE AUGUSTO DE OLIVEIRA 175, PETROPOLIS, BETIM, MG, PAS:",
+            "street": "RUA JOSE AUGUSTO DE OLIVEIRA",
+            "number": "175",
+            "district": "BETIM, MG",
+            "city": "PAS:",
+            "state": "",
+            "cep": ""
+          }
+        }
+      },
+      {
+        "id": 1787062701191.0688,
+        "at": "2026-08-18T14:18:21.191Z",
+        "type": "warning",
+        "message": "Endereco nao geocodificado apos todos os fallbacks.",
+        "meta": {
+          "query": "RUA JOSE AUGUSTO DE OLIVEIRA 175, BAIRRO: PETROPOLIS, CIDADE: BETIM, ESTADO: MG, PAS:",
+          "parts": {
+            "query": "RUA JOSE AUGUSTO DE OLIVEIRA 175, PETROPOLIS, BETIM, MG, PAS:",
+            "street": "RUA JOSE AUGUSTO DE OLIVEIRA",
+            "number": "175",
+            "district": "BETIM, MG",
+            "city": "PAS:",
+            "state": "",
+            "cep": ""
+          }
+        }
+      }
+    ],
+    "serviceArea": {
+      "state": "MG",
+      "priorityCities": [
+        "Belo Horizonte",
+        "Betim",
+        "Contagem",
+        "Nova Lima",
+        "Ribeirão das Neves",
+        "Sabará",
+        "Santa Luzia",
+        "Ibirité",
+        "Confins",
+        "Lagoa Santa",
+        "Vespasiano",
+        "Pedro Leopoldo",
+        "São José da Lapa",
+        "Matozinhos",
+        "Sarzedo",
+        "Mário Campos",
+        "Brumadinho",
+        "Igarapé",
+        "Juatuba",
+        "Mateus Leme",
+        "Esmeraldas",
+        "Caeté",
+        "Nova União",
+        "Rio Acima",
+        "Raposos",
+        "Itaguara",
+        "Itatiaiuçu",
+        "Florestal",
+        "Baldim",
+        "Capim Branco"
+      ],
+      "label": "MG · cidades prioritárias configuradas"
+    }
+  }
+}
