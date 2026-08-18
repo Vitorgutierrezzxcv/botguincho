@@ -842,7 +842,7 @@ function normalizeLabeledBrazilAddress(value = '') {
     .replace(/\bBAIRRO\s*:\s*/gi, ', ')
     .replace(/\bCIDADE\s*:\s*/gi, ', ')
     .replace(/\bESTADO\s*:\s*/gi, ', ')
-    .replace(/\b(?:PA[IÍ]S|PAS)\s*:\s*BRASIL\b/gi, '')
+    .replace(/\b(?:PA[IÍ]S|PAS)\s*:\s*(?:BRASIL)?/gi, '')
     .replace(/\s*,\s*,+/g, ', ')
     .replace(/\s+-\s*,/g, ',')
     .replace(/,\s*$/g, '')
