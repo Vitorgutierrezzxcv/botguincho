@@ -13,3 +13,4 @@ if status not in s: raise SystemExit('status marker missing')
 s=s.replace(status,block+status,1)
 p.write_text(s)
 print('ok')
+# trigger
