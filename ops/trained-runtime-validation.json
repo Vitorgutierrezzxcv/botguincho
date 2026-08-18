@@ -1,0 +1,30 @@
+{
+  "validatedAt": "2026-08-18T20:04:04.835286+00:00",
+  "sourceRef": "5533954a8e6b160bf492accd2d29a717f2407283",
+  "companyId": "cliente-teste",
+  "workerProcessCount": 1,
+  "sessionPreserved": true,
+  "whatsapp": {
+    "status": "pronto",
+    "qrRequired": false
+  },
+  "tracker": {
+    "ok": true,
+    "ageSeconds": 2,
+    "plate": "GSW0H17"
+  },
+  "routes": {
+    "ok": true
+  },
+  "groupsSelected": 1,
+  "selectedGroupNames": [
+    "Tests guincho"
+  ],
+  "knowledgeGroups": 24,
+  "runtimeFilesSynced": [
+    "vercel-whatsapp-worker.mjs",
+    "learning-engine.mjs",
+    "operational-knowledge.mjs"
+  ],
+  "status": "trained_runtime_operational"
+}
