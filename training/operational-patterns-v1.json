@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "source": {
+    "type": "screenshots",
+    "count": 184,
+    "privacy": "anonymized",
+    "reviewedAt": "2026-08-18"
+  },
+  "principles": [
+    "Dados completos mais pergunta de disponibilidade ainda são cotação, não autorização.",
+    "Autorização costuma chegar depois em mensagem separada: pode seguir, seguir, liberado, pode ir.",
+    "Cancelamento deve encerrar a cotação/chamado pendente sem gerar receita.",
+    "Valores comerciais detectados em descrição de grupo exigem aprovação antes de afetar financeiro.",
+    "ETA só pode ser calculado com origem suficientemente precisa ou localização/mapa utilizável."
+  ],
+  "intentFixtures": [
+    {"text":"Bom dia, disponível? Origem: Rua X, 100 - Betim - MG Destino: Rua Y, 200 - Contagem - MG","intent":"availability"},
+    {"text":"Disponível para remoção a vista?","intent":"availability"},
+    {"text":"Consegue esse?","intent":"availability"},
+    {"text":"Pode seguir","intent":"authorization"},
+    {"text":"P O D E  S E G U I R","intent":"authorization"},
+    {"text":"desconsidera por favor","intent":"cancellation"},
+    {"text":"pessoal pode deixar, conseguiu resolver la","intent":"cancellation"},
+    {"text":"Finalizamos em quantos kms?","intent":"closure"},
+    {"text":"Qual fechamento?","intent":"closure"},
+    {"text":"Valor e previa?","intent":"quote"},
+    {"text":"Valor, previa e km totais?","intent":"quote"}
+  ],
+  "addressFormats": [
+    "Origem: Avenida X, nº 100, Bairro, BETIM - MG",
+    "ENDEREÇO ORIGEM: RUA X 100, BAIRRO: CENTRO, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL",
+    "Origem Rua X 100 bairro Centro BETIM MG",
+    "ORIGEM: BR-381, BAIRRO: RAVENA, CIDADE: SABARA, ESTADO: MG, PAS: BRASIL, REF: https://maps.app.goo.gl/...",
+    "Endereço origem: 2RQC+FCC Betim, MG, Brasil - https://maps.app.goo.gl/...",
+    "Origem: , JUATUBA - MG"
+  ],
+  "commercialExamples": [
+    {
+      "name":"Plus Assistência",
+      "description":"REBOQUE LEVE: SAIDA R$130,00 até 40 KM\n3,00 POR KM\nESTRADA DE TERRA: R$3,50 KM\nREBOQUE MOTO: SAIDA R$130,00 ATE 40 KM\n3,00 POR KM\nESTRADA DE TERRA R$3,50 KM\nREBOQUE UTILITÁRIO: SAÍDA R$170,00 ATE 40 KM\n3,20 POR KM\nESTRADA DE TERRA: R$3,80 KM\nHORA TRABALHADA: 80,00\nHORA PARADA: 80,00",
+      "expected":{"leve":{"basePrice":130,"includedKm":40,"pricePerKm":3,"dirtRoadPricePerKm":3.5},"moto":{"basePrice":130,"includedKm":40,"pricePerKm":3,"dirtRoadPricePerKm":3.5},"utilitario":{"basePrice":170,"includedKm":40,"pricePerKm":3.2,"dirtRoadPricePerKm":3.8},"workedHour":80,"stoppedHour":80}
+    },
+    {
+      "name":"Company/Socorre/Saturno pattern",
+      "description":"REBOQUE LEVE: SAIDA R$135,00 até 40 KM\n3,00 POR KM\nESTRADA DE TERRA: R$3,80 KM\nREBOQUE MOTO: SAIDA R$135,00 ATE 40 KM\n3,00 POR KM\nESTRADA DE TERRA R$3,80 KM\nREBOQUE UTILITÁRIO: SAÍDA R$160,00 ATE 40 KM\n3,20 POR KM\nESTRADA DE TERRA: R$3,80 KM\nHORA TRABALHADA: 80,00\nHORA PARADA: 80,00",
+      "expected":{"leve":{"basePrice":135,"includedKm":40,"pricePerKm":3,"dirtRoadPricePerKm":3.8},"moto":{"basePrice":135,"includedKm":40,"pricePerKm":3,"dirtRoadPricePerKm":3.8},"utilitario":{"basePrice":160,"includedKm":40,"pricePerKm":3.2,"dirtRoadPricePerKm":3.8},"workedHour":80,"stoppedHour":80}
+    }
+  ],
+  "closureExamples": [
+    {"base":130,"includedKm":40,"totalKm":56,"pricePerKm":3,"expected":178},
+    {"base":170,"includedKm":40,"totalKm":79,"pricePerKm":3.2,"expected":294.8},
+    {"base":135,"includedKm":40,"totalKm":63,"pricePerKm":3,"expected":204},
+    {"base":135,"includedKm":40,"totalKm":31,"pricePerKm":3,"expected":135}
+  ]
+}
