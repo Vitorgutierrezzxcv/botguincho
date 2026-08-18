@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-08-18T14:08:40.752Z",
+  "health": "operational",
+  "whatsapp": "pronto",
+  "trackerAgeSeconds": 6,
+  "testAddress": "R. DOIS, 161 - TROPICAL - CONTAGEM - MG",
+  "route": {
+    "minutes": 23,
+    "distanceKm": 20.7,
+    "trackerAddress": "Rua das Rosas, 310, São Salvador, Betim - Minas Gerais",
+    "trackerPlate": "GSW0H17",
+    "targetAddress": "R. DOIS, 161 - TROPICAL - CONTAGEM - MG"
+  }
+}
