@@ -1,0 +1,51 @@
+name: Emergency WhatsApp Recover Once
+on:
+  push:
+    paths:
+      - '.github/workflows/emergency-whatsapp-recover-once.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Consultar estado atual
+        id: before
+        run: |
+          set -e
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --max-time 90 \
+            'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste' -o /tmp/before.json
+          cat /tmp/before.json; echo
+          WA=$(jq -r '.checks.whatsapp.status // "unknown"' /tmp/before.json)
+          WA_OK=$(jq -r '.checks.whatsapp.ok // false' /tmp/before.json)
+          echo "wa=$WA" >> "$GITHUB_OUTPUT"
+          echo "wa_ok=$WA_OK" >> "$GITHUB_OUTPUT"
+
+      - name: Reload seguro preservando sessão
+        if: steps.before.outputs.wa_ok != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          echo "WhatsApp não está pronto; executando reload seguro..."
+          curl -sS -L --retry 3 --retry-all-errors --retry-delay 3 --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"companyId":"cliente-teste"}' \
+            'https://botguincho.vercel.app/api/worker/reload?companyId=cliente-teste' \
+            -o /tmp/reload.json -w 'HTTP %{http_code}\n'
+          cat /tmp/reload.json; echo
+          sleep 35
+
+      - name: Validar operação final
+        run: |
+          set -e
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --max-time 120 \
+            'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste' -o /tmp/final.json
+          cat /tmp/final.json; echo
+          jq -e '.checks.whatsapp.ok == true' /tmp/final.json >/dev/null
+          jq -e '.checks.tracker.ok == true' /tmp/final.json >/dev/null
+          jq -e '.checks.routes.ok == true' /tmp/final.json >/dev/null
+          echo 'EMERGENCY_RECOVERY_OK'
