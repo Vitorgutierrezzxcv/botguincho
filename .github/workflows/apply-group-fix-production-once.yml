@@ -1,0 +1,42 @@
+name: Apply Group Fix Production Once
+on:
+  push:
+    paths: ['.github/workflows/apply-group-fix-production-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Atualizar worker preservando sessão
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 180 -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -H 'x-botguincho-source-ref: 31323f154629be8b4a95706b1f4617829c2f0a11' \
+            -d '{"companyId":"cliente-teste"}' \
+            'https://botguincho.vercel.app/api/worker/reload?companyId=cliente-teste' \
+            -o /tmp/reload.json
+          cat /tmp/reload.json
+          sleep 15
+      - name: Sincronizar grupos da conta atual
+        run: |
+          set -e
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 4 'https://botguincho.vercel.app/api/worker/status?companyId=cliente-teste' -o /tmp/status.json
+          jq -e '.whatsapp.status == "pronto"' /tmp/status.json >/dev/null
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 'https://botguincho.vercel.app/api/worker/groups?companyId=cliente-teste' -o /tmp/groups.json
+          mkdir -p ops
+          jq -n --arg checkedAt "$(date -u +%FT%TZ)" --slurpfile s /tmp/status.json --slurpfile g /tmp/groups.json '{checkedAt:$checkedAt,whatsapp:$s[0].whatsapp.status,groupsCount:($g[0].groups|length),selected:([$g[0].groups[]|select(.selected==true)]|length),names:([$g[0].groups[]?.name][0:25])}' > ops/current-wa-after-group-fix.json
+          cat ops/current-wa-after-group-fix.json
+      - name: Salvar resultado
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/current-wa-after-group-fix.json
+          git diff --cached --quiet || git commit -m 'Registra grupos após limpeza do WhatsApp atual'
+          git push
