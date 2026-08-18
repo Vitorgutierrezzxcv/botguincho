@@ -381,14 +381,18 @@ async function registerGroup(id, name = '') {
 }
 
 async function discoverGroups() {
-  const registry = await getRegistry();
+  const previousRegistry = await getRegistry();
   const allowed = await getAllowedGroupIds();
 
   if (waClient && waStatus === 'pronto') {
     const discovered = new Map();
     const addGroup = (id, name) => {
       if (typeof id !== 'string' || !id.endsWith('@g.us')) return;
-      discovered.set(id, { id, name: String(name || registry[id]?.name || 'Grupo do WhatsApp') });
+      discovered.set(id, {
+        id,
+        name: String(name || previousRegistry[id]?.name || 'Grupo do WhatsApp'),
+        lastSeenAt: new Date().toISOString(),
+      });
     };
 
     try {
@@ -419,13 +423,9 @@ async function discoverGroups() {
       try {
         const fallback = await waClient.pupPage.evaluate(async () => {
           let chats = [];
-          try {
-            chats = await window.WWebJS?.getChats?.();
-          } catch {}
+          try { chats = await window.WWebJS?.getChats?.(); } catch {}
           if (!Array.isArray(chats) || !chats.length) {
-            try {
-              chats = window.require?.('WAWebCollections')?.Chat?.getModelsArray?.() ?? [];
-            } catch {}
+            try { chats = window.require?.('WAWebCollections')?.Chat?.getModelsArray?.() ?? []; } catch {}
           }
           return (chats ?? [])
             .map((chat) => ({
@@ -441,25 +441,28 @@ async function discoverGroups() {
       }
     }
 
-    for (const group of discovered.values()) {
-      registry[group.id] = {
-        id: group.id,
-        name: group.name,
-        lastSeenAt: registry[group.id]?.lastSeenAt ?? null,
-      };
-    }
-
     if (discovered.size) {
-      await writeJson(registryFile, registry);
-      logEvent('system', `${discovered.size} grupo(s) sincronizado(s) do WhatsApp.`);
+      // Fonte da verdade = conta do WhatsApp atualmente conectada.
+      // Remove grupos antigos do registry e também permissões que não existem na conta atual.
+      const nextRegistry = Object.fromEntries([...discovered.entries()]);
+      await writeJson(registryFile, nextRegistry);
+
+      const validAllowed = [...allowed].filter((id) => discovered.has(id));
+      if (validAllowed.length !== allowed.size) {
+        await setAllowedGroupIds(validAllowed);
+        logEvent('security', `${allowed.size - validAllowed.length} autorização(ões) de grupo antigo removida(s) após troca/reconexão do WhatsApp.`);
+      }
+
+      logEvent('system', `${discovered.size} grupo(s) sincronizado(s) da conta atual do WhatsApp.`);
+      return [...discovered.values()]
+        .map((group) => ({ ...group, selected: validAllowed.includes(group.id) }))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
     }
   }
 
-  for (const id of allowed) {
-    if (!registry[id]) registry[id] = { id, name: 'Grupo selecionado', lastSeenAt: null };
-  }
-
-  return Object.values(registry)
+  // Se o WhatsApp ainda não terminou de carregar, não destrói o registry salvo.
+  // Porém esta lista só é fallback temporário até uma sincronização bem-sucedida.
+  return Object.values(previousRegistry)
     .map((group) => ({ ...group, selected: allowed.has(group.id) }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
 }
