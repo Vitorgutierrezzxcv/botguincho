@@ -12,6 +12,7 @@ import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, bu
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, closureReply } from './financial-engine.mjs';
+import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -211,7 +212,81 @@ function recentManagementCall(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
   }) || null;
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null }) {
+function oldestActiveManagementCallForGroup(state, groupId) {
+  return activeCallsForCapacity(state).find((call) => call.sourceGroupId === groupId) || null;
+}
+
+function routePointCoordinates(point) {
+  if (!point || !validCoordinates(point.latitude, point.longitude)) return null;
+  return { latitude: Number(point.latitude), longitude: Number(point.longitude) };
+}
+
+async function estimateSecondCallArrival({ management, targetAddress = null, targetCoordinates = null, excludeCallId = '' } = {}) {
+  const capacity = capacitySnapshot(management, excludeCallId);
+  if (!capacity.canAccept) {
+    return { available: false, activeCount: capacity.activeCount, slotsAvailable: 0, eta: null };
+  }
+
+  if (capacity.activeCount === 0) {
+    const direct = (targetAddress || targetCoordinates)
+      ? await computeEtaWithRetry({ targetAddress, targetCoordinates }).catch(() => null)
+      : null;
+    return { available: true, activeCount: 0, slotsAvailable: capacity.slotsAvailable, eta: direct, queued: false };
+  }
+
+  // Há exatamente uma corrida ativa. A segunda pode ser aceita e entra na fila operacional.
+  const current = capacity.activeCalls[0];
+  let nextOrigin = targetCoordinates && validCoordinates(targetCoordinates.latitude, targetCoordinates.longitude)
+    ? { latitude: Number(targetCoordinates.latitude), longitude: Number(targetCoordinates.longitude) }
+    : null;
+  if (!nextOrigin && targetAddress) nextOrigin = await geocodeAddress(targetAddress).catch(() => null);
+
+  let activeDestination = routePointCoordinates(current?.routeBreakdown?.destination);
+  if (!activeDestination && current?.destination) activeDestination = await geocodeAddress(current.destination).catch(() => null);
+
+  const plannedRemaining = plannedRemainingMinutes(current);
+  let liveRemaining = null;
+  const reading = await getFreshTrackerReading().catch(() => null);
+  const liveTruck = reading ? await trackerCoordinates(reading).catch(() => null) : null;
+  if (liveTruck && activeDestination) {
+    const liveRoute = await routeBetween(liveTruck, activeDestination).catch(() => null);
+    liveRemaining = liveRoute?.minutes ?? null;
+  }
+
+  const remainingCandidates = [plannedRemaining, liveRemaining]
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  let remainingToFinish = remainingCandidates.length ? Math.max(...remainingCandidates) : null;
+
+  let handoff = null;
+  if (activeDestination && nextOrigin) handoff = await routeBetween(activeDestination, nextOrigin).catch(() => null);
+
+  const rawMinutes = Number.isFinite(Number(remainingToFinish)) && Number.isFinite(Number(handoff?.minutes))
+    ? Number(remainingToFinish) + Number(handoff.minutes)
+    : null;
+  const capped = capSecondCallEta(rawMinutes, 60);
+  const eta = {
+    minutes: capped.minutes,
+    rawMinutes: capped.rawMinutes,
+    cappedAtOneHour: capped.cappedAtOneHour,
+    queued: true,
+    distanceKm: handoff?.distanceKm ?? null,
+    precedingCallId: current?.id || null,
+    precedingGroupId: current?.sourceGroupId || null,
+    remainingPreviousMinutes: remainingToFinish,
+    handoffMinutes: handoff?.minutes ?? null,
+  };
+  return {
+    available: true,
+    activeCount: 1,
+    slotsAvailable: capacity.slotsAvailable,
+    queued: true,
+    eta,
+    precedingCall: current,
+  };
+}
+
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -235,7 +310,10 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       return call.sourceGroupId === groupId && age < 30 * 60 * 1000 && call.origin === (originAddress || '') && call.destination === (destinationAddress || '') && !['concluido','cancelado'].includes(call.status);
     });
     const transitionCanAttach = ['aguardando_aprovacao','autorizado','agendado','cancelado','concluido'].includes(status);
-    const existing = exact || (transitionCanAttach ? recentManagementCall(state, groupId) : null);
+    const explicitExisting = existingCallId ? state.calls.find((call) => call.id === existingCallId) || null : null;
+    const recent = recentManagementCall(state, groupId);
+    const recentCanAttach = transitionCanAttach && recent && !(status === 'autorizado' && isCapacityActiveCall(recent));
+    const existing = explicitExisting || exact || (recentCanAttach ? recent : null);
     const knowledge = await getGroupKnowledgeEntry(groupId);
     const checklist = Array.isArray(evidenceChecklist) ? evidenceChecklist : buildEvidenceChecklist(groupName, text);
     const previousChecklist = Array.isArray(existing?.evidenceChecklist) ? existing.evidenceChecklist : [];
@@ -290,6 +368,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
       lastOperationalText: String(text || '').slice(0, 4000),
       completedAt: status === 'concluido' ? new Date().toISOString() : (existing?.completedAt || null),
+      authorizedAt: status === 'autorizado' ? (existing?.authorizedAt || new Date().toISOString()) : (existing?.authorizedAt || null),
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1661,7 +1740,9 @@ async function replyAndRemember(msg, groupName, incomingText, reply, meta = {}) 
 
 function formatEtaReply(eta, withConfirmation = false) {
   if (!eta?.minutes) return withConfirmation ? 'Confirmado ✅' : null;
-  const etaLine = `Previsão de chegada: ${eta.minutes} min.`;
+  const etaLine = eta.cappedAtOneHour
+    ? 'Previsão de chegada: 1h.'
+    : `Previsão de chegada: ${eta.minutes} min.`;
   return withConfirmation ? `Confirmado ✅\n${etaLine}` : etaLine;
 }
 
@@ -1679,6 +1760,19 @@ async function handleDispatch(msg, groupName, readableText, location) {
     : new Date().toISOString();
   const vehicle = extractLabeledField(readableText, 'Veículo') || extractLabeledField(readableText, 'Veiculo') || '';
   const service = extractLabeledField(readableText, 'Serviço') || extractLabeledField(readableText, 'Servico') || 'Reboque';
+
+  const management = await getManagement();
+  const arrival = await estimateSecondCallArrival({
+    management,
+    targetAddress: originAddress || null,
+    targetCoordinates: originCoordinates || null,
+  });
+  if (!arrival.available) {
+    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    logEvent('capacity', `${groupName}: terceira corrida recusada; limite simultâneo atingido.`, { groupId: msg.from, activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    return;
+  }
+
   const dispatchKey = dispatchFingerprint({ groupId: msg.from, vehicle, service, originAddress, destinationAddress });
   const previousState = await getDispatchState(msg.from);
   const dispatchId = previousState?.activeDispatchKey === dispatchKey && previousState?.activeDispatchId
@@ -1695,19 +1789,10 @@ async function handleDispatch(msg, groupName, readableText, location) {
     originUpdatedAt: originMoment,
   });
 
-  let eta = null;
-  try {
-    eta = await computeEtaWithRetry({
-      targetAddress: state.originAddress,
-      targetCoordinates: state.originCoordinates,
-    });
-  } catch (error) {
-    logEvent('warning', 'Nao foi possivel calcular ETA do acionamento.', { error: String(error), origin: state.originAddress });
-  }
-
+  const eta = arrival.eta;
   if (eta) {
     await setDispatchState(msg.from, { lastEta: eta, lastEtaAt: new Date().toISOString() });
-    logEvent('route', `${groupName}: ETA ${eta.minutes} min${eta.distanceKm ? ` · ${eta.distanceKm} km` : ''}.`, { groupId: msg.from });
+    logEvent('route', `${groupName}: ETA ${eta.cappedAtOneHour ? '1h (limite operacional)' : `${eta.minutes} min`}.`, { groupId: msg.from, queued: eta.queued === true, rawMinutes: eta.rawMinutes ?? eta.minutes });
   }
 
   await recordDispatchInManagement({
@@ -1726,6 +1811,8 @@ async function handleDispatch(msg, groupName, readableText, location) {
   await replyAndRemember(msg, groupName, readableText, reply, {
     intent: eta ? 'dispatch' : 'dispatch-safe-mode',
     etaMinutes: eta?.minutes ?? null,
+    queued: eta?.queued === true,
+    rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null,
     dispatchId,
     dispatchKey,
   });
@@ -2100,11 +2187,15 @@ function outOfRouteReply(settings) {
 
 async function currentOperationalContext(groupId, groupName, text) {
   const management = await getManagement();
-  const recentCall = recentManagementCall(management, groupId);
+  const provisionalRecentCall = recentManagementCall(management, groupId);
   const knowledge = await getGroupKnowledgeEntry(groupId);
   const approvedRules = knowledge?.commercialStatus === 'approved' ? knowledge.approvedCommercialRules : null;
   const billingProfile = ensureBillingProfile(management, groupId, groupName);
   const facts = extractOperationalFacts(text);
+  const provisionalIntent = classifyRuntimeIntent(text, groupName, provisionalRecentCall);
+  const recentCall = provisionalIntent === 'closure'
+    ? (oldestActiveManagementCallForGroup(management, groupId) || provisionalRecentCall)
+    : provisionalRecentCall;
   const intent = classifyRuntimeIntent(text, groupName, recentCall);
   return { management, recentCall, knowledge, approvedRules, billingProfile, facts, intent, profile: resolveGroupProfile(groupName) };
 }
@@ -2131,10 +2222,24 @@ async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null)
 }
 
 async function handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const capacity = capacitySnapshot(context.management);
+  if (!capacity.canAccept) {
+    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    return;
+  }
+
   const facts = context.facts;
   const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem'));
   if (hasOpportunityData) {
     const route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
+    if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
+      const queued = await estimateSecondCallArrival({
+        management: context.management,
+        targetAddress: route.originAddress,
+        targetCoordinates: route.originCoordinates,
+      });
+      if (queued.eta) route.eta = queued.eta;
+    }
     await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText,
       originAddress: route.originAddress, originCoordinates: route.originCoordinates, destinationAddress: route.destinationAddress,
@@ -2143,14 +2248,29 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
       evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
     });
   }
-  await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability' });
+  await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability', activeCount: capacity.activeCount, slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1) });
 }
 
 async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const capacity = capacitySnapshot(context.management);
+  if (!capacity.canAccept) {
+    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    return;
+  }
+
   const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation).catch((error) => {
     logEvent('warning', 'Falha ao estimar rota da cotação.', { error: String(error), groupId: msg.from });
     return { eta: null, secondLeg: null, estimatedTotalKm: null, originAddress: context.facts.origin || null, destinationAddress: context.facts.destination || null };
   });
+  if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
+    const queued = await estimateSecondCallArrival({
+      management: context.management,
+      targetAddress: route.originAddress,
+      targetCoordinates: route.originCoordinates,
+    });
+    if (queued.eta) route.eta = queued.eta;
+  }
+
   const pricingKm = context.billingProfile?.routeBasis === 'origin_destination'
     ? (route.secondLeg?.distanceKm ?? null)
     : context.billingProfile?.routeBasis === 'insurer_reported'
@@ -2161,7 +2281,7 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
   const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts: { ...context.facts, totalKm: pricingKm ?? context.facts.totalKm }, estimatedTotalKm: pricingKm });
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
-    originAddress: route.originAddress, destinationAddress: route.destinationAddress,
+    originAddress: route.originAddress, originCoordinates: route.originCoordinates || null, destinationAddress: route.destinationAddress,
     eta: route.eta, status: 'cotacao', facts: context.facts, commercial,
     estimatedTotalKm: route.estimatedTotalKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
@@ -2169,13 +2289,13 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
 
   const lines = [];
   if (asksAvailability(readableText)) lines.push('Disponível ✅');
-  if (route.eta?.minutes) lines.push(`Previsão de chegada: ${route.eta.minutes} min.`);
-  if (route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
+  if (route.eta?.minutes) lines.push(formatEtaReply(route.eta, false));
+  if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
   if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
   if (commercial.status === 'ok' && commercial.calculatedAmount != null) lines.push(`Valor estimado: R$ ${Number(commercial.calculatedAmount).toFixed(2).replace('.', ',')}.`);
   else if (/\b(valor|pre[cç]o|quanto fica)\b/i.test(readableText)) lines.push('Valor: em conferência pela tabela comercial.');
   if (!lines.length) lines.push('Cotação recebida ✅');
-  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'quote', etaMinutes: route.eta?.minutes ?? null, estimatedTotalKm: route.estimatedTotalKm, commercialStatus: commercial.status });
+  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'quote', etaMinutes: route.eta?.minutes ?? null, queued: route.eta?.queued === true, rawEtaMinutes: route.eta?.rawMinutes ?? route.eta?.minutes ?? null, estimatedTotalKm: route.estimatedTotalKm, commercialStatus: commercial.status });
 }
 
 async function handlePendingApprovalRuntime(msg, groupName, readableText, context) {
@@ -2185,7 +2305,7 @@ async function handlePendingApprovalRuntime(msg, groupName, readableText, contex
     originAddress: call?.origin || context.facts.origin || null,
     destinationAddress: call?.destination || context.facts.destination || null,
     eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
-    status: 'aguardando_aprovacao', facts: context.facts,
+    status: 'aguardando_aprovacao', facts: context.facts, existingCallId: call?.id || null,
   });
   await replyAndRemember(msg, groupName, readableText, 'Certo, aguardando autorização.', { intent: 'pending_approval' });
 }
@@ -2196,15 +2316,43 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
     return;
   }
   const call = context.recentCall;
-  let eta = null;
-  if (call?.origin) eta = await computeEtaWithRetry({ targetAddress: call.origin }).catch(() => null);
-  await recordDispatchInManagement({
-    groupId: msg.from, groupName, text: readableText,
-    originAddress: call?.origin || null, originCoordinates: call?.originCoordinates || null, destinationAddress: call?.destination || null,
-    eta, status: 'autorizado', facts: context.facts,
-    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+
+  // Uma autorização repetida do mesmo chamado não consome uma nova vaga.
+  if (call && isCapacityActiveCall(call)) {
+    const eta = call.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm, queued: call.queued === true } : null;
+    await replyAndRemember(msg, groupName, readableText, eta ? formatEtaReply(eta, true) : 'Confirmado ✅', { intent: 'authorization-repeat', callId: call.id });
+    return;
+  }
+
+  const capacity = capacitySnapshot(context.management);
+  if (!capacity.canAccept) {
+    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    return;
+  }
+
+  const targetAddress = call?.origin || context.facts.origin || null;
+  const targetCoordinates = call?.originCoordinates || incomingLocation || null;
+  const arrival = await estimateSecondCallArrival({
+    management: context.management,
+    targetAddress,
+    targetCoordinates,
   });
-  await replyAndRemember(msg, groupName, readableText, eta ? formatEtaReply(eta, true) : 'Confirmado ✅', { intent: 'authorization', etaMinutes: eta?.minutes ?? null });
+  if (!arrival.available) {
+    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    return;
+  }
+  const eta = arrival.eta;
+  const saved = await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: targetAddress, originCoordinates: targetCoordinates, destinationAddress: call?.destination || context.facts.destination || null,
+    eta, status: 'autorizado', facts: context.facts,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
+  });
+  if (saved && eta?.queued) {
+    saved.queued = true;
+    saved.precedingCallId = eta.precedingCallId || null;
+  }
+  await replyAndRemember(msg, groupName, readableText, eta ? formatEtaReply(eta, true) : 'Confirmado ✅', { intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true, rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null });
 }
 
 async function handleScheduledRuntime(msg, groupName, readableText, context) {
@@ -2214,7 +2362,7 @@ async function handleScheduledRuntime(msg, groupName, readableText, context) {
     originAddress: context.facts.origin || call?.origin || null,
     destinationAddress: context.facts.destination || call?.destination || null,
     eta: null, status: 'agendado', facts: context.facts,
-    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
   });
   await replyAndRemember(msg, groupName, readableText, 'Agendamento registrado ✅', { intent: 'scheduled_dispatch', scheduledAt: context.facts.scheduledAt });
 }
@@ -2224,7 +2372,7 @@ async function handleCancellationRuntime(msg, groupName, readableText, context) 
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: call?.origin || null, destinationAddress: call?.destination || null,
-    eta: null, status: 'cancelado', facts: context.facts,
+    eta: null, status: 'cancelado', facts: context.facts, existingCallId: call?.id || null,
   });
   await replyAndRemember(msg, groupName, readableText, 'Entendido.', { intent: 'cancellation' });
 }
@@ -2247,7 +2395,7 @@ async function handleClosureRuntime(msg, groupName, readableText, context) {
     eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
     status: 'concluido', facts, commercial,
     estimatedTotalKm: automaticKm,
-    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
   });
   if (commercial.reviewRequired) {
     logEvent('finance-review', `${groupName}: fechamento exige conferência financeira.`, { callId: saved?.id, calculated: commercial.calculatedAmount, reported: commercial.reportedAmount, delta: commercial.delta });

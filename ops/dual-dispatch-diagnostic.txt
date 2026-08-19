@@ -1,0 +1,11 @@
+### patch
+DUAL_DISPATCH_PATCHED
+patch_exit=0
+### worker syntax
+worker_exit=0
+### capacity syntax
+capacity_exit=0
+### reload syntax
+reload_exit=0
+capacity_regression=ok
+regression_exit=0
