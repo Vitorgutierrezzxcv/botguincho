@@ -1,0 +1,33 @@
+name: Fix semimonthly finance once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-fix-semimonthly-finance.txt'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: python3 tools/fix_semimonthly_cycle_tmp.py
+      - run: node --check tools/financial-engine.mjs
+      - name: Regression
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { suggestBillingProfile,settlementForCall } from './tools/financial-engine.mjs';
+          let p=suggestBillingProfile('g','Assistência Segura');p={...p,status:'approved'};
+          assert.equal(settlementForCall(p,{},'2026-08-05T22:00:00Z').dueDate,'2026-08-15');
+          assert.equal(settlementForCall(p,{},'2026-08-20T22:00:00Z').dueDate,'2026-08-30');
+          assert.equal(settlementForCall(p,{},'2026-08-21T15:00:00Z').dueDate,'2026-09-15');
+          console.log('SEMIMONTHLY_OK');
+          NODE
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/financial-engine.mjs
+          git commit -m "Corrige borda diária do faturamento quinzenal" || exit 0
+          git push
