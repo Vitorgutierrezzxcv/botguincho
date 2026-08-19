@@ -9,6 +9,7 @@ import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
 import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
+import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -76,6 +77,8 @@ const DEFAULT_SETTINGS = {
   humanTakeover: false,
   serviceState: 'MG',
   priorityCities: [],
+  excludedAreas: [],
+  outOfRouteReply: 'Motorista fora de rota.',
 };
 
 function getAiClient() {
@@ -1796,6 +1799,14 @@ async function handleStandaloneAddress(msg, groupName, readableText) {
   const targetAddress = extractStandaloneAddressTarget(readableText);
   if (!targetAddress) return false;
 
+  const areaSettings = await getSettings();
+  const excludedArea = await resolveConfiguredExcludedAddress(targetAddress, 'origin', areaSettings);
+  if (excludedArea) {
+    await replyAndRemember(msg, groupName, readableText, outOfRouteReply(areaSettings), { intent: 'out-of-route', areaType: excludedArea.type, areaName: excludedArea.name, scope: 'origin' });
+    logEvent('coverage', `${groupName}: endereço recusado por área fora de rota.`, { groupId: msg.from, areaType: excludedArea.type, areaName: excludedArea.name, scope: 'origin' });
+    return true;
+  }
+
   if (isExplicitlyOutOfCoverage(targetAddress)) {
     await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, {
       intent: 'out-of-coverage',
@@ -1912,6 +1923,95 @@ async function handleTrackerLocationQuestion(msg, groupName, readableText) {
     ? `Localização atual: ${reading.address}`
     : 'Localização indisponível no momento.';
   await replyAndRemember(msg, groupName, readableText, reply, { intent: 'tracker-location' });
+}
+
+
+async function reverseGeocodeRegionForExclusion(coordinates) {
+  if (!coordinates || !validCoordinates(coordinates.latitude, coordinates.longitude)) return null;
+  try {
+    const url = new URL('https://nominatim.openstreetmap.org/reverse');
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('lat', String(coordinates.latitude));
+    url.searchParams.set('lon', String(coordinates.longitude));
+    url.searchParams.set('zoom', '18');
+    url.searchParams.set('addressdetails', '1');
+    const response = await fetch(url, {
+      headers: {
+        'user-agent': 'BotGuincho/2.1 (areas-fora-de-rota; https://botguincho.vercel.app/)',
+        'accept-language': 'pt-BR,pt;q=0.9',
+      },
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const address = data?.address || {};
+    return {
+      city: address.city || address.town || address.municipality || address.village || address.county || '',
+      district: address.neighbourhood || address.suburb || address.city_district || address.quarter || address.hamlet || '',
+      state: normalizeBrazilState(address.state || String(address['ISO3166-2-lvl4'] || '').split('-').pop() || ''),
+      displayName: data?.display_name || '',
+    };
+  } catch (error) {
+    logEvent('warning', 'Não foi possível identificar cidade/bairro para regra de fora de rota.', { error: String(error) });
+    return null;
+  }
+}
+
+function matchConfiguredExcludedAddress(address, scope, settings, region = null) {
+  const areas = sanitizeExcludedAreas(settings?.excludedAreas || []);
+  if (!areas.length) return null;
+  const parsedAddress = address && !extractMapsUrl(address) && !coordinatesFromText(address)
+    ? parseBrazilAddress(address)
+    : null;
+  return matchExcludedArea({ address, parsedAddress, region, areas, scope });
+}
+
+async function resolveConfiguredExcludedAddress(address, scope, settings) {
+  if (!address) return null;
+  const direct = matchConfiguredExcludedAddress(address, scope, settings);
+  if (direct) return direct;
+
+  let coordinates = coordinatesFromText(address);
+  if (!coordinates && extractMapsUrl(address)) coordinates = await coordinatesFromMapsUrl(address).catch(() => null);
+  if (!coordinates) return null;
+  const region = await reverseGeocodeRegionForExclusion(coordinates);
+  return region ? matchConfiguredExcludedAddress(address, scope, settings, region) : null;
+}
+
+async function findConfiguredExcludedArea({ groupId, readableText, facts = {}, incomingLocation = null, settings }) {
+  const areas = sanitizeExcludedAreas(settings?.excludedAreas || []);
+  if (!areas.length) return null;
+
+  const originAddress = extractLabeledField(readableText, 'Origem') || facts.origin || null;
+  const destinationAddress = extractLabeledField(readableText, 'Destino') || facts.destination || null;
+
+  if (originAddress) {
+    const originMatch = await resolveConfiguredExcludedAddress(originAddress, 'origin', settings);
+    if (originMatch) return { ...originMatch, address: originAddress };
+  }
+  if (destinationAddress) {
+    const destinationMatch = await resolveConfiguredExcludedAddress(destinationAddress, 'destination', settings);
+    if (destinationMatch) return { ...destinationMatch, address: destinationAddress };
+  }
+
+  let originCoordinates = incomingLocation;
+  if (!originAddress && !originCoordinates && groupId) {
+    const shared = await getRecentSharedLocation(groupId).catch(() => null);
+    if (shared?.coordinates && Number.isFinite(shared.at) && Date.now() - shared.at <= 15 * 60 * 1000) {
+      originCoordinates = shared.coordinates;
+    }
+  }
+  if (!originAddress && originCoordinates) {
+    const region = await reverseGeocodeRegionForExclusion(originCoordinates);
+    const locationMatch = region ? matchExcludedArea({ region, areas, scope: 'origin' }) : null;
+    if (locationMatch) return { ...locationMatch, region };
+  }
+
+  return null;
+}
+
+function outOfRouteReply(settings) {
+  return String(settings?.outOfRouteReply || 'Motorista fora de rota.').trim().slice(0, 300) || 'Motorista fora de rota.';
 }
 
 async function currentOperationalContext(groupId, groupName, text) {
@@ -2121,6 +2221,22 @@ async function processIncomingMessage(msg) {
 
     const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
     const runtimeIntent = operationalContext.intent;
+
+    const canBeRejectedByArea = ['availability','quote','dispatch','authorization','formal_dispatch','scheduled_dispatch'].includes(runtimeIntent);
+    if (canBeRejectedByArea) {
+      const excludedArea = await findConfiguredExcludedArea({
+        groupId: msg.from, readableText, facts: operationalContext.facts, incomingLocation, settings,
+      });
+      if (excludedArea) {
+        await replyAndRemember(msg, groupName, readableText, outOfRouteReply(settings), {
+          intent: 'out-of-route', areaType: excludedArea.type, areaName: excludedArea.name, scope: excludedArea.scope,
+        });
+        logEvent('coverage', `${groupName}: atendimento recusado por área fora de rota.`, {
+          groupId: msg.from, areaType: excludedArea.type, areaName: excludedArea.name, scope: excludedArea.scope,
+        });
+        return;
+      }
+    }
 
     if (shouldStaySilent(runtimeIntent, groupName)) {
       logEvent('ignored', `${groupName}: comunicado administrativo aprendido sem resposta.`, { groupId: msg.from, intent: runtimeIntent });
@@ -2556,13 +2672,15 @@ app.get('/api/settings', async (_req, res) => {
 app.post('/api/settings', async (req, res) => {
   const patch = {
     companyName: typeof req.body?.companyName === 'string' ? req.body.companyName.slice(0, 100) : undefined,
-    aiEnabled: req.body?.aiEnabled !== false,
+    aiEnabled: typeof req.body?.aiEnabled === 'boolean' ? req.body.aiEnabled : undefined,
     aiModel: typeof req.body?.aiModel === 'string' ? req.body.aiModel.slice(0, 80) : undefined,
     aiInstructions: typeof req.body?.aiInstructions === 'string' ? req.body.aiInstructions.slice(0, 8000) : undefined,
-    replyEveryMessage: req.body?.replyEveryMessage !== false,
-    humanTakeover: Boolean(req.body?.humanTakeover),
+    replyEveryMessage: typeof req.body?.replyEveryMessage === 'boolean' ? req.body.replyEveryMessage : undefined,
+    humanTakeover: typeof req.body?.humanTakeover === 'boolean' ? req.body.humanTakeover : undefined,
     serviceState: typeof req.body?.serviceState === 'string' ? normalizeBrazilState(req.body.serviceState) || configuredServiceState : undefined,
     priorityCities: Array.isArray(req.body?.priorityCities) ? req.body.priorityCities.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 80) : undefined,
+    excludedAreas: Array.isArray(req.body?.excludedAreas) ? sanitizeExcludedAreas(req.body.excludedAreas) : undefined,
+    outOfRouteReply: typeof req.body?.outOfRouteReply === 'string' ? req.body.outOfRouteReply.trim().slice(0, 300) || 'Motorista fora de rota.' : undefined,
   };
   Object.keys(patch).forEach((key) => patch[key] === undefined && delete patch[key]);
   const settings = await saveSettings(patch);

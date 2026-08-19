@@ -10,6 +10,7 @@ const RUNTIME_FILES = [
   'tools/vercel-whatsapp-worker.mjs',
   'tools/learning-engine.mjs',
   'tools/operational-knowledge.mjs',
+  'tools/excluded-areas.mjs',
 ];
 
 async function isGitHubActionsToken(req) {
