@@ -165,7 +165,8 @@ function semimonthlyCandidates(profile, completedAt) {
       const anchorDay = cycle.submitWindowEndDay || cycle.statementDay || cycle.paymentDay;
       if (!anchorDay || !cycle.paymentDay) continue;
       const statement = atDay(year, month, anchorDay);
-      if (statement.getTime() < done.getTime()) continue;
+      // O último dia da janela também conta por inteiro.
+      if (dateOnly(statement) < dateOnly(done)) continue;
       const payBase = addMonths(statement, cycle.paymentMonthOffset || 0);
       let payment = atDay(payBase.getUTCFullYear(), payBase.getUTCMonth(), cycle.paymentDay);
       if (payment.getTime() < statement.getTime()) payment = atDay(payBase.getUTCFullYear(), payBase.getUTCMonth()+1, cycle.paymentDay);
