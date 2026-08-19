@@ -29,6 +29,7 @@ assert.equal(classifyRuntimeIntent('O guincho chegou no local, o carro funcionou
 assert.equal(classifyRuntimeIntent('Guincho chegou e o motorista n quer rebocar', 'Assistência', { status: 'autorizado' }), 'arrival_without_tow');
 assert.equal(classifyRuntimeIntent('O carro funcionou', 'Assistência', { status: 'autorizado' }), 'other');
 assert.equal(classifyRuntimeIntent('O guincho chegou no local', 'Assistência', { status: 'a_caminho' }), 'arrival');
+assert.equal(classifyRuntimeIntent('Aqui começa a estrada de terra', 'Assistência', { status: 'a_caminho' }), 'dirt_road_start');
 
 assert.equal(resolveGroupProfile('PREST. AMERICA GUINCHOS X POWER - BETIM').key, 'power');
 assert.equal(resolveGroupProfile('America Guincho Contagem Betim MG X Company Truck').key, 'company-truck');
@@ -40,6 +41,7 @@ assert.equal(facts.centralReportedValue, 233);
 assert.equal(facts.vehicleType, 'leve');
 assert.equal(facts.extras.toll, 12.8);
 assert.equal(extractOperationalFacts('Ficou 35 minutos no local').onSiteMinutes, 35);
+assert.equal(extractOperationalFacts('Terra: 12,5 km').extras.dirtRoadKm, 12.5);
 
 const rules = {
   services: {
@@ -50,6 +52,9 @@ const rules = {
 
 assert.equal(calculateApprovedCommercial({ approvedRules: rules, vehicleType: 'leve', totalKm: 66 }).amount, 213);
 assert.equal(calculateApprovedCommercial({ approvedRules: rules, vehicleType: 'utilitario', totalKm: 125 }).amount, 432);
+const dirt = calculateApprovedCommercial({ approvedRules: rules, vehicleType: 'leve', totalKm: 60, reportedExtras: { dirtRoadKm: 10 } });
+assert.equal(dirt.amount, 203);
+assert.equal(dirt.dirtRoadRatePerKm, 3.8);
 
 const ok = reconcileCommercial({ approvedRules: rules, facts: { vehicleType: 'leve', totalKm: 60, centralReportedValue: 195, extras: {} } });
 assert.equal(ok.status, 'ok');

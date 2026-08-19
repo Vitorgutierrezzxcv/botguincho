@@ -288,7 +288,7 @@ async function estimateSecondCallArrival({ management, targetAddress = null, tar
   };
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null, dirtRoad = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -399,6 +399,13 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       workedTimeHourlyRate: workedTime ? WORKED_HOUR_RATE : (existing?.workedTimeHourlyRate ?? WORKED_HOUR_RATE),
       workedTimeAmount: workedTime?.amount ?? existing?.workedTimeAmount ?? 0,
       workedTimeRoundingRule: workedTime?.roundingRule || existing?.workedTimeRoundingRule || 'hora_iniciada_apos_tolerancia',
+      dirtRoadStartCoordinates: dirtRoad?.startCoordinates || existing?.dirtRoadStartCoordinates || null,
+      dirtRoadCapturedAt: dirtRoad?.capturedAt || existing?.dirtRoadCapturedAt || null,
+      dirtRoadOneWayKm: dirtRoad?.oneWayKm ?? existing?.dirtRoadOneWayKm ?? null,
+      dirtRoadBillableKm: dirtRoad?.billableKm ?? existing?.dirtRoadBillableKm ?? null,
+      dirtRoadRatePerKm: dirtRoad ? 3.8 : (existing?.dirtRoadRatePerKm ?? 3.8),
+      dirtRoadChargeAmount: dirtRoad ? Math.round(Number(dirtRoad.billableKm || 0) * 3.8 * 100) / 100 : (existing?.dirtRoadChargeAmount ?? null),
+      dirtRoadRoundTrip: dirtRoad ? true : (existing?.dirtRoadRoundTrip === true),
       displacementChargeRequired: displacementWithoutTow ? true : (existing?.displacementChargeRequired === true),
       displacementChargeBasis: displacementWithoutTow ? 'trajeto_ate_origem' : (existing?.displacementChargeBasis || null),
       displacementBillableKm: displacementWithoutTow ? Number(serviceOutcome.billableKm || 0) : (existing?.displacementBillableKm ?? null),
@@ -2479,7 +2486,12 @@ async function handleArrivalWithoutTowRuntime(msg, groupName, readableText, cont
   const call = context.recentCall;
   const arrivedAt = new Date().toISOString();
   const displacementKm = Number(call?.routeBreakdown?.legToOrigin?.km ?? call?.distanceKm ?? 0);
-  const facts = { ...context.facts, vehicleType: context.facts.vehicleType || call?.vehicleType || null, totalKm: displacementKm };
+  const facts = {
+    ...context.facts,
+    extras: { ...(context.facts.extras || {}), dirtRoadKm: context.facts.extras?.dirtRoadKm ?? call?.dirtRoadBillableKm ?? 0 },
+    vehicleType: context.facts.vehicleType || call?.vehicleType || null,
+    totalKm: displacementKm,
+  };
   const workedTime = evaluateWorkedTime({ arrivedAt: call?.arrivalConfirmedAt || arrivedAt, finishedAt: arrivedAt, reportedMinutes: context.facts.onSiteMinutes });
   const commercial = addWorkedTimeToCommercial(enforceFullCancellationCommercial(reconcileCommercial({
     approvedRules: context.approvedRules,
@@ -2520,12 +2532,44 @@ async function handleArrivalRuntime(msg, groupName, readableText, context) {
   });
 }
 
+async function handleDirtRoadStartRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const call = context.recentCall;
+  const shared = await getRecentSharedLocation(msg.from);
+  const startCoordinates = incomingLocation || shared?.coordinates || null;
+  if (!startCoordinates) {
+    await replyAndRemember(msg, groupName, readableText, 'Envie a localização exata do ponto onde começa a estrada de terra. A partir desse ponto, calcularei ida e volta a R$ 3,80 por km.', { intent: 'dirt_road_location_required' });
+    return;
+  }
+  const clientCoordinates = call?.originCoordinates || (call?.origin ? await geocodeAddress(call.origin).catch(() => null) : null);
+  if (!clientCoordinates) {
+    await replyAndRemember(msg, groupName, readableText, 'Localização do início da estrada de terra recebida. Não consegui localizar o endereço do cliente para calcular o trecho; informe também os quilômetros de terra.', { intent: 'dirt_road_distance_required' });
+    return;
+  }
+  const route = await routeBetween(startCoordinates, clientCoordinates).catch(() => null);
+  if (!route?.distanceKm) {
+    await replyAndRemember(msg, groupName, readableText, 'Não consegui calcular o trecho de terra. Informe quantos quilômetros existem entre o início da terra e o cliente.', { intent: 'dirt_road_distance_required' });
+    return;
+  }
+  const oneWayKm = Math.round(Number(route.distanceKm) * 10) / 10;
+  const billableKm = Math.round(oneWayKm * 2 * 10) / 10;
+  const capturedAt = new Date().toISOString();
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: call?.destination || null, eta: null, status: call?.status || 'em_atendimento', facts: context.facts,
+    existingCallId: call?.id || null, dirtRoad: { startCoordinates, capturedAt, oneWayKm, billableKm },
+  });
+  await replyAndRemember(msg, groupName, readableText, `Trecho de terra registrado ✅ ${oneWayKm.toLocaleString('pt-BR')} km até o cliente; ${billableKm.toLocaleString('pt-BR')} km considerando ida e volta, cobrados a R$ 3,80/km. Nesse trecho, a tarifa de terra substitui a tarifa normal.`, {
+    intent: 'dirt_road_start', dirtRoadOneWayKm: oneWayKm, dirtRoadBillableKm: billableKm, dirtRoadRatePerKm: 3.8,
+  });
+}
+
 async function handleClosureRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
   const reportedTotalKm = context.facts.totalKm ?? null;
   const automaticKm = call?.billableKm ?? call?.routeBreakdown?.totalKm ?? null;
   const facts = {
     ...context.facts,
+    extras: { ...(context.facts.extras || {}), dirtRoadKm: context.facts.extras?.dirtRoadKm ?? call?.dirtRoadBillableKm ?? 0 },
     vehicleType: context.facts.vehicleType || call?.vehicleType || null,
     reportedTotalKm,
     totalKm: automaticKm ?? reportedTotalKm ?? call?.totalKm ?? null,
@@ -2674,6 +2718,10 @@ async function processIncomingMessage(msg) {
     }
     if (runtimeIntent === 'arrival') {
       await handleArrivalRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'dirt_road_start') {
+      await handleDirtRoadStartRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
       return;
     }
     if (runtimeIntent === 'closure') {

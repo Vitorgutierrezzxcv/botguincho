@@ -86,6 +86,8 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const base = inferLearningIntent(text);
 
   const activeService = ['autorizado','a_caminho','em_atendimento'].includes(recentCall?.status);
+  const dirtRoadSignal = /\b(estrada|rua|trecho)\s+de\s+terra\b|\bcomeca\s+(aqui\s+)?(a\s+)?terra\b|\bacabou\s+o\s+asfalto\b/.test(value);
+  if (activeService && dirtRoadSignal) return 'dirt_road_start';
   const arrivalSignal = /\b(guincho|prestador|motorista)\s+(ja\s+)?(chegou|esta no local)|\bchegamos?\s+(ao|no)\s+local\b/.test(value);
   const noTowSignal = /\b(carro|veiculo)\s+(voltou a\s+)?(funcionou|ligou|pegou)\b|\b(nao quer|n quer|nao deseja|recusou)\s+(levar|remover|rebocar)|\b(dispensou|dispensa)\s+(o\s+)?guincho\b|\bsem\s+reboque\b/.test(value);
   if (activeService && arrivalSignal && noTowSignal) return 'arrival_without_tow';
@@ -160,6 +162,7 @@ export function extractOperationalFacts(text = '') {
   ]);
   const toll = firstNumber(raw, [/(?:ped[aá]gio)\s*[:=\-]?\s*(?:r\$\s*)?(\d{1,5}(?:[.,]\d{1,2})?)/i]);
   const invoiceExtra = firstNumber(raw, [/(?:nota\s*fiscal|\bnf\b)\s*[:=\-]?\s*(?:r\$\s*)?(\d{1,5}(?:[.,]\d{1,2})?)/i]);
+  const dirtRoadKm = firstNumber(raw, [/(?:km\s*(?:de|em)\s*terra|terra)\s*[:=\-]?\s*(\d+(?:[.,]\d+)?)/i]);
   const onSiteMinutes = firstNumber(raw, [/(?:tempo\s*(?:no|em)\s*local|ficou|demorou|aguardou|esperou)\D{0,20}(\d+(?:[.,]\d+)?)\s*(?:min|minutos?)/i]);
   const association = labeled(raw, ['ASSOCIA[CÇ][AÃ]O', 'ASSIST[EÊ]NCIA', 'SEGURADORA', 'CLIENTE']);
   const protocol = labeled(raw, ['PROTOCOLO', 'N[º°]?\\s*PROTOCOLO']);
@@ -183,7 +186,7 @@ export function extractOperationalFacts(text = '') {
   return {
     totalKm,
     centralReportedValue,
-    extras: { toll, invoiceExtra },
+    extras: { toll, invoiceExtra, dirtRoadKm },
     association,
     protocol,
     origin,
@@ -224,9 +227,12 @@ export function calculateApprovedCommercial({ approvedRules = null, vehicleType 
   const perKm = Number(selected.rule.pricePerKm || 0);
   if (!(base > 0) || !(includedKm >= 0) || !(perKm >= 0)) return { status: 'rule_incomplete', amount: null };
 
-  const excessKm = Math.max(0, Number(totalKm) - includedKm);
-  let amount = base + excessKm * perKm;
+  const dirtRoadKm = Math.max(0, Number(reportedExtras.dirtRoadKm || 0));
+  const asphaltKm = Math.max(0, Number(totalKm) - dirtRoadKm);
+  const excessKm = Math.max(0, asphaltKm - includedKm);
+  let amount = base + excessKm * perKm + dirtRoadKm * 3.8;
   const extras = [];
+  if (dirtRoadKm > 0) extras.push({ type: 'estrada_terra', km: dirtRoadKm, ratePerKm: 3.8, amount: Math.round(dirtRoadKm * 3.8 * 100) / 100 });
 
   if (Number(reportedExtras.toll) > 0 && approvedRules.tollAllowed === true) {
     amount += Number(reportedExtras.toll); extras.push({ type: 'pedagio', amount: Number(reportedExtras.toll) });
@@ -244,6 +250,8 @@ export function calculateApprovedCommercial({ approvedRules = null, vehicleType 
     totalKm: Number(totalKm),
     excessKm: Math.round(excessKm * 10) / 10,
     pricePerKm: perKm,
+    dirtRoadKm,
+    dirtRoadRatePerKm: 3.8,
     extras,
   };
 }
