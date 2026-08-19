@@ -1,6 +1,6 @@
 {
-  "validatedAt": "2026-08-19T18:45:02.577979+00:00",
-  "sourceRef": "2da4f661055c682e02d1de60d741d1eae9f1de09",
+  "validatedAt": "2026-08-19T18:56:51.706515+00:00",
+  "sourceRef": "a67f85f655fbf69e9ee77605d10c373b44470b78",
   "companyId": "cliente-teste",
   "workerProcessCount": 1,
   "sessionPreserved": true,
@@ -10,7 +10,7 @@
   },
   "tracker": {
     "ok": true,
-    "ageSeconds": 19,
+    "ageSeconds": 0,
     "plate": "GSW0H17"
   },
   "routes": {
