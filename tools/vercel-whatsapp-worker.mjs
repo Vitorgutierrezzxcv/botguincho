@@ -287,7 +287,7 @@ async function estimateSecondCallArrival({ management, targetAddress = null, tar
   };
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -333,8 +333,12 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
 
     const transitionAt = new Date().toISOString();
     const isBillableCancellation = status === 'cancelado' && cancellation?.chargeRequired === true;
+    const displacementWithoutTow = serviceOutcome?.type === 'deslocamento_sem_reboque';
     if (isBillableCancellation && Number.isFinite(Number(cancellation?.billableKm))) {
       autoBillableKm = Number(cancellation.billableKm);
+    }
+    if (displacementWithoutTow && Number.isFinite(Number(serviceOutcome?.billableKm))) {
+      autoBillableKm = Number(serviceOutcome.billableKm);
     }
     const authorizedAt = status === 'autorizado'
       ? (existing?.authorizedAt || transitionAt)
@@ -382,6 +386,15 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
       lastOperationalText: String(text || '').slice(0, 4000),
       completedAt: status === 'concluido' ? transitionAt : (existing?.completedAt || null),
+      serviceOutcome: displacementWithoutTow ? 'deslocamento_sem_reboque' : (existing?.serviceOutcome || null),
+      towPerformed: displacementWithoutTow ? false : (existing?.towPerformed ?? null),
+      arrivalConfirmed: displacementWithoutTow ? true : (existing?.arrivalConfirmed === true),
+      arrivalConfirmedAt: displacementWithoutTow ? (serviceOutcome.arrivedAt || transitionAt) : (existing?.arrivalConfirmedAt || null),
+      displacementChargeRequired: displacementWithoutTow ? true : (existing?.displacementChargeRequired === true),
+      displacementChargeBasis: displacementWithoutTow ? 'trajeto_ate_origem' : (existing?.displacementChargeBasis || null),
+      displacementBillableKm: displacementWithoutTow ? Number(serviceOutcome.billableKm || 0) : (existing?.displacementBillableKm ?? null),
+      displacementPartialPaymentAllowed: displacementWithoutTow ? false : (existing?.displacementPartialPaymentAllowed ?? null),
+      displacementCalculatedAmount: displacementWithoutTow ? (commercial?.calculatedAmount ?? null) : (existing?.displacementCalculatedAmount ?? null),
       authorizedAt,
       cancellationDeadlineAt,
       cancellationWindowMinutes: authorizedAt ? FREE_CANCELLATION_WINDOW_MINUTES : (existing?.cancellationWindowMinutes || null),
@@ -400,7 +413,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       cancellationChargeStatus: status === 'cancelado'
         ? (isBillableCancellation ? (Number(commercial?.calculatedAmount) > 0 ? 'integral_calculada' : 'aguardando_tabela') : 'sem_cobranca_no_prazo')
         : (existing?.cancellationChargeStatus || null),
-      valueSource: isBillableCancellation && Number(commercial?.calculatedAmount) > 0 ? 'politica_cancelamento_km_total' : (existing?.valueSource || null),
+      valueSource: displacementWithoutTow && Number(commercial?.calculatedAmount) > 0 ? 'deslocamento_ate_origem' : (isBillableCancellation && Number(commercial?.calculatedAmount) > 0 ? 'politica_cancelamento_km_total' : (existing?.valueSource || null)),
       createdAt: existing?.createdAt || transitionAt,
       updatedAt: transitionAt,
     };
@@ -2453,6 +2466,35 @@ async function handleCancellationRuntime(msg, groupName, readableText, context) 
   });
 }
 
+async function handleArrivalWithoutTowRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  const arrivedAt = new Date().toISOString();
+  const displacementKm = Number(call?.routeBreakdown?.legToOrigin?.km ?? call?.distanceKm ?? 0);
+  const facts = { ...context.facts, vehicleType: context.facts.vehicleType || call?.vehicleType || null, totalKm: displacementKm };
+  const commercial = enforceFullCancellationCommercial(reconcileCommercial({
+    approvedRules: context.approvedRules,
+    facts,
+    estimatedTotalKm: displacementKm,
+  }));
+  const saved = await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call?.origin || null, destinationAddress: call?.destination || null,
+    eta: null, status: 'concluido', facts, commercial, estimatedTotalKm: displacementKm,
+    existingCallId: call?.id || null,
+    serviceOutcome: { type: 'deslocamento_sem_reboque', arrivedAt, billableKm: displacementKm },
+  });
+  logEvent('arrival-without-tow', `${groupName}: chegada confirmada, sem reboque e com deslocamento cobrável.`, {
+    callId: saved?.id || call?.id || null, arrivedAt, billableKm: displacementKm,
+    calculatedAmount: saved?.value || commercial?.calculatedAmount || null, partialPaymentAllowed: false,
+  });
+  const amount = Number(saved?.value || commercial?.calculatedAmount || 0);
+  const details = [displacementKm > 0 ? `${displacementKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km` : null, amount > 0 ? amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null].filter(Boolean);
+  await replyAndRemember(msg, groupName, readableText, `Atendimento registrado. Como o guincho já chegou ao local, a saída e o deslocamento serão cobrados integralmente${details.length ? ` (${details.join(' · ')})` : ''}, mesmo sem o reboque do veículo. Não é aplicável pagamento parcial.`, {
+    intent: 'arrival_without_tow', serviceOutcome: 'deslocamento_sem_reboque', displacementChargeRequired: true,
+    displacementBillableKm: displacementKm, towPerformed: false, partialPaymentAllowed: false,
+  });
+}
+
 async function handleClosureRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
   const reportedTotalKm = context.facts.totalKm ?? null;
@@ -2597,6 +2639,10 @@ async function processIncomingMessage(msg) {
     }
     if (runtimeIntent === 'cancellation') {
       await handleCancellationRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'arrival_without_tow') {
+      await handleArrivalWithoutTowRuntime(msg, groupName, readableText, operationalContext);
       return;
     }
     if (runtimeIntent === 'closure') {
