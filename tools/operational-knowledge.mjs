@@ -91,6 +91,13 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   if (base === 'scheduled_dispatch') return 'scheduled_dispatch';
 
   if (profile.key === 'company-truck' && /cotacao\s+visao|tipo\s*:\s*visao/.test(value)) return 'quote';
+
+  // A mesma pergunta de valor muda de significado conforme o estado do chamado.
+  // Depois da autorização/execução, frases de finalização são fechamento, não nova cotação.
+  const activeService = ['autorizado','a_caminho','em_atendimento'].includes(recentCall?.status);
+  const closureQuestion = /\b(finaliz|fechamento|fechamos|quanto finalizou|em quantos km|quantos km|km final|km e valor|valor final|finalizou em)\b/.test(value);
+  if (activeService && (base === 'closure' || closureQuestion)) return 'closure';
+
   if (hasQuoteSignals(text)) return 'quote';
   if (base === 'authorization') return 'authorization';
   if (base === 'closure') return 'closure';
