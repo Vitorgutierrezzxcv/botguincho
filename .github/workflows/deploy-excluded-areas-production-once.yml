@@ -1,0 +1,145 @@
+name: Deploy excluded areas runtime to production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-excluded-areas-deploy.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      BASE: https://botguincho.vercel.app
+      COMPANY: cliente-teste
+      SOURCE_REF: 337e73839aa12c7f619a5535fcf68ea766de3230
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate source regression
+        run: |
+          set -euo pipefail
+          node tools/test-excluded-areas.mjs
+          node --check tools/excluded-areas.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+
+      - name: Preflight production health
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 --retry-delay 2 "$BASE/api/worker/health?companyId=$COMPANY" -o /tmp/pre-health.json
+          curl -fsS --retry 3 --retry-delay 2 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/pre-status.json
+          python3 - <<'PY'
+          import json
+          h=json.load(open('/tmp/pre-health.json'))
+          s=json.load(open('/tmp/pre-status.json'))
+          c=h.get('checks',{})
+          assert c.get('whatsapp',{}).get('ok') is True, c.get('whatsapp')
+          assert c.get('tracker',{}).get('ok') is True, c.get('tracker')
+          assert c.get('routes',{}).get('ok') is True, c.get('routes')
+          assert s.get('whatsapp',{}).get('status') == 'pronto', s.get('whatsapp')
+          assert not s.get('whatsapp',{}).get('qrDataUrl'), 'QR ativo antes do deploy; abortando'
+          assert int(h.get('groupsSelected') or 0) >= 1, 'Nenhum grupo autorizado'
+          print('PREFLIGHT_OK')
+          PY
+
+      - name: Reload persistent worker safely
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 200 --retry 2 --retry-delay 3 \
+            -X POST "$BASE/api/worker/reload?companyId=$COMPANY" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "x-botguincho-company-id: $COMPANY" \
+            -H "x-botguincho-source-ref: $SOURCE_REF" \
+            -H 'content-type: application/json' \
+            -d '{}' -o /tmp/reload.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/reload.json'))
+          assert d.get('ok') is True, d
+          assert d.get('whatsappStatus') == 'pronto', d.get('whatsappStatus')
+          assert d.get('workerProcessCount') == 1, d.get('workerProcessCount')
+          assert d.get('sessionPreserved') is True, 'Sessão não preservada'
+          states=str(d.get('sourceState',''))
+          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','excluded-areas.mjs']:
+              assert f in states, f'Runtime não sincronizado: {f}'
+          print('RELOAD_OK')
+          PY
+
+      - name: Wait for stable post-reload state
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 15 "$BASE/api/worker/health?companyId=$COMPANY" -o /tmp/post-health.json && \
+               curl -fsS --max-time 15 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/post-status.json; then
+              if python3 - <<'PY'
+          import json,sys
+          h=json.load(open('/tmp/post-health.json')); s=json.load(open('/tmp/post-status.json')); c=h.get('checks',{})
+          ok=(c.get('whatsapp',{}).get('ok') is True and c.get('tracker',{}).get('ok') is True and c.get('routes',{}).get('ok') is True and s.get('whatsapp',{}).get('status')=='pronto' and not s.get('whatsapp',{}).get('qrDataUrl'))
+          sys.exit(0 if ok else 1)
+          PY
+              then break; fi
+            fi
+            sleep 3
+          done
+          python3 - <<'PY'
+          import json
+          h=json.load(open('/tmp/post-health.json')); s=json.load(open('/tmp/post-status.json')); c=h.get('checks',{})
+          assert c.get('whatsapp',{}).get('ok') is True, c.get('whatsapp')
+          assert c.get('tracker',{}).get('ok') is True, c.get('tracker')
+          assert c.get('routes',{}).get('ok') is True, c.get('routes')
+          assert s.get('whatsapp',{}).get('status') == 'pronto', s.get('whatsapp')
+          assert not s.get('whatsapp',{}).get('qrDataUrl'), 'QR apareceu depois do reload'
+          print('POST_HEALTH_OK')
+          PY
+
+      - name: Validate per-tenant settings exposure
+        run: |
+          set -euo pipefail
+          curl -fsS "$BASE/api/worker/settings?companyId=$COMPANY" -o /tmp/settings.json
+          curl -fsS "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups.json
+          python3 - <<'PY'
+          import json
+          s=json.load(open('/tmp/settings.json'))
+          assert isinstance(s.get('excludedAreas'), list), s
+          assert s.get('outOfRouteReply') == 'Motorista fora de rota.', s.get('outOfRouteReply')
+          groups=json.load(open('/tmp/groups.json')).get('groups',[])
+          selected=[g for g in groups if g.get('selected')]
+          assert selected, 'Nenhum grupo selecionado após reload'
+          print('SETTINGS_OK', [g.get('name') for g in selected])
+          PY
+
+      - name: Write sanitized validation report
+        run: |
+          python3 - <<'PY'
+          import json,datetime
+          h=json.load(open('/tmp/post-health.json')); s=json.load(open('/tmp/post-status.json')); r=json.load(open('/tmp/reload.json')); settings=json.load(open('/tmp/settings.json')); groups=json.load(open('/tmp/groups.json')).get('groups',[])
+          selected=[x for x in groups if x.get('selected')]
+          report={
+            'validatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'sourceRef': '337e73839aa12c7f619a5535fcf68ea766de3230',
+            'companyId': 'cliente-teste',
+            'workerProcessCount': r.get('workerProcessCount'),
+            'sessionPreserved': r.get('sessionPreserved'),
+            'whatsapp': {'status': s.get('whatsapp',{}).get('status'), 'qrRequired': bool(s.get('whatsapp',{}).get('qrDataUrl'))},
+            'tracker': {'ok': h.get('checks',{}).get('tracker',{}).get('ok'), 'ageSeconds': h.get('checks',{}).get('tracker',{}).get('ageSeconds'), 'plate': h.get('checks',{}).get('tracker',{}).get('plate')},
+            'routes': {'ok': h.get('checks',{}).get('routes',{}).get('ok')},
+            'groupsSelected': len(selected),
+            'selectedGroupNames': [x.get('name') for x in selected],
+            'excludedAreasConfigured': len(settings.get('excludedAreas') or []),
+            'outOfRouteReply': settings.get('outOfRouteReply'),
+            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','excluded-areas.mjs'],
+            'status': 'excluded_areas_runtime_operational'
+          }
+          open('ops/excluded-areas-production-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/excluded-areas-production-validation.json
+          git commit -m "Valida áreas fora de rota em produção" || exit 0
+          git push
