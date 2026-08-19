@@ -1,2 +1,2 @@
-deploy arrival without tow policy 2026-08-19T18:53:00.000Z
+deploy arrival without tow policy 2026-08-19T18:58:30.000Z
 source a67f85f655fbf69e9ee77605d10c373b44470b78
