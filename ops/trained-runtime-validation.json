@@ -1,6 +1,6 @@
 {
-  "validatedAt": "2026-08-19T18:56:51.706515+00:00",
-  "sourceRef": "a67f85f655fbf69e9ee77605d10c373b44470b78",
+  "validatedAt": "2026-08-19T19:15:32.960377+00:00",
+  "sourceRef": "de70f256a78dfcc614cf3b04569037c31aad7cdc",
   "companyId": "cliente-teste",
   "workerProcessCount": 1,
   "sessionPreserved": true,
@@ -10,7 +10,7 @@
   },
   "tracker": {
     "ok": true,
-    "ageSeconds": 0,
+    "ageSeconds": 2,
     "plate": "GSW0H17"
   },
   "routes": {
@@ -25,7 +25,8 @@
     "vercel-whatsapp-worker.mjs",
     "learning-engine.mjs",
     "operational-knowledge.mjs",
-    "cancellation-policy.mjs"
+    "cancellation-policy.mjs",
+    "worked-time-policy.mjs"
   ],
   "status": "trained_runtime_operational"
 }
