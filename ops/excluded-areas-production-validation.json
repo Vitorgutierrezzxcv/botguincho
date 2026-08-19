@@ -1,0 +1,32 @@
+{
+  "validatedAt": "2026-08-19T16:11:49.265644+00:00",
+  "sourceRef": "337e73839aa12c7f619a5535fcf68ea766de3230",
+  "companyId": "cliente-teste",
+  "workerProcessCount": 1,
+  "sessionPreserved": true,
+  "whatsapp": {
+    "status": "pronto",
+    "qrRequired": false
+  },
+  "tracker": {
+    "ok": true,
+    "ageSeconds": 2,
+    "plate": "GSW0H17"
+  },
+  "routes": {
+    "ok": true
+  },
+  "groupsSelected": 1,
+  "selectedGroupNames": [
+    "Tests guincho"
+  ],
+  "excludedAreasConfigured": 0,
+  "outOfRouteReply": "Motorista fora de rota.",
+  "runtimeFilesSynced": [
+    "vercel-whatsapp-worker.mjs",
+    "learning-engine.mjs",
+    "operational-knowledge.mjs",
+    "excluded-areas.mjs"
+  ],
+  "status": "excluded_areas_runtime_operational"
+}
