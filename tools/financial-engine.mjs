@@ -245,7 +245,7 @@ export function financeEntryFromCall(call, settlement, batch = null) {
   return {
     id: crypto.randomUUID(),
     description: displacementWithoutTow
-      ? `Deslocamento sem reboque · chegada confirmada · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`
+      ? `Deslocamento sem reboque · chegada confirmada${call.workedTimeChargeRequired ? ` · ${call.workedTimeChargedHours}h trabalhada(s)` : ''} · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`
       : billableCancellation
       ? `Cancelamento após 15 min · saída e deslocamento integral · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`
       : `Serviço de guincho · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`,
@@ -258,6 +258,10 @@ export function financeEntryFromCall(call, settlement, batch = null) {
     cancellationChargeBasis: billableCancellation ? 'quilometragem_total' : null,
     displacementChargeRequired: displacementWithoutTow,
     towPerformed: displacementWithoutTow ? false : null,
+    workedTimeChargeRequired: call.workedTimeChargeRequired === true,
+    workedTimeChargedHours: Number(call.workedTimeChargedHours || 0),
+    workedTimeHourlyRate: Number(call.workedTimeHourlyRate || 0),
+    workedTimeAmount: Number(call.workedTimeAmount || 0),
     partialPaymentAllowed: (billableCancellation || displacementWithoutTow) ? false : null,
     billableKm: displacementWithoutTow ? Number(call.displacementBillableKm ?? call.billableKm ?? 0) : (billableCancellation ? Number(call.cancellationBillableKm ?? call.billableKm ?? call.totalKm ?? 0) : Number(call.billableKm ?? call.totalKm ?? 0)),
     billingPeriodStart: settlement.batch?.periodStart || null,

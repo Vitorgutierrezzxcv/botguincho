@@ -89,6 +89,7 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const arrivalSignal = /\b(guincho|prestador|motorista)\s+(ja\s+)?(chegou|esta no local)|\bchegamos?\s+(ao|no)\s+local\b/.test(value);
   const noTowSignal = /\b(carro|veiculo)\s+(voltou a\s+)?(funcionou|ligou|pegou)\b|\b(nao quer|n quer|nao deseja|recusou)\s+(levar|remover|rebocar)|\b(dispensou|dispensa)\s+(o\s+)?guincho\b|\bsem\s+reboque\b/.test(value);
   if (activeService && arrivalSignal && noTowSignal) return 'arrival_without_tow';
+  if (activeService && arrivalSignal) return 'arrival';
 
   if (base === 'administrative_notice') return 'administrative_notice';
   if (base === 'cancellation') return 'cancellation';
@@ -159,6 +160,7 @@ export function extractOperationalFacts(text = '') {
   ]);
   const toll = firstNumber(raw, [/(?:ped[aá]gio)\s*[:=\-]?\s*(?:r\$\s*)?(\d{1,5}(?:[.,]\d{1,2})?)/i]);
   const invoiceExtra = firstNumber(raw, [/(?:nota\s*fiscal|\bnf\b)\s*[:=\-]?\s*(?:r\$\s*)?(\d{1,5}(?:[.,]\d{1,2})?)/i]);
+  const onSiteMinutes = firstNumber(raw, [/(?:tempo\s*(?:no|em)\s*local|ficou|demorou|aguardou|esperou)\D{0,20}(\d+(?:[.,]\d+)?)\s*(?:min|minutos?)/i]);
   const association = labeled(raw, ['ASSOCIA[CÇ][AÃ]O', 'ASSIST[EÊ]NCIA', 'SEGURADORA', 'CLIENTE']);
   const protocol = labeled(raw, ['PROTOCOLO', 'N[º°]?\\s*PROTOCOLO']);
   const origin = labeled(raw, ['ORIGEM', 'ENDERE[CÇ]O\\s*ORIGEM']);
@@ -191,6 +193,7 @@ export function extractOperationalFacts(text = '') {
     service,
     vehicleType: inferVehicleType(`${vehicle} ${service} ${raw}`),
     scheduledAt,
+    onSiteMinutes,
   };
 }
 
