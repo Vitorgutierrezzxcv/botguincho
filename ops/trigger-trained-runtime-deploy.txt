@@ -1,2 +1,2 @@
-deploy arrival without tow policy 2026-08-19T18:58:30.000Z
-source a67f85f655fbf69e9ee77605d10c373b44470b78
+deploy worked time policy 2026-08-19T19:14:00.000Z
+source de70f256a78dfcc614cf3b04569037c31aad7cdc
