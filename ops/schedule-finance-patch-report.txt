@@ -1,0 +1,2 @@
+exit_code=0
+SCHEDULE_FINANCE_PATCHED
