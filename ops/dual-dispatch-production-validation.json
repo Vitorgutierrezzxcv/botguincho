@@ -1,0 +1,27 @@
+{
+  "validatedAt": "2026-08-19T17:41:15.623145+00:00",
+  "companyId": "cliente-teste",
+  "version": "dual-dispatch-v1",
+  "whatsapp": {
+    "status": "pronto",
+    "qrRequired": false
+  },
+  "tracker": {
+    "ok": true,
+    "ageSeconds": 39
+  },
+  "routes": {
+    "ok": true
+  },
+  "capacity": {
+    "maxConcurrentCalls": 2,
+    "activeCount": 2,
+    "slotsAvailable": 0,
+    "canAccept": false
+  },
+  "reload": {
+    "ok": true,
+    "sourceRef": "c2c946893f118fa14a9f4f4e1c41217914c479d9"
+  },
+  "status": "dual_dispatch_production_operational"
+}
