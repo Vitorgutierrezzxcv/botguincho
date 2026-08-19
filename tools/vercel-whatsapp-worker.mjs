@@ -14,6 +14,7 @@ import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
 import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
+import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -287,7 +288,7 @@ async function estimateSecondCallArrival({ management, targetAddress = null, tar
   };
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -388,8 +389,16 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       completedAt: status === 'concluido' ? transitionAt : (existing?.completedAt || null),
       serviceOutcome: displacementWithoutTow ? 'deslocamento_sem_reboque' : (existing?.serviceOutcome || null),
       towPerformed: displacementWithoutTow ? false : (existing?.towPerformed ?? null),
-      arrivalConfirmed: displacementWithoutTow ? true : (existing?.arrivalConfirmed === true),
-      arrivalConfirmedAt: displacementWithoutTow ? (serviceOutcome.arrivedAt || transitionAt) : (existing?.arrivalConfirmedAt || null),
+      arrivalConfirmed: (displacementWithoutTow || arrival) ? true : (existing?.arrivalConfirmed === true),
+      arrivalConfirmedAt: displacementWithoutTow ? (serviceOutcome.arrivedAt || transitionAt) : (arrival?.arrivedAt || existing?.arrivalConfirmedAt || null),
+      onSiteFinishedAt: workedTime?.finishedAt || existing?.onSiteFinishedAt || null,
+      onSiteElapsedMinutes: workedTime?.elapsedMinutes ?? existing?.onSiteElapsedMinutes ?? null,
+      onSiteGraceMinutes: workedTime ? ON_SITE_GRACE_MINUTES : (existing?.onSiteGraceMinutes ?? ON_SITE_GRACE_MINUTES),
+      workedTimeChargeRequired: workedTime?.chargeRequired === true || existing?.workedTimeChargeRequired === true,
+      workedTimeChargedHours: workedTime?.chargedHours ?? existing?.workedTimeChargedHours ?? 0,
+      workedTimeHourlyRate: workedTime ? WORKED_HOUR_RATE : (existing?.workedTimeHourlyRate ?? WORKED_HOUR_RATE),
+      workedTimeAmount: workedTime?.amount ?? existing?.workedTimeAmount ?? 0,
+      workedTimeRoundingRule: workedTime?.roundingRule || existing?.workedTimeRoundingRule || 'hora_iniciada_apos_tolerancia',
       displacementChargeRequired: displacementWithoutTow ? true : (existing?.displacementChargeRequired === true),
       displacementChargeBasis: displacementWithoutTow ? 'trajeto_ate_origem' : (existing?.displacementChargeBasis || null),
       displacementBillableKm: displacementWithoutTow ? Number(serviceOutcome.billableKm || 0) : (existing?.displacementBillableKm ?? null),
@@ -2471,17 +2480,18 @@ async function handleArrivalWithoutTowRuntime(msg, groupName, readableText, cont
   const arrivedAt = new Date().toISOString();
   const displacementKm = Number(call?.routeBreakdown?.legToOrigin?.km ?? call?.distanceKm ?? 0);
   const facts = { ...context.facts, vehicleType: context.facts.vehicleType || call?.vehicleType || null, totalKm: displacementKm };
-  const commercial = enforceFullCancellationCommercial(reconcileCommercial({
+  const workedTime = evaluateWorkedTime({ arrivedAt: call?.arrivalConfirmedAt || arrivedAt, finishedAt: arrivedAt, reportedMinutes: context.facts.onSiteMinutes });
+  const commercial = addWorkedTimeToCommercial(enforceFullCancellationCommercial(reconcileCommercial({
     approvedRules: context.approvedRules,
     facts,
     estimatedTotalKm: displacementKm,
-  }));
+  })), workedTime);
   const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: call?.origin || null, destinationAddress: call?.destination || null,
     eta: null, status: 'concluido', facts, commercial, estimatedTotalKm: displacementKm,
     existingCallId: call?.id || null,
-    serviceOutcome: { type: 'deslocamento_sem_reboque', arrivedAt, billableKm: displacementKm },
+    serviceOutcome: { type: 'deslocamento_sem_reboque', arrivedAt: call?.arrivalConfirmedAt || arrivedAt, billableKm: displacementKm }, workedTime,
   });
   logEvent('arrival-without-tow', `${groupName}: chegada confirmada, sem reboque e com deslocamento cobrável.`, {
     callId: saved?.id || call?.id || null, arrivedAt, billableKm: displacementKm,
@@ -2489,9 +2499,24 @@ async function handleArrivalWithoutTowRuntime(msg, groupName, readableText, cont
   });
   const amount = Number(saved?.value || commercial?.calculatedAmount || 0);
   const details = [displacementKm > 0 ? `${displacementKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km` : null, amount > 0 ? amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null].filter(Boolean);
-  await replyAndRemember(msg, groupName, readableText, `Atendimento registrado. Como o guincho já chegou ao local, a saída e o deslocamento serão cobrados integralmente${details.length ? ` (${details.join(' · ')})` : ''}, mesmo sem o reboque do veículo. Não é aplicável pagamento parcial.`, {
+  const workedTimeText = workedTime.chargeRequired ? ` Também foram cobradas ${workedTime.chargedHours} hora(s) trabalhada(s), no total de ${workedTime.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.` : '';
+  await replyAndRemember(msg, groupName, readableText, `Atendimento registrado. Como o guincho já chegou ao local, a saída e o deslocamento serão cobrados integralmente${details.length ? ` (${details.join(' · ')})` : ''}, mesmo sem o reboque do veículo.${workedTimeText} Não é aplicável pagamento parcial.`, {
     intent: 'arrival_without_tow', serviceOutcome: 'deslocamento_sem_reboque', displacementChargeRequired: true,
     displacementBillableKm: displacementKm, towPerformed: false, partialPaymentAllowed: false,
+  });
+}
+
+async function handleArrivalRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  const arrivedAt = call?.arrivalConfirmedAt || new Date().toISOString();
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call?.origin || null, destinationAddress: call?.destination || null,
+    eta: null, status: 'em_atendimento', facts: context.facts,
+    existingCallId: call?.id || null, arrival: { arrivedAt },
+  });
+  await replyAndRemember(msg, groupName, readableText, `Chegada registrada ✅ Há ${ON_SITE_GRACE_MINUTES} minutos de tolerância no local. A partir do 16º minuto, será cobrada a primeira hora trabalhada de R$ 80,00; cada nova hora iniciada acrescenta R$ 80,00.`, {
+    intent: 'arrival', arrivedAt, onSiteGraceMinutes: ON_SITE_GRACE_MINUTES, workedHourRate: WORKED_HOUR_RATE,
   });
 }
 
@@ -2505,7 +2530,8 @@ async function handleClosureRuntime(msg, groupName, readableText, context) {
     reportedTotalKm,
     totalKm: automaticKm ?? reportedTotalKm ?? call?.totalKm ?? null,
   };
-  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts, estimatedTotalKm: automaticKm });
+  const workedTime = evaluateWorkedTime({ arrivedAt: call?.arrivalConfirmedAt || null, finishedAt: new Date(), reportedMinutes: context.facts.onSiteMinutes });
+  const commercial = addWorkedTimeToCommercial(reconcileCommercial({ approvedRules: context.approvedRules, facts, estimatedTotalKm: automaticKm }), workedTime);
   const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: call?.origin || facts.origin || null,
@@ -2513,16 +2539,17 @@ async function handleClosureRuntime(msg, groupName, readableText, context) {
     eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
     status: 'concluido', facts, commercial,
     estimatedTotalKm: automaticKm,
-    evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null, workedTime,
   });
   if (commercial.reviewRequired) {
     logEvent('finance-review', `${groupName}: fechamento exige conferência financeira.`, { callId: saved?.id, calculated: commercial.calculatedAmount, reported: commercial.reportedAmount, delta: commercial.delta });
   }
-  const reply = closureReply({
+  let reply = closureReply({
     totalKm: automaticKm ?? facts.totalKm,
     amount: saved?.value || commercial.calculatedAmount,
     reviewRequired: commercial.reviewRequired || !(Number(saved?.value || commercial.calculatedAmount) > 0),
   });
+  if (workedTime.chargeRequired) reply += ` Hora trabalhada: ${workedTime.chargedHours} hora(s) iniciada(s) × R$ 80,00 = ${workedTime.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`;
   await replyAndRemember(msg, groupName, readableText, reply, { intent: 'closure', financeReviewRequired: commercial.reviewRequired, commercialStatus: commercial.status, billableKm: automaticKm ?? facts.totalKm ?? null });
 }
 
@@ -2643,6 +2670,10 @@ async function processIncomingMessage(msg) {
     }
     if (runtimeIntent === 'arrival_without_tow') {
       await handleArrivalWithoutTowRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'arrival') {
+      await handleArrivalRuntime(msg, groupName, readableText, operationalContext);
       return;
     }
     if (runtimeIntent === 'closure') {

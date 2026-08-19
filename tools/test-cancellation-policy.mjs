@@ -98,4 +98,8 @@ assert.equal(noTowEntry.billableKm, 18);
 assert.equal(noTowEntry.towPerformed, false);
 assert.equal(noTowEntry.partialPaymentAllowed, false);
 
+const workedEntry = financeEntryFromCall({ ...noTowCall, workedTimeChargeRequired: true, workedTimeChargedHours: 1, workedTimeHourlyRate: 80, workedTimeAmount: 80, value: 215 }, settlement, null);
+assert.equal(workedEntry.workedTimeAmount, 80);
+assert.match(workedEntry.description, /1h trabalhada/);
+
 console.log('CANCELLATION_POLICY_OK');

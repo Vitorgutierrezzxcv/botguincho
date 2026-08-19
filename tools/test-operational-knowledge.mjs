@@ -28,6 +28,7 @@ for (const [text, group, expected] of cases) {
 assert.equal(classifyRuntimeIntent('O guincho chegou no local, o carro funcionou e o motorista não quer levar', 'Assistência', { status: 'em_atendimento' }), 'arrival_without_tow');
 assert.equal(classifyRuntimeIntent('Guincho chegou e o motorista n quer rebocar', 'Assistência', { status: 'autorizado' }), 'arrival_without_tow');
 assert.equal(classifyRuntimeIntent('O carro funcionou', 'Assistência', { status: 'autorizado' }), 'other');
+assert.equal(classifyRuntimeIntent('O guincho chegou no local', 'Assistência', { status: 'a_caminho' }), 'arrival');
 
 assert.equal(resolveGroupProfile('PREST. AMERICA GUINCHOS X POWER - BETIM').key, 'power');
 assert.equal(resolveGroupProfile('America Guincho Contagem Betim MG X Company Truck').key, 'company-truck');
@@ -38,6 +39,7 @@ assert.equal(facts.totalKm, 66);
 assert.equal(facts.centralReportedValue, 233);
 assert.equal(facts.vehicleType, 'leve');
 assert.equal(facts.extras.toll, 12.8);
+assert.equal(extractOperationalFacts('Ficou 35 minutos no local').onSiteMinutes, 35);
 
 const rules = {
   services: {
