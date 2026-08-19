@@ -16,7 +16,7 @@ jobs:
     env:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
-      SOURCE_REF: 2da4f661055c682e02d1de60d741d1eae9f1de09
+      SOURCE_REF: a67f85f655fbf69e9ee77605d10c373b44470b78
     steps:
       - uses: actions/checkout@v4
         with:
@@ -126,7 +126,7 @@ jobs:
           selected=[x for x in g if x.get('selected')]
           report={
             'validatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'sourceRef': '2da4f661055c682e02d1de60d741d1eae9f1de09',
+            'sourceRef': 'a67f85f655fbf69e9ee77605d10c373b44470b78',
             'companyId': 'cliente-teste',
             'workerProcessCount': r.get('workerProcessCount'),
             'sessionPreserved': r.get('sessionPreserved'),
