@@ -1,0 +1,32 @@
+name: Apply WhatsApp startup tolerance once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-whatsapp-startup-tolerance.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Apply startup tolerance
+        run: python3 tools/apply_whatsapp_startup_tolerance_tmp.py
+      - name: Validate worker
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "authTimeoutMs: 300000" tools/vercel-whatsapp-worker.mjs
+          grep -q "protocolTimeout: 300000" tools/vercel-whatsapp-worker.mjs
+          grep -q "loading_screen" tools/vercel-whatsapp-worker.mjs
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m "Aumenta tolerância da inicialização do WhatsApp" || exit 0
+          git push
