@@ -51,6 +51,13 @@ Isso é deliberado para impedir que a automação responda para o destino errado
 
 O sistema não aceita todos os chamados cegamente. Solicitações com restrições como rua estreita, garagem, altura limitada, veículo pesado ou outras exceções devem poder exigir aprovação humana.
 
+### Cancelamento depois da confirmação
+
+- A seguradora pode cancelar sem cobrança até 15 minutos após a confirmação do chamado.
+- Depois de 15 minutos, a saída e o deslocamento são cobrados integralmente pela quilometragem total congelada na autorização.
+- Valor ou quilometragem parcial informado pela central não substitui o cálculo integral.
+- Horário da confirmação, prazo, horário do cancelamento, quilômetros e valor ficam registrados no chamado e na auditoria.
+
 ## Configuração
 
 Copie `.env.example` para `.env` e preencha as credenciais necessárias.

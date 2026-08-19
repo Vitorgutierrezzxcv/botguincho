@@ -13,6 +13,7 @@ import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
+import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -286,7 +287,7 @@ async function estimateSecondCallArrival({ management, targetAddress = null, tar
   };
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -322,7 +323,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       if (!mergedChecklist.some((x) => x.label === item.label)) mergedChecklist.push(item);
     }
 
-    const autoBillableKm = billingProfile?.routeBasis === 'origin_destination'
+    let autoBillableKm = billingProfile?.routeBasis === 'origin_destination'
       ? (routeSnapshot?.serviceLeg?.km ?? existing?.routeBreakdown?.serviceLeg?.km ?? estimatedTotalKm ?? null)
       : billingProfile?.routeBasis === 'insurer_reported'
         ? (parsed.totalKm ?? existing?.totalKm ?? null)
@@ -330,9 +331,22 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
           ? null
           : (routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? null);
 
+    const transitionAt = new Date().toISOString();
+    const isBillableCancellation = status === 'cancelado' && cancellation?.chargeRequired === true;
+    if (isBillableCancellation && Number.isFinite(Number(cancellation?.billableKm))) {
+      autoBillableKm = Number(cancellation.billableKm);
+    }
+    const authorizedAt = status === 'autorizado'
+      ? (existing?.authorizedAt || transitionAt)
+      : (existing?.authorizedAt || null);
+    const cancellationDeadlineAt = authorizedAt
+      ? (existing?.cancellationDeadlineAt || cancellationDeadlineFor(authorizedAt))
+      : (existing?.cancellationDeadlineAt || null);
+
     let value = Number(existing?.value || 0);
-    if (status === 'concluido' && commercial?.status === 'ok' && Number(commercial.calculatedAmount) > 0) value = Number(commercial.calculatedAmount);
-    if (status === 'concluido' && commercial?.reviewRequired) value = 0;
+    const financiallyFinalized = status === 'concluido' || isBillableCancellation;
+    if (financiallyFinalized && commercial?.status === 'ok' && Number(commercial.calculatedAmount) > 0) value = Number(commercial.calculatedAmount);
+    if (financiallyFinalized && commercial?.reviewRequired) value = 0;
 
     const patch = {
       id: existing?.id || crypto.randomUUID(),
@@ -354,7 +368,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       sourceGroupId: groupId,
       etaMinutes: eta?.minutes ?? existing?.etaMinutes ?? null,
       distanceKm: eta?.distanceKm ?? existing?.distanceKm ?? null,
-      totalKm: parsed.totalKm ?? routeSnapshot?.totalKm ?? existing?.totalKm ?? null,
+      totalKm: isBillableCancellation ? autoBillableKm : (parsed.totalKm ?? routeSnapshot?.totalKm ?? existing?.totalKm ?? null),
       billableKm: autoBillableKm,
       routeBreakdown: routeSnapshot || existing?.routeBreakdown || null,
       routeCapturedAt: routeSnapshot?.capturedAt || existing?.routeCapturedAt || null,
@@ -363,21 +377,39 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       calculatedValue: commercial?.calculatedAmount ?? existing?.calculatedValue ?? null,
       commercialRuleStatus: knowledge?.commercialStatus || existing?.commercialRuleStatus || 'none',
       financeReviewRequired: commercial?.reviewRequired ?? existing?.financeReviewRequired ?? false,
-      financeReviewReason: commercial?.reviewRequired ? `Valor informado diverge do cálculo aprovado em ${commercial.delta ?? 'valor não calculável'}.` : (existing?.financeReviewReason || ''),
+      financeReviewReason: commercial?.reviewRequired ? (commercial.reviewReason || `Valor informado diverge do cálculo aprovado em ${commercial.delta ?? 'valor não calculável'}.`) : (existing?.financeReviewReason || ''),
       evidenceChecklist: mergedChecklist,
       scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
       lastOperationalText: String(text || '').slice(0, 4000),
-      completedAt: status === 'concluido' ? new Date().toISOString() : (existing?.completedAt || null),
-      authorizedAt: status === 'autorizado' ? (existing?.authorizedAt || new Date().toISOString()) : (existing?.authorizedAt || null),
-      createdAt: existing?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      completedAt: status === 'concluido' ? transitionAt : (existing?.completedAt || null),
+      authorizedAt,
+      cancellationDeadlineAt,
+      cancellationWindowMinutes: authorizedAt ? FREE_CANCELLATION_WINDOW_MINUTES : (existing?.cancellationWindowMinutes || null),
+      cancelledAt: status === 'cancelado' ? (cancellation?.cancelledAt || transitionAt) : (existing?.cancelledAt || null),
+      cancellationElapsedMinutes: status === 'cancelado' ? (cancellation?.elapsedMinutes ?? null) : (existing?.cancellationElapsedMinutes ?? null),
+      cancellationWithinFreeWindow: status === 'cancelado' ? cancellation?.withinFreeWindow === true : (existing?.cancellationWithinFreeWindow ?? null),
+      cancellationChargeRequired: status === 'cancelado' ? isBillableCancellation : (existing?.cancellationChargeRequired === true),
+      cancellationChargeType: status === 'cancelado' ? (cancellation?.chargeType || 'sem_cobranca') : (existing?.cancellationChargeType || null),
+      cancellationChargeBasis: status === 'cancelado' ? (cancellation?.chargeBasis || 'none') : (existing?.cancellationChargeBasis || null),
+      cancellationPartialPaymentAllowed: authorizedAt ? false : (existing?.cancellationPartialPaymentAllowed ?? null),
+      cancellationBillableKm: isBillableCancellation ? autoBillableKm : (status === 'cancelado' ? 0 : (existing?.cancellationBillableKm ?? null)),
+      cancellationReportedAmount: status === 'cancelado' ? (commercial?.reportedAmount ?? parsed.centralReportedValue ?? null) : (existing?.cancellationReportedAmount ?? null),
+      cancellationReportedAmountRejected: status === 'cancelado' ? commercial?.reportedAmountRejected === true : (existing?.cancellationReportedAmountRejected === true),
+      cancellationRejectedReportedAmount: status === 'cancelado' ? (commercial?.rejectedReportedAmount ?? null) : (existing?.cancellationRejectedReportedAmount ?? null),
+      cancellationCalculatedAmount: isBillableCancellation ? (commercial?.calculatedAmount ?? null) : (existing?.cancellationCalculatedAmount ?? null),
+      cancellationChargeStatus: status === 'cancelado'
+        ? (isBillableCancellation ? (Number(commercial?.calculatedAmount) > 0 ? 'integral_calculada' : 'aguardando_tabela') : 'sem_cobranca_no_prazo')
+        : (existing?.cancellationChargeStatus || null),
+      valueSource: isBillableCancellation && Number(commercial?.calculatedAmount) > 0 ? 'politica_cancelamento_km_total' : (existing?.valueSource || null),
+      createdAt: existing?.createdAt || transitionAt,
+      updatedAt: transitionAt,
     };
 
     if (existing) state.calls = state.calls.map((x) => x.id === existing.id ? { ...x, ...patch } : x);
     else state.calls.unshift(patch);
-    if (status === 'concluido') maybeCreateFinanceFromCompletedCall(state, patch);
+    if (status === 'concluido' || isBillableCancellation) maybeCreateFinanceFromBillableCall(state, patch);
     await saveManagement(state);
-    logEvent('management', `${groupName}: chamado ${existing ? 'atualizado' : 'criado'} → ${status}.`, { callId: patch.id, commercialStatus: patch.commercialRuleStatus, financeReviewRequired: patch.financeReviewRequired });
+    logEvent('management', `${groupName}: chamado ${existing ? 'atualizado' : 'criado'} → ${status}.`, { callId: patch.id, commercialStatus: patch.commercialRuleStatus, financeReviewRequired: patch.financeReviewRequired, cancellationChargeRequired: patch.cancellationChargeRequired, cancellationBillableKm: patch.cancellationBillableKm });
     return patch;
   } catch (error) {
     logEvent('warning', 'Não foi possível registrar o estado operacional na gestão.', { error: String(error) });
@@ -385,13 +417,15 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
   }
 }
 
-function maybeCreateFinanceFromCompletedCall(state, item) {
-  if (!item || item.status !== 'concluido' || !managementAutomationEnabled(state, 'auto-finance')) return;
+function maybeCreateFinanceFromBillableCall(state, item) {
+  const billableCancellation = item?.status === 'cancelado' && item?.cancellationChargeRequired === true;
+  if (!item || (item.status !== 'concluido' && !billableCancellation) || !managementAutomationEnabled(state, 'auto-finance')) return;
   if ((state.finance || []).some((entry) => entry.sourceCallId === item.id)) return;
   if (item.financeReviewRequired === true || !(Number(item.value) > 0)) return;
 
   const profile = ensureBillingProfile(state, item.sourceGroupId || '', item.insurer || item.client || '');
-  const settlement = settlementForCall(profile, item, item.completedAt || item.updatedAt || new Date());
+  const settlementAt = billableCancellation ? item.cancelledAt : item.completedAt;
+  const settlement = settlementForCall(profile, item, settlementAt || item.updatedAt || new Date());
   if (settlement.status !== 'ok') {
     const call = (state.calls || []).find((x) => x.id === item.id);
     if (call) {
@@ -441,7 +475,7 @@ async function applyManagementAction(body = {}) {
         savedCall.financeReviewResolvedAt = new Date().toISOString();
         savedCall.valueSource = 'manual';
       }
-      maybeCreateFinanceFromCompletedCall(state, savedCall);
+      maybeCreateFinanceFromBillableCall(state, savedCall);
     }
     return saveManagement(state);
   }
@@ -1739,11 +1773,12 @@ async function replyAndRemember(msg, groupName, incomingText, reply, meta = {}) 
 }
 
 function formatEtaReply(eta, withConfirmation = false) {
-  if (!eta?.minutes) return withConfirmation ? 'Confirmado ✅' : null;
+  const cancellationNotice = 'Cancelamento sem cobrança em até 15 min. Após esse prazo, saída e deslocamento integrais pela quilometragem total.';
+  if (!eta?.minutes) return withConfirmation ? `Confirmado ✅\n${cancellationNotice}` : null;
   const etaLine = eta.cappedAtOneHour
     ? 'Previsão de chegada: 1h.'
     : `Previsão de chegada: ${eta.minutes} min.`;
-  return withConfirmation ? `Confirmado ✅\n${etaLine}` : etaLine;
+  return withConfirmation ? `Confirmado ✅\n${etaLine}\n${cancellationNotice}` : etaLine;
 }
 
 async function handleDispatch(msg, groupName, readableText, location) {
@@ -1807,7 +1842,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
 
   const reply = eta
     ? formatEtaReply(eta, true)
-    : 'Confirmado ✅\nEstou atualizando a localização para calcular a previsão.';
+    : 'Confirmado ✅\nEstou atualizando a localização para calcular a previsão.\nCancelamento sem cobrança em até 15 min. Após esse prazo, saída e deslocamento integrais pela quilometragem total.';
   await replyAndRemember(msg, groupName, readableText, reply, {
     intent: eta ? 'dispatch' : 'dispatch-safe-mode',
     etaMinutes: eta?.minutes ?? null,
@@ -2369,12 +2404,53 @@ async function handleScheduledRuntime(msg, groupName, readableText, context) {
 
 async function handleCancellationRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
-  await recordDispatchInManagement({
+  const cancelledAt = new Date().toISOString();
+  const fullRouteKm = call?.routeBreakdown?.totalKm ?? call?.estimatedTotalKm ?? call?.totalKm ?? call?.billableKm ?? null;
+  const cancellation = evaluateCancellationPolicy({
+    authorizedAt: call?.authorizedAt || null,
+    cancelledAt,
+    billableKm: fullRouteKm,
+  });
+  let commercial = null;
+  if (cancellation.chargeRequired) {
+    const cancellationFacts = {
+      ...context.facts,
+      vehicleType: context.facts.vehicleType || call?.vehicleType || null,
+      totalKm: cancellation.billableKm,
+    };
+    commercial = enforceFullCancellationCommercial(reconcileCommercial({
+      approvedRules: context.approvedRules,
+      facts: cancellationFacts,
+      estimatedTotalKm: cancellation.billableKm,
+    }));
+  }
+  const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: call?.origin || null, destinationAddress: call?.destination || null,
-    eta: null, status: 'cancelado', facts: context.facts, existingCallId: call?.id || null,
+    eta: null, status: 'cancelado', facts: context.facts, commercial,
+    estimatedTotalKm: cancellation.chargeRequired ? cancellation.billableKm : (call?.estimatedTotalKm ?? null),
+    existingCallId: call?.id || null, cancellation,
   });
-  await replyAndRemember(msg, groupName, readableText, 'Entendido.', { intent: 'cancellation' });
+  logEvent('cancellation-policy', `${groupName}: cancelamento ${cancellation.chargeRequired ? 'após' : 'dentro do'} prazo de 15 minutos.`, {
+    callId: saved?.id || call?.id || null,
+    authorizedAt: cancellation.authorizedAt,
+    cancelledAt: cancellation.cancelledAt,
+    deadlineAt: cancellation.deadlineAt,
+    elapsedMinutes: cancellation.elapsedMinutes,
+    chargeRequired: cancellation.chargeRequired,
+    chargeBasis: cancellation.chargeBasis,
+    billableKm: cancellation.billableKm,
+    calculatedAmount: saved?.value || commercial?.calculatedAmount || null,
+    reportedAmountRejected: commercial?.reportedAmountRejected === true,
+    partialPaymentAllowed: false,
+  });
+  await replyAndRemember(msg, groupName, readableText, cancellationReply(cancellation, saved?.value || commercial?.calculatedAmount || null), {
+    intent: 'cancellation',
+    cancellationChargeRequired: cancellation.chargeRequired,
+    cancellationBillableKm: cancellation.billableKm,
+    cancellationDeadlineAt: cancellation.deadlineAt,
+    partialPaymentAllowed: false,
+  });
 }
 
 async function handleClosureRuntime(msg, groupName, readableText, context) {
@@ -3014,7 +3090,7 @@ app.post('/api/billing', async (req, res) => {
       const idx = (state.billingProfiles || []).findIndex((x) => x.groupId === incoming.groupId);
       if (idx >= 0) state.billingProfiles[idx] = incoming; else state.billingProfiles.push(incoming);
       if (incoming.status === 'approved') {
-        for (const call of (state.calls || []).filter((x) => x.sourceGroupId === incoming.groupId && x.status === 'concluido')) maybeCreateFinanceFromCompletedCall(state, call);
+        for (const call of (state.calls || []).filter((x) => x.sourceGroupId === incoming.groupId && (x.status === 'concluido' || x.cancellationChargeRequired === true))) maybeCreateFinanceFromBillableCall(state, call);
       }
       const saved = await saveManagement(state);
       return res.json({ ok: true, profile: saved.billingProfiles.find((x) => x.groupId === incoming.groupId), data: saved });
@@ -3044,10 +3120,10 @@ app.get('/api/billing/export', async (req, res) => {
     const batch = (state.billingBatches || []).find((x) => x.id === String(req.query.batchId || ''));
     if (!batch) return res.status(404).send('Lote não encontrado');
     const calls = (state.calls || []).filter((x) => (batch.callIds || []).includes(x.id));
-    const cols = ['Data','Grupo/Seguradora','Protocolo','Veículo','Placa','Origem','Destino','KM até origem','KM serviço','KM retorno base','KM total','Valor'];
+    const cols = ['Data','Tipo de cobrança','Grupo/Seguradora','Protocolo','Veículo','Placa','Origem','Destino','KM até origem','KM serviço','KM retorno base','KM total','Valor'];
     const quote = (value) => `"${String(value ?? '').replace(/"/g,'""')}"`;
     const rows = calls.map((call) => [
-      call.completedAt || call.updatedAt || '', call.insurer || call.client || '', call.protocol || '', call.vehicle || '', call.plate || '', call.origin || '', call.destination || '',
+      call.completedAt || call.cancelledAt || call.updatedAt || '', call.cancellationChargeRequired ? 'Cancelamento após 15 min — saída/deslocamento integral' : 'Serviço concluído', call.insurer || call.client || '', call.protocol || '', call.vehicle || '', call.plate || '', call.origin || '', call.destination || '',
       call.routeBreakdown?.legToOrigin?.km ?? '', call.routeBreakdown?.serviceLeg?.km ?? '', call.routeBreakdown?.returnToBase?.km ?? '', call.billableKm ?? call.totalKm ?? '', call.value || 0,
     ].map(quote).join(';'));
     const csv = '\uFEFF' + [cols.map(quote).join(';'), ...rows].join('\r\n');
