@@ -215,11 +215,12 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
+    const billingProfile = ensureBillingProfile(state, groupId, groupName);
     const routeOrigin = originAddress || parsed.origin || '';
     const routeDestination = destinationAddress || parsed.destination || '';
     let routeSnapshot = null;
     if (status === 'autorizado' && routeOrigin && routeDestination) {
-      routeSnapshot = await computeFullServiceRoute({ originAddress: routeOrigin, destinationAddress: routeDestination }).catch((error) => {
+      routeSnapshot = await computeFullServiceRoute({ originAddress: routeOrigin, destinationAddress: routeDestination, baseAddressOverride: billingProfile?.baseAddress || '' }).catch((error) => {
         logEvent('warning', 'Não foi possível congelar a rota completa do atendimento autorizado.', { error: String(error), groupId });
         return null;
       });
@@ -242,6 +243,14 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     for (const item of checklist) {
       if (!mergedChecklist.some((x) => x.label === item.label)) mergedChecklist.push(item);
     }
+
+    const autoBillableKm = billingProfile?.routeBasis === 'origin_destination'
+      ? (routeSnapshot?.serviceLeg?.km ?? existing?.routeBreakdown?.serviceLeg?.km ?? estimatedTotalKm ?? null)
+      : billingProfile?.routeBasis === 'insurer_reported'
+        ? (parsed.totalKm ?? existing?.totalKm ?? null)
+        : billingProfile?.routeBasis === 'manual'
+          ? null
+          : (routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? null);
 
     let value = Number(existing?.value || 0);
     if (status === 'concluido' && commercial?.status === 'ok' && Number(commercial.calculatedAmount) > 0) value = Number(commercial.calculatedAmount);
@@ -267,7 +276,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       etaMinutes: eta?.minutes ?? existing?.etaMinutes ?? null,
       distanceKm: eta?.distanceKm ?? existing?.distanceKm ?? null,
       totalKm: parsed.totalKm ?? routeSnapshot?.totalKm ?? existing?.totalKm ?? null,
-      billableKm: routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? null,
+      billableKm: autoBillableKm,
       routeBreakdown: routeSnapshot || existing?.routeBreakdown || null,
       routeCapturedAt: routeSnapshot?.capturedAt || existing?.routeCapturedAt || null,
       estimatedTotalKm: estimatedTotalKm ?? routeSnapshot?.totalKm ?? existing?.estimatedTotalKm ?? null,
@@ -2092,9 +2101,10 @@ async function currentOperationalContext(groupId, groupName, text) {
   const recentCall = recentManagementCall(management, groupId);
   const knowledge = await getGroupKnowledgeEntry(groupId);
   const approvedRules = knowledge?.commercialStatus === 'approved' ? knowledge.approvedCommercialRules : null;
+  const billingProfile = ensureBillingProfile(management, groupId, groupName);
   const facts = extractOperationalFacts(text);
   const intent = classifyRuntimeIntent(text, groupName, recentCall);
-  return { management, recentCall, knowledge, approvedRules, facts, intent, profile: resolveGroupProfile(groupName) };
+  return { management, recentCall, knowledge, approvedRules, billingProfile, facts, intent, profile: resolveGroupProfile(groupName) };
 }
 
 async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null) {
@@ -2139,7 +2149,14 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     logEvent('warning', 'Falha ao estimar rota da cotação.', { error: String(error), groupId: msg.from });
     return { eta: null, secondLeg: null, estimatedTotalKm: null, originAddress: context.facts.origin || null, destinationAddress: context.facts.destination || null };
   });
-  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts: context.facts, estimatedTotalKm: route.estimatedTotalKm });
+  const pricingKm = context.billingProfile?.routeBasis === 'origin_destination'
+    ? (route.secondLeg?.distanceKm ?? null)
+    : context.billingProfile?.routeBasis === 'insurer_reported'
+      ? (context.facts.totalKm ?? null)
+      : context.billingProfile?.routeBasis === 'manual'
+        ? null
+        : route.estimatedTotalKm;
+  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts: { ...context.facts, totalKm: pricingKm ?? context.facts.totalKm }, estimatedTotalKm: pricingKm });
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: route.originAddress, destinationAddress: route.destinationAddress,
