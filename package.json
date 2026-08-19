@@ -10,6 +10,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "test:cancellation": "node tools/test-cancellation-policy.mjs",
     "wa:admin": "node tools/wa-admin-v2.mjs",
     "platform": "node tools/admin-platform.mjs"
   },

@@ -28,7 +28,7 @@
     "Tarifas são versionadas por grupo, associação, tipo de veículo e vigência; descrição atual aprovada é preferencial quando disponível.",
     "Valor enviado pela central é dado de conferência, não verdade absoluta: divergência matemática gera revisão.",
     "Pedágio, NF, hora trabalhada, hora parada e outros extras são linhas financeiras separadas e exigem regra aprovada.",
-    "Cancelamento/recusa antes da execução não gera receita, salvo regra comercial explícita e aprovada em sentido contrário.",
+    "Depois da confirmação, o cancelamento é gratuito somente até 15 minutos. Após esse prazo, a saída e o deslocamento são cobrados integralmente pela quilometragem total, sem aceitar pagamento parcial.",
     "Requisitos de fotos, vídeo, checklist e WebPrestador viram pendências operacionais do chamado.",
     "Comunicados administrativos e regras do grupo devem ser aprendidos sem gerar respostas automáticas desnecessárias."
   ],
@@ -84,6 +84,7 @@
     {"case":"Power diz por enquanto não siga","expected":"keep_pending_approval"},
     {"case":"Horizonte envia protocolo definitivo após disponibilidade/prévia","expected":"associate_to_active_opportunity_and_formalize"},
     {"case":"agendamento para data futura","expected":"store_schedule_without_live_eta_commitment"},
-    {"case":"cancelado sem custos/sem saída","expected":"close_without_revenue"}
+    {"case":"cancelado em até 15 minutos da confirmação","expected":"close_without_revenue"},
+    {"case":"cancelado após 15 minutos da confirmação","expected":"charge_departure_and_displacement_using_full_total_km_and_reject_partial_payment"}
   ]
 }

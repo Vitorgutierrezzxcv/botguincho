@@ -14,6 +14,7 @@ const RUNTIME_FILES = [
   'tools/operating-hours.mjs',
   'tools/financial-engine.mjs',
   'tools/dispatch-capacity.mjs',
+  'tools/cancellation-policy.mjs',
 ];
 
 async function isGitHubActionsToken(req) {
