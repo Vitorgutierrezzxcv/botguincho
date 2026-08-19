@@ -142,10 +142,13 @@ function nextMonthlyStatement(profile, completedAt) {
   if (!cycle?.statementDay || !cycle?.paymentDay) return null;
   const done = new Date(completedAt);
   let statement = atDay(done.getUTCFullYear(), done.getUTCMonth(), cycle.statementDay);
-  if (done.getTime() > statement.getTime()) statement = atDay(done.getUTCFullYear(), done.getUTCMonth()+1, cycle.statementDay);
-  const lookback = Number(cycle.lookbackDays || 30);
+  // O fechamento vale pelo dia civil inteiro: um serviço concluído no próprio dia 30
+  // pertence ao fechamento do dia 30, mesmo que tenha ocorrido depois do meio-dia.
+  if (dateOnly(done) > dateOnly(statement)) statement = atDay(done.getUTCFullYear(), done.getUTCMonth()+1, cycle.statementDay);
   const periodEnd = statement;
-  const periodStart = addDays(periodEnd, -lookback);
+  // Para fechamento mensal ancorado em um dia fixo, o período é entre um fechamento
+  // e o próximo (ex.: 30/07 -> 30/08), preservando a regra comercial por calendário.
+  const periodStart = atDay(statement.getUTCFullYear(), statement.getUTCMonth()-1, cycle.statementDay);
   const payBase = addMonths(statement, cycle.paymentMonthOffset || 0);
   const paymentDue = atDay(payBase.getUTCFullYear(), payBase.getUTCMonth(), cycle.paymentDay);
   const invoiceDeadline = cycle.invoiceDeadlineDay ? atDay(statement.getUTCFullYear(), statement.getUTCMonth(), cycle.invoiceDeadlineDay) : null;

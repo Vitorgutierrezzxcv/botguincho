@@ -10,6 +10,8 @@ import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
 import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
+import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
+import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, closureReply } from './financial-engine.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -79,6 +81,11 @@ const DEFAULT_SETTINGS = {
   priorityCities: [],
   excludedAreas: [],
   outOfRouteReply: 'Motorista fora de rota.',
+  operatingHoursEnabled: false,
+  operatingTimezone: 'America/Sao_Paulo',
+  weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
+  outOfHoursReply: 'Motorista fora de rota.',
+  operationalBaseAddress: '',
 };
 
 function getAiClient() {
@@ -131,6 +138,8 @@ const DEFAULT_MANAGEMENT = {
   calls: [],
   clients: [],
   finance: [],
+  billingProfiles: [],
+  billingBatches: [],
   fleet: [{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: '', notes: '' }],
   automations: [
     { id: 'auto-confirm', name: 'Confirmar acionamento automaticamente', enabled: true, trigger: 'dispatch', action: 'confirm_eta' },
@@ -146,6 +155,8 @@ function normalizeManagement(data = {}) {
     calls: Array.isArray(data.calls) ? data.calls : [],
     clients: Array.isArray(data.clients) ? data.clients : [],
     finance: Array.isArray(data.finance) ? data.finance : [],
+    billingProfiles: Array.isArray(data.billingProfiles) ? data.billingProfiles.map(sanitizeBillingProfile) : [],
+    billingBatches: updateBatchTemporalStatuses(Array.isArray(data.billingBatches) ? data.billingBatches : []),
     fleet: Array.isArray(data.fleet) ? data.fleet : DEFAULT_MANAGEMENT.fleet,
     automations: Array.isArray(data.automations) ? data.automations : DEFAULT_MANAGEMENT.automations,
     updatedAt: data.updatedAt || null,
@@ -204,6 +215,15 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
+    const routeOrigin = originAddress || parsed.origin || '';
+    const routeDestination = destinationAddress || parsed.destination || '';
+    let routeSnapshot = null;
+    if (status === 'autorizado' && routeOrigin && routeDestination) {
+      routeSnapshot = await computeFullServiceRoute({ originAddress: routeOrigin, destinationAddress: routeDestination }).catch((error) => {
+        logEvent('warning', 'Não foi possível congelar a rota completa do atendimento autorizado.', { error: String(error), groupId });
+        return null;
+      });
+    }
     const vehicle = parsed.vehicle || extractLabeledField(text, 'Veículo') || extractLabeledField(text, 'Veiculo') || '';
     const service = parsed.service || extractLabeledField(text, 'Serviço') || extractLabeledField(text, 'Servico') || 'Reboque';
     const now = Date.now();
@@ -246,8 +266,11 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       sourceGroupId: groupId,
       etaMinutes: eta?.minutes ?? existing?.etaMinutes ?? null,
       distanceKm: eta?.distanceKm ?? existing?.distanceKm ?? null,
-      totalKm: parsed.totalKm ?? existing?.totalKm ?? null,
-      estimatedTotalKm: estimatedTotalKm ?? existing?.estimatedTotalKm ?? null,
+      totalKm: parsed.totalKm ?? routeSnapshot?.totalKm ?? existing?.totalKm ?? null,
+      billableKm: routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? null,
+      routeBreakdown: routeSnapshot || existing?.routeBreakdown || null,
+      routeCapturedAt: routeSnapshot?.capturedAt || existing?.routeCapturedAt || null,
+      estimatedTotalKm: estimatedTotalKm ?? routeSnapshot?.totalKm ?? existing?.estimatedTotalKm ?? null,
       reportedValue: parsed.centralReportedValue ?? existing?.reportedValue ?? null,
       calculatedValue: commercial?.calculatedAmount ?? existing?.calculatedValue ?? null,
       commercialRuleStatus: knowledge?.commercialStatus || existing?.commercialRuleStatus || 'none',
@@ -255,6 +278,8 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       financeReviewReason: commercial?.reviewRequired ? `Valor informado diverge do cálculo aprovado em ${commercial.delta ?? 'valor não calculável'}.` : (existing?.financeReviewReason || ''),
       evidenceChecklist: mergedChecklist,
       scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
+      lastOperationalText: String(text || '').slice(0, 4000),
+      completedAt: status === 'concluido' ? new Date().toISOString() : (existing?.completedAt || null),
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -274,23 +299,32 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
 function maybeCreateFinanceFromCompletedCall(state, item) {
   if (!item || item.status !== 'concluido' || !managementAutomationEnabled(state, 'auto-finance')) return;
   if ((state.finance || []).some((entry) => entry.sourceCallId === item.id)) return;
-  const amount = Number(item.value || 0);
-  if (item.financeReviewRequired === true) return;
-  if (!(amount > 0)) return;
-  state.finance.unshift({
-    id: crypto.randomUUID(),
-    description: `Chamado concluído · ${item.vehicle || 'Guincho'}`,
-    category: 'Serviço de guincho',
-    amount,
-    type: 'receita',
-    status: 'pendente',
-    dueDate: new Date().toISOString().slice(0, 10),
-    client: item.client || item.insurer || '',
-    sourceCallId: item.id,
-    source: 'automation',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
+  if (item.financeReviewRequired === true || !(Number(item.value) > 0)) return;
+
+  const profile = ensureBillingProfile(state, item.sourceGroupId || '', item.insurer || item.client || '');
+  const settlement = settlementForCall(profile, item, item.completedAt || item.updatedAt || new Date());
+  if (settlement.status !== 'ok') {
+    const call = (state.calls || []).find((x) => x.id === item.id);
+    if (call) {
+      call.paymentRuleStatus = settlement.status;
+      call.paymentDue = settlement.dueDate || null;
+    }
+    return;
+  }
+
+  const batch = upsertBillingBatch(state, item, profile, settlement);
+  const entry = financeEntryFromCall(item, settlement, batch);
+  if (!entry) return;
+  state.finance.unshift(entry);
+  const call = (state.calls || []).find((x) => x.id === item.id);
+  if (call) {
+    call.billingProfileId = profile.id;
+    call.billingBatchId = batch?.id || null;
+    call.paymentRuleStatus = 'ok';
+    call.paymentDue = settlement.dueDate || null;
+    call.billingPeriodStart = settlement.batch?.periodStart || null;
+    call.billingPeriodEnd = settlement.batch?.periodEnd || null;
+  }
 }
 
 async function applyManagementAction(body = {}) {
@@ -1468,6 +1502,45 @@ async function computeEtaWithRetry(input = {}, options = {}) {
   return null;
 }
 
+
+async function computeFullServiceRoute({ originAddress = null, destinationAddress = null, originCoordinates = null, baseAddressOverride = '' } = {}) {
+  const settings = await getSettings();
+  const baseAddress = String(baseAddressOverride || settings.operationalBaseAddress || '').trim();
+  if ((!originAddress && !originCoordinates) || !destinationAddress || !baseAddress) return null;
+
+  const reading = await getFreshTrackerReading();
+  if (!reading) return null;
+  const start = await trackerCoordinates(reading);
+  if (!start) return null;
+  const origin = originCoordinates && validCoordinates(originCoordinates.latitude, originCoordinates.longitude)
+    ? { latitude: Number(originCoordinates.latitude), longitude: Number(originCoordinates.longitude), displayName: originAddress || 'Localização compartilhada' }
+    : await geocodeAddress(originAddress);
+  const destination = await geocodeAddress(destinationAddress);
+  const base = await geocodeAddress(baseAddress);
+  if (!origin || !destination || !base) return null;
+
+  const legToOrigin = await routeBetween(start, origin);
+  const serviceLeg = await routeBetween(origin, destination);
+  const returnToBase = await routeBetween(destination, base);
+  if (!legToOrigin || !serviceLeg || !returnToBase) return null;
+  const totalKm = Math.round((Number(legToOrigin.distanceKm || 0) + Number(serviceLeg.distanceKm || 0) + Number(returnToBase.distanceKm || 0)) * 10) / 10;
+  const totalMinutes = Number(legToOrigin.minutes || 0) + Number(serviceLeg.minutes || 0) + Number(returnToBase.minutes || 0);
+  return {
+    capturedAt: new Date().toISOString(),
+    basis: 'truck_origin_destination_base',
+    start: { address: reading.address || '', latitude: start.latitude, longitude: start.longitude },
+    origin: { address: originAddress || origin.displayName || '', latitude: origin.latitude, longitude: origin.longitude },
+    destination: { address: destinationAddress, latitude: destination.latitude, longitude: destination.longitude },
+    base: { address: baseAddress, latitude: base.latitude, longitude: base.longitude },
+    legToOrigin: { km: legToOrigin.distanceKm, minutes: legToOrigin.minutes },
+    serviceLeg: { km: serviceLeg.distanceKm, minutes: serviceLeg.minutes },
+    returnToBase: { km: returnToBase.distanceKm, minutes: returnToBase.minutes },
+    totalKm,
+    totalMinutes,
+    routing: 'osrm_with_fallback',
+  };
+}
+
 function trackerContextText(location) {
   if (!location) return '';
   const parts = [`Veículo rastreado: ${location.plate || 'guincho'}`];
@@ -2036,10 +2109,13 @@ async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null)
     const [from, to] = await Promise.all([geocodeAddress(originAddress), geocodeAddress(destinationAddress)]);
     if (from && to) secondLeg = await routeBetween(from, to).catch(() => null);
   }
-  const estimatedTotalKm = eta?.distanceKm != null && secondLeg?.distanceKm != null
-    ? Math.round((Number(eta.distanceKm) + Number(secondLeg.distanceKm)) * 10) / 10
+  const fullRoute = destinationAddress
+    ? await computeFullServiceRoute({ originAddress, destinationAddress, originCoordinates }).catch(() => null)
     : null;
-  return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, estimatedTotalKm };
+  const estimatedTotalKm = fullRoute?.totalKm ?? (eta?.distanceKm != null && secondLeg?.distanceKm != null
+    ? Math.round((Number(eta.distanceKm) + Number(secondLeg.distanceKm)) * 10) / 10
+    : null);
+  return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, fullRoute, estimatedTotalKm };
 }
 
 async function handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, context) {
@@ -2136,24 +2212,33 @@ async function handleCancellationRuntime(msg, groupName, readableText, context) 
 
 async function handleClosureRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
+  const reportedTotalKm = context.facts.totalKm ?? null;
+  const automaticKm = call?.billableKm ?? call?.routeBreakdown?.totalKm ?? null;
   const facts = {
     ...context.facts,
     vehicleType: context.facts.vehicleType || call?.vehicleType || null,
-    totalKm: context.facts.totalKm ?? call?.totalKm ?? null,
+    reportedTotalKm,
+    totalKm: automaticKm ?? reportedTotalKm ?? call?.totalKm ?? null,
   };
-  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts });
+  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts, estimatedTotalKm: automaticKm });
   const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: call?.origin || facts.origin || null,
     destinationAddress: call?.destination || facts.destination || null,
     eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
     status: 'concluido', facts, commercial,
+    estimatedTotalKm: automaticKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
   });
   if (commercial.reviewRequired) {
     logEvent('finance-review', `${groupName}: fechamento exige conferência financeira.`, { callId: saved?.id, calculated: commercial.calculatedAmount, reported: commercial.reportedAmount, delta: commercial.delta });
   }
-  await replyAndRemember(msg, groupName, readableText, 'Recebido ✅', { intent: 'closure', financeReviewRequired: commercial.reviewRequired, commercialStatus: commercial.status });
+  const reply = closureReply({
+    totalKm: automaticKm ?? facts.totalKm,
+    amount: saved?.value || commercial.calculatedAmount,
+    reviewRequired: commercial.reviewRequired || !(Number(saved?.value || commercial.calculatedAmount) > 0),
+  });
+  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'closure', financeReviewRequired: commercial.reviewRequired, commercialStatus: commercial.status, billableKm: automaticKm ?? facts.totalKm ?? null });
 }
 
 async function processIncomingMessage(msg) {
@@ -2211,6 +2296,14 @@ async function processIncomingMessage(msg) {
     if (text.toLowerCase() === '!ping') {
       await msg.reply('PONG — Bot Guincho funcionando no grupo autorizado!');
       logEvent('reply', `Teste respondido em ${groupName}.`);
+      return;
+    }
+
+    const operating = evaluateOperatingHours(settings);
+    if (!operating.open) {
+      const reply = String(settings.outOfHoursReply || 'Motorista fora de rota.').trim().slice(0,300) || 'Motorista fora de rota.';
+      await replyAndRemember(msg, groupName, readableText, reply, { intent: 'out-of-hours', day: operating.dayKey, localTime: operating.localTime, reason: operating.reason });
+      logEvent('coverage', `${groupName}: mensagem recusada fora do horário de funcionamento.`, { groupId: msg.from, day: operating.dayKey, localTime: operating.localTime, reason: operating.reason });
       return;
     }
 
@@ -2649,6 +2742,7 @@ app.get('/api/status', async (_req, res) => {
     tracker: trackerSummary(reading, pairCode),
     groupsSelected: allowed.size,
     serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities },
+    operatingHours: evaluateOperatingHours(settings),
   });
 });
 
@@ -2681,11 +2775,84 @@ app.post('/api/settings', async (req, res) => {
     priorityCities: Array.isArray(req.body?.priorityCities) ? req.body.priorityCities.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 80) : undefined,
     excludedAreas: Array.isArray(req.body?.excludedAreas) ? sanitizeExcludedAreas(req.body.excludedAreas) : undefined,
     outOfRouteReply: typeof req.body?.outOfRouteReply === 'string' ? req.body.outOfRouteReply.trim().slice(0, 300) || 'Motorista fora de rota.' : undefined,
+    operatingHoursEnabled: typeof req.body?.operatingHoursEnabled === 'boolean' ? req.body.operatingHoursEnabled : undefined,
+    operatingTimezone: typeof req.body?.operatingTimezone === 'string' ? req.body.operatingTimezone.trim().slice(0,80) || 'America/Sao_Paulo' : undefined,
+    weeklySchedule: req.body?.weeklySchedule && typeof req.body.weeklySchedule === 'object' ? sanitizeWeeklySchedule(req.body.weeklySchedule) : undefined,
+    outOfHoursReply: typeof req.body?.outOfHoursReply === 'string' ? req.body.outOfHoursReply.trim().slice(0,300) || 'Motorista fora de rota.' : undefined,
+    operationalBaseAddress: typeof req.body?.operationalBaseAddress === 'string' ? req.body.operationalBaseAddress.trim().slice(0,600) : undefined,
   };
   Object.keys(patch).forEach((key) => patch[key] === undefined && delete patch[key]);
   const settings = await saveSettings(patch);
   await refreshServiceArea();
   res.json({ ok: true, settings, serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities } });
+});
+
+
+app.get('/api/billing', async (_req, res) => {
+  try {
+    const state = await getManagement();
+    const groups = await discoverGroups().catch(() => []);
+    for (const group of groups) ensureBillingProfile(state, group.id, group.name || 'Grupo do WhatsApp');
+    state.billingBatches = updateBatchTemporalStatuses(state.billingBatches || []);
+    const saved = await saveManagement(state);
+    const settings = await getSettings();
+    return res.json({ ok: true, profiles: saved.billingProfiles || [], batches: saved.billingBatches || [], finance: saved.finance || [], baseAddress: settings.operationalBaseAddress || '' });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: String(error?.message || error) });
+  }
+});
+
+app.post('/api/billing', async (req, res) => {
+  try {
+    const state = await getManagement();
+    const action = String(req.body?.action || 'save_profile');
+    if (action === 'save_profile' || action === 'approve_profile') {
+      const incoming = sanitizeBillingProfile({ ...(req.body?.profile || {}), status: action === 'approve_profile' ? 'approved' : (req.body?.profile?.status || 'needs_review') });
+      if (!incoming.groupId) throw new Error('group_required');
+      const idx = (state.billingProfiles || []).findIndex((x) => x.groupId === incoming.groupId);
+      if (idx >= 0) state.billingProfiles[idx] = incoming; else state.billingProfiles.push(incoming);
+      if (incoming.status === 'approved') {
+        for (const call of (state.calls || []).filter((x) => x.sourceGroupId === incoming.groupId && x.status === 'concluido')) maybeCreateFinanceFromCompletedCall(state, call);
+      }
+      const saved = await saveManagement(state);
+      return res.json({ ok: true, profile: saved.billingProfiles.find((x) => x.groupId === incoming.groupId), data: saved });
+    }
+    if (['statement_sent','invoice_sent','received'].includes(action)) {
+      const batch = (state.billingBatches || []).find((x) => x.id === String(req.body?.batchId || ''));
+      if (!batch) throw new Error('batch_not_found');
+      const now = new Date().toISOString();
+      if (action === 'statement_sent') { batch.statementSentAt = now; batch.status = 'statement_sent'; }
+      if (action === 'invoice_sent') { batch.invoiceSentAt = now; batch.status = 'awaiting_payment'; }
+      if (action === 'received') {
+        batch.receivedAt = now; batch.receivedAmount = Number(req.body?.amount || batch.totalAmount || 0); batch.status = 'received';
+        state.finance = (state.finance || []).map((entry) => entry.billingBatchId === batch.id ? { ...entry, status: 'pago', paidAt: now, updatedAt: now } : entry);
+      }
+      const saved = await saveManagement(state);
+      return res.json({ ok: true, batch: saved.billingBatches.find((x) => x.id === batch.id), data: saved });
+    }
+    throw new Error('action_invalid');
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: String(error?.message || error) });
+  }
+});
+
+app.get('/api/billing/export', async (req, res) => {
+  try {
+    const state = await getManagement();
+    const batch = (state.billingBatches || []).find((x) => x.id === String(req.query.batchId || ''));
+    if (!batch) return res.status(404).send('Lote não encontrado');
+    const calls = (state.calls || []).filter((x) => (batch.callIds || []).includes(x.id));
+    const cols = ['Data','Grupo/Seguradora','Protocolo','Veículo','Placa','Origem','Destino','KM até origem','KM serviço','KM retorno base','KM total','Valor'];
+    const quote = (value) => `"${String(value ?? '').replace(/"/g,'""')}"`;
+    const rows = calls.map((call) => [
+      call.completedAt || call.updatedAt || '', call.insurer || call.client || '', call.protocol || '', call.vehicle || '', call.plate || '', call.origin || '', call.destination || '',
+      call.routeBreakdown?.legToOrigin?.km ?? '', call.routeBreakdown?.serviceLeg?.km ?? '', call.routeBreakdown?.returnToBase?.km ?? '', call.billableKm ?? call.totalKm ?? '', call.value || 0,
+    ].map(quote).join(';'));
+    const csv = '\uFEFF' + [cols.map(quote).join(';'), ...rows].join('\r\n');
+    res.setHeader('content-type','text/csv; charset=utf-8');
+    res.setHeader('content-disposition', `attachment; filename="fechamento-${String(batch.groupName || 'grupo').replace(/[^a-z0-9]+/gi,'-').slice(0,40)}-${batch.periodEnd || 'periodo'}.csv"`);
+    return res.send(csv);
+  } catch (error) { return res.status(500).send(String(error?.message || error)); }
 });
 
 app.get('/api/tracker', async (_req, res) => {

@@ -11,6 +11,8 @@ const RUNTIME_FILES = [
   'tools/learning-engine.mjs',
   'tools/operational-knowledge.mjs',
   'tools/excluded-areas.mjs',
+  'tools/operating-hours.mjs',
+  'tools/financial-engine.mjs',
 ];
 
 async function isGitHubActionsToken(req) {
