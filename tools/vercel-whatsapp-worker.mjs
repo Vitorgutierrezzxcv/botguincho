@@ -2626,12 +2626,19 @@ async function startWhatsApp() {
 
   waClient = new Client({
     authStrategy: new LocalAuth({ clientId, dataPath: sessionDir }),
+    // O WhatsApp Web pode levar mais de 2 minutos para injetar a sessão em Chromium
+    // serverless. Mantemos um timeout finito, porém mais tolerante, sem apagar LocalAuth.
+    authTimeoutMs: 300000,
     puppeteer: {
       executablePath,
       headless: true,
-      args: browserArgs,
-      protocolTimeout: 120000,
+      args: [...new Set([...browserArgs, '--disable-background-timer-throttling', '--disable-renderer-backgrounding'])],
+      protocolTimeout: 300000,
     },
+  });
+
+  waClient.on('loading_screen', (percent, message) => {
+    logEvent('whatsapp-loading', `WhatsApp carregando: ${percent ?? '?'}% ${message || ''}`.trim());
   });
 
   waClient.on('qr', async (qr) => {
