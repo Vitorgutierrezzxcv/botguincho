@@ -1,0 +1,33 @@
+name: Fix contextual closure once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-fix-contextual-closure.txt'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: python3 tools/fix_contextual_closure_tmp.py
+      - run: node --check tools/operational-knowledge.mjs
+      - name: Regression
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { classifyRuntimeIntent } from './tools/operational-knowledge.mjs';
+          assert.equal(classifyRuntimeIntent('Qual valor e prévia?', 'Solução Assistência', {status:'cotacao'}), 'quote');
+          assert.equal(classifyRuntimeIntent('Finalizamos em quantos km?', 'Solução Assistência', {status:'autorizado'}), 'closure');
+          assert.equal(classifyRuntimeIntent('Km e valor final?', 'Plus Assistência', {status:'em_atendimento'}), 'closure');
+          assert.equal(classifyRuntimeIntent('Qual valor?', 'Top Brasil', {status:'cotacao'}), 'quote');
+          console.log('CONTEXTUAL_CLOSURE_OK');
+          NODE
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/operational-knowledge.mjs
+          git commit -m "Distingue cotação de fechamento pelo estado do chamado" || exit 0
+          git push
