@@ -1,0 +1,33 @@
+name: Apply capacity endpoint once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-capacity-endpoint.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Apply patch
+        run: python3 tools/apply_capacity_endpoint_tmp.py
+      - name: Validate
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check api/runtime-version.js
+          node --check api/worker/capacity.js
+          grep -q "app.get('/api/capacity'" tools/vercel-whatsapp-worker.mjs
+          grep -q "dual-dispatch-v1" tools/vercel-whatsapp-worker.mjs
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs api/runtime-version.js api/worker/capacity.js
+          git commit -m "Expõe capacidade de duas corridas para validação" || exit 0
+          git push
