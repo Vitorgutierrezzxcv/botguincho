@@ -1,0 +1,62 @@
+name: Apply dual dispatch once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-dual-dispatch.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply dual dispatch patch
+        run: python3 tools/apply_dual_dispatch_tmp.py
+      - name: Syntax checks
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/dispatch-capacity.mjs
+          node --check api/worker/reload.js
+      - name: Capacity regression
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { capacitySnapshot, activeCallsForCapacity, plannedRemainingMinutes, capSecondCallEta, MAX_CONCURRENT_CALLS } from './tools/dispatch-capacity.mjs';
+          const base = { routeBreakdown:{ legToOrigin:{minutes:20}, serviceLeg:{minutes:30} }, authorizedAt:'2026-08-19T15:00:00Z' };
+          let state={calls:[]};
+          assert.equal(MAX_CONCURRENT_CALLS,2);
+          assert.equal(capacitySnapshot(state).canAccept,true);
+          state={calls:[{id:'a',status:'autorizado',createdAt:'2026-08-19T14:00:00Z',...base}]};
+          assert.equal(capacitySnapshot(state).activeCount,1);
+          assert.equal(capacitySnapshot(state).canAccept,true);
+          state.calls.unshift({id:'b',status:'em_atendimento',createdAt:'2026-08-19T15:30:00Z',...base});
+          assert.equal(capacitySnapshot(state).activeCount,2);
+          assert.equal(capacitySnapshot(state).canAccept,false);
+          assert.deepEqual(activeCallsForCapacity(state).map(x=>x.id),['a','b']);
+          assert.equal(capacitySnapshot(state,'a').activeCount,1);
+          assert.equal(plannedRemainingMinutes({...base,authorizedAt:'2026-08-19T15:00:00Z'},new Date('2026-08-19T15:15:00Z')),35);
+          assert.deepEqual(capSecondCallEta(42),{rawMinutes:42,minutes:42,cappedAtOneHour:false});
+          assert.deepEqual(capSecondCallEta(83),{rawMinutes:83,minutes:60,cappedAtOneHour:true});
+          console.log('DUAL_DISPATCH_CAPACITY_OK');
+          NODE
+      - name: Integration markers
+        run: |
+          grep -q "estimateSecondCallArrival" tools/vercel-whatsapp-worker.mjs
+          grep -q "Indisponível no momento" tools/vercel-whatsapp-worker.mjs
+          grep -q "oldestActiveManagementCallForGroup" tools/vercel-whatsapp-worker.mjs
+          grep -q "existingCallId" tools/vercel-whatsapp-worker.mjs
+          grep -q "dispatch-capacity.mjs" api/worker/reload.js
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs tools/dispatch-capacity.mjs api/worker/reload.js
+          git commit -m "Permite até duas corridas simultâneas com ETA em fila" || exit 0
+          git push
