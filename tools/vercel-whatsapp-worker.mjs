@@ -211,7 +211,7 @@ function recentManagementCall(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
   }) || null;
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -219,8 +219,8 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     const routeOrigin = originAddress || parsed.origin || '';
     const routeDestination = destinationAddress || parsed.destination || '';
     let routeSnapshot = null;
-    if (status === 'autorizado' && routeOrigin && routeDestination) {
-      routeSnapshot = await computeFullServiceRoute({ originAddress: routeOrigin, destinationAddress: routeDestination, baseAddressOverride: billingProfile?.baseAddress || '' }).catch((error) => {
+    if (status === 'autorizado' && (routeOrigin || originCoordinates) && routeDestination) {
+      routeSnapshot = await computeFullServiceRoute({ originAddress: routeOrigin || null, originCoordinates, destinationAddress: routeDestination, baseAddressOverride: billingProfile?.baseAddress || '' }).catch((error) => {
         logEvent('warning', 'Não foi possível congelar a rota completa do atendimento autorizado.', { error: String(error), groupId });
         return null;
       });
@@ -268,6 +268,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       association: parsed.association || existing?.association || '',
       protocol: parsed.protocol || existing?.protocol || '',
       origin: originAddress || parsed.origin || existing?.origin || '',
+      originCoordinates: originCoordinates || existing?.originCoordinates || null,
       destination: destinationAddress || parsed.destination || existing?.destination || '',
       status,
       value,
@@ -1714,6 +1715,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
     groupName,
     text: readableText,
     originAddress: state.originAddress,
+    originCoordinates: state.originCoordinates,
     destinationAddress: state.destinationAddress,
     eta,
   });
@@ -2135,7 +2137,7 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
     const route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
     await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText,
-      originAddress: route.originAddress, destinationAddress: route.destinationAddress,
+      originAddress: route.originAddress, originCoordinates: route.originCoordinates, destinationAddress: route.destinationAddress,
       eta: route.eta, status: 'cotacao', facts,
       estimatedTotalKm: route.estimatedTotalKm,
       evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
@@ -2198,7 +2200,7 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
   if (call?.origin) eta = await computeEtaWithRetry({ targetAddress: call.origin }).catch(() => null);
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
-    originAddress: call?.origin || null, destinationAddress: call?.destination || null,
+    originAddress: call?.origin || null, originCoordinates: call?.originCoordinates || null, destinationAddress: call?.destination || null,
     eta, status: 'autorizado', facts: context.facts,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
   });
