@@ -1,0 +1,79 @@
+name: Validate schedule finance production once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-validate-schedule-finance.txt'
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Wait for trained worker
+        run: |
+          set -euo pipefail
+          BASE='https://botguincho.vercel.app'
+          COMPANY='cliente-teste'
+          for i in $(seq 1 50); do
+            OK=0
+            curl -fsS --max-time 20 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json || OK=1
+            curl -fsS --max-time 20 "$BASE/api/worker/health?companyId=$COMPANY" -o /tmp/health.json || OK=1
+            curl -fsS --max-time 20 "$BASE/api/worker/settings?companyId=$COMPANY" -o /tmp/settings.json || OK=1
+            curl -fsS --max-time 30 "$BASE/api/worker/billing?companyId=$COMPANY" -o /tmp/billing.json || OK=1
+            if [ "$OK" = 0 ] && python3 - <<'PY'
+          import json,sys
+          try:
+            s=json.load(open('/tmp/status.json')); h=json.load(open('/tmp/health.json')); st=json.load(open('/tmp/settings.json')); b=json.load(open('/tmp/billing.json'))
+            c=h.get('checks',{})
+            good=(s.get('whatsapp',{}).get('status')=='pronto' and not s.get('whatsapp',{}).get('qrDataUrl') and c.get('tracker',{}).get('ok') is True and c.get('routes',{}).get('ok') is True and isinstance(st.get('weeklySchedule'),dict) and 'operatingHoursEnabled' in st and b.get('ok') is True and isinstance(b.get('profiles'),list))
+            sys.exit(0 if good else 1)
+          except Exception:
+            sys.exit(1)
+          PY
+            then break; fi
+            sleep 6
+          done
+      - name: Assert production
+        run: |
+          python3 - <<'PY'
+          import json
+          s=json.load(open('/tmp/status.json')); h=json.load(open('/tmp/health.json')); st=json.load(open('/tmp/settings.json')); b=json.load(open('/tmp/billing.json'))
+          c=h.get('checks',{})
+          assert s.get('whatsapp',{}).get('status')=='pronto',s.get('whatsapp')
+          assert not s.get('whatsapp',{}).get('qrDataUrl'),'QR apareceu'
+          assert c.get('tracker',{}).get('ok') is True,c.get('tracker')
+          assert c.get('routes',{}).get('ok') is True,c.get('routes')
+          assert isinstance(st.get('weeklySchedule'),dict),st
+          assert st.get('outOfHoursReply')=='Motorista fora de rota.',st.get('outOfHoursReply')
+          assert isinstance(st.get('operatingHoursEnabled'),bool),st.get('operatingHoursEnabled')
+          assert b.get('ok') is True,b
+          assert isinstance(b.get('profiles'),list),b
+          print('PRODUCTION_SCHEDULE_FINANCE_OK')
+          PY
+      - name: Write sanitized report
+        run: |
+          python3 - <<'PY'
+          import json,datetime
+          s=json.load(open('/tmp/status.json')); h=json.load(open('/tmp/health.json')); st=json.load(open('/tmp/settings.json')); b=json.load(open('/tmp/billing.json'))
+          c=h.get('checks',{})
+          report={
+            'validatedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'companyId':'cliente-teste',
+            'whatsapp':{'status':s.get('whatsapp',{}).get('status'),'qrRequired':bool(s.get('whatsapp',{}).get('qrDataUrl'))},
+            'tracker':{'ok':c.get('tracker',{}).get('ok'),'ageSeconds':c.get('tracker',{}).get('ageSeconds'),'plate':c.get('tracker',{}).get('plate')},
+            'routes':{'ok':c.get('routes',{}).get('ok')},
+            'groupsSelected':s.get('groupsSelected'),
+            'operatingHours':{'enabled':st.get('operatingHoursEnabled'),'timezone':st.get('operatingTimezone'),'reply':st.get('outOfHoursReply'),'baseConfigured':bool(st.get('operationalBaseAddress'))},
+            'billing':{'profiles':len(b.get('profiles',[])),'batches':len(b.get('batches',[]))},
+            'status':'schedule_finance_runtime_operational'
+          }
+          open('ops/schedule-finance-production-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/schedule-finance-production-validation.json
+          git commit -m "Valida horário e financeiro em produção" || exit 0
+          git push
