@@ -1,0 +1,38 @@
+{
+  "activeCalls": [
+    {
+      "id": "10f28c88-fd12-48c6-af5e-8725473a8b42",
+      "dispatchKey": "bca56c428fbcb3f1511d704d",
+      "sourceGroupId": "120363430280224273@g.us",
+      "insurer": "Tests guincho",
+      "status": "autorizado",
+      "vehicle": "Veículo não informado",
+      "plate": "",
+      "protocol": "",
+      "origin": "*RUA GEMINI 58, BAIRRO: CIDADE VERDE, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL, REF: EM FRENTE A UMA AGENCIA DE CARRO*",
+      "destination": "*R. MATO GROSSO 365, BAIRRO: PETROLANDIA, CIDADE: CONTAGEM, ESTADO: MG, PAS: BRASIL, REF: OFICINA VANCAR // VANDERSON 31995509477*",
+      "authorizedAt": null,
+      "routeCapturedAt": null,
+      "createdAt": "2026-08-19T16:08:58.149Z",
+      "updatedAt": "2026-08-19T16:28:41.867Z",
+      "completedAt": null
+    },
+    {
+      "id": "b5e9bd9c-b1f2-4a7c-9e48-426474240c04",
+      "dispatchKey": "b58a58e584c9b9b0945c67ca",
+      "sourceGroupId": "120363430280224273@g.us",
+      "insurer": "Tests guincho",
+      "status": "autorizado",
+      "vehicle": "FORD KA",
+      "plate": "",
+      "protocol": "",
+      "origin": "*RUA GEMINI 58, BAIRRO: CIDADE VERDE, CIDADE: BETIM, ESTADO: MG, PAS: BRASIL, REF: EM FRENTE A UMA AGENCIA DE CARRO*",
+      "destination": "*R. MATO GROSSO 365, BAIRRO: PETROLANDIA, CIDADE: CONTAGEM, ESTADO: MG, PAS: BRASIL, REF: OFICINA VANCAR // VANDERSON 31995509477*",
+      "authorizedAt": null,
+      "routeCapturedAt": null,
+      "createdAt": "2026-08-18T14:14:31.058Z",
+      "updatedAt": "2026-08-19T16:07:44.381Z",
+      "completedAt": null
+    }
+  ]
+}
