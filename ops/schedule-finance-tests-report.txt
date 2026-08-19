@@ -1,0 +1,93 @@
+### python3 tools/apply_schedule_finance_tmp.py
+SCHEDULE_FINANCE_PATCHED
+exit=0
+### node --check tools/vercel-whatsapp-worker.mjs
+exit=0
+### node --check tools/operating-hours.mjs
+exit=0
+### node --check tools/financial-engine.mjs
+exit=0
+### node --check app.js
+exit=0
+### node --check public/app.js
+exit=0
+### operating regression
+{
+  open: true,
+  enabled: true,
+  reason: 'within_interval',
+  timeZone: 'America/Sao_Paulo',
+  dayKey: 'mon',
+  minuteOfDay: 660,
+  localTime: '11:00',
+  day: { enabled: true, intervals: [ [Object], [Object] ] },
+  matchedInterval: { start: '08:00', end: '12:00' }
+}
+exit=0
+### finance regression
+{
+  id: 'billing-g1',
+  groupId: 'g1',
+  groupName: 'Premium Assistência',
+  status: 'approved',
+  paymentMode: 'monthly',
+  routeBasis: 'truck_origin_destination_base',
+  baseAddress: '',
+  daysToPay: 0,
+  cycles: [
+    {
+      id: 'monthly-30-15',
+      statementDay: 30,
+      lookbackDays: 30,
+      submitWindowStartDay: null,
+      submitWindowEndDay: null,
+      invoiceDeadlineDay: null,
+      paymentDay: 15,
+      paymentMonthOffset: 1
+    }
+  ],
+  sourceNote: 'Histórico observado: planilha enviada no dia 30 e pagamento no dia 15 do mês seguinte.',
+  notes: '',
+  createdAt: '2026-08-19T16:46:59.699Z',
+  updatedAt: '2026-08-19T16:46:59.794Z',
+  approvedAt: null
+} {
+  status: 'ok',
+  paymentMode: 'monthly',
+  dueDate: '2026-10-15',
+  batch: {
+    cycleId: 'monthly-30-15',
+    periodStart: '2026-08-31',
+    periodEnd: '2026-09-30',
+    statementDue: '2026-09-30',
+    invoiceDue: null,
+    paymentDue: '2026-10-15'
+  }
+}
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ '2026-09-30'
+- '2026-08-30'
+         ^
+
+    at file:///home/runner/work/botguincho/botguincho/[eval1]:6:36
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:282:26)
+    at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:278:20)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: '2026-09-30',
+  expected: '2026-08-30',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.2
+exit=1
