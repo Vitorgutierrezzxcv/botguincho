@@ -2805,6 +2805,32 @@ async function buildOperationalHealth() {
   };
 }
 
+app.get('/api/capacity', async (_req, res) => {
+  try {
+    const state = await getManagement();
+    const capacity = capacitySnapshot(state);
+    return res.json({
+      ok: true,
+      feature: 'dual-dispatch-v1',
+      maxConcurrentCalls: MAX_CONCURRENT_CALLS,
+      activeCount: capacity.activeCount,
+      slotsAvailable: capacity.slotsAvailable,
+      canAccept: capacity.canAccept,
+      activeCalls: capacity.activeCalls.map((call) => ({
+        id: call.id,
+        groupId: call.sourceGroupId || null,
+        insurer: call.insurer || call.client || null,
+        status: call.status,
+        origin: call.origin || null,
+        destination: call.destination || null,
+        authorizedAt: call.authorizedAt || null,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 app.get('/api/health', async (_req, res) => {
   try {
     return res.json(await buildOperationalHealth());
@@ -2901,6 +2927,7 @@ app.get('/api/status', async (_req, res) => {
   const allowed = await getAllowedGroupIds();
   const reading = await getTrackerReading();
   const pairCode = await getPairCode();
+  const capacity = capacitySnapshot(await getManagement());
 
   res.json({
     clientId,
@@ -2910,6 +2937,7 @@ app.get('/api/status', async (_req, res) => {
     groupsSelected: allowed.size,
     serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities },
     operatingHours: evaluateOperatingHours(settings),
+    capacity: { feature: 'dual-dispatch-v1', maxConcurrentCalls: MAX_CONCURRENT_CALLS, activeCount: capacity.activeCount, slotsAvailable: capacity.slotsAvailable, canAccept: capacity.canAccept },
   });
 });
 
