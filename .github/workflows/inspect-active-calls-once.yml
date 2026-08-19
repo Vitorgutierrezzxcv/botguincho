@@ -1,0 +1,36 @@
+name: Inspect active calls once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-inspect-active-calls.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Capture active call metadata
+        run: |
+          set -euo pipefail
+          BASE='https://botguincho.vercel.app'
+          curl -fsS --max-time 25 "$BASE/api/worker/management?companyId=cliente-teste&cb=$RANDOM" -o /tmp/mgmt.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/mgmt.json')).get('data',{})
+          active=[]
+          for c in d.get('calls',[]):
+              if c.get('status') in {'autorizado','a_caminho','em_atendimento'}:
+                  active.append({k:c.get(k) for k in ['id','dispatchKey','sourceGroupId','insurer','status','vehicle','plate','protocol','origin','destination','authorizedAt','routeCapturedAt','createdAt','updatedAt','completedAt']})
+          open('ops/active-calls-inspection.json','w').write(json.dumps({'activeCalls':active},ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/active-calls-inspection.json
+          git commit -m "Inspeciona chamados ativos antes da deduplicação" || exit 0
+          git push
