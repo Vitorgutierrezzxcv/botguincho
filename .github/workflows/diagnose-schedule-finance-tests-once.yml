@@ -1,0 +1,56 @@
+name: Diagnose schedule finance tests once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-schedule-finance-tests.txt'
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Diagnose all
+        run: |
+          set +e
+          REPORT=ops/schedule-finance-tests-report.txt
+          : > "$REPORT"
+          run(){ echo "### $*" >> "$REPORT"; "$@" >> "$REPORT" 2>&1; echo "exit=$?" >> "$REPORT"; }
+          run python3 tools/apply_schedule_finance_tmp.py
+          run node --check tools/vercel-whatsapp-worker.mjs
+          run node --check tools/operating-hours.mjs
+          run node --check tools/financial-engine.mjs
+          run node --check app.js
+          if [ -f public/app.js ]; then run node --check public/app.js; fi
+          echo '### operating regression' >> "$REPORT"
+          node --input-type=module >> "$REPORT" 2>&1 <<'NODE'
+          import assert from 'node:assert/strict';
+          import { evaluateOperatingHours } from './tools/operating-hours.mjs';
+          const s={operatingHoursEnabled:true,operatingTimezone:'America/Sao_Paulo',weeklySchedule:{mon:{enabled:true,intervals:[{start:'08:00',end:'12:00'},{start:'13:00',end:'18:00'}]},tue:{enabled:false,intervals:[]},wed:{enabled:false,intervals:[]},thu:{enabled:false,intervals:[]},fri:{enabled:false,intervals:[]},sat:{enabled:false,intervals:[]},sun:{enabled:false,intervals:[]}}};
+          console.log(evaluateOperatingHours(s,new Date('2026-08-17T14:00:00Z')));
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-17T14:00:00Z')).open,true);
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-17T15:30:00Z')).open,false);
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-17T17:00:00Z')).open,true);
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-18T14:00:00Z')).open,false);
+          NODE
+          echo "exit=$?" >> "$REPORT"
+          echo '### finance regression' >> "$REPORT"
+          node --input-type=module >> "$REPORT" 2>&1 <<'NODE'
+          import assert from 'node:assert/strict';
+          import { suggestBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, closureReply } from './tools/financial-engine.mjs';
+          let p=suggestBillingProfile('g1','Premium Assistência');p={...p,status:'approved'};
+          const s=settlementForCall(p,{id:'c1',sourceGroupId:'g1',value:259,completedAt:'2026-08-30T18:00:00Z'},'2026-08-30T18:00:00Z');
+          console.log(p,s);
+          assert.equal(s.status,'ok');assert.equal(s.batch.statementDue,'2026-08-30');assert.equal(s.dueDate,'2026-09-15');
+          const state={calls:[{id:'c1',sourceGroupId:'g1',insurer:'Premium Assistência',value:259,billableKm:83}],billingBatches:[]};
+          const batch=upsertBillingBatch(state,state.calls[0],p,s);console.log(batch);assert.equal(batch.totalAmount,259);assert.equal(batch.totalKm,83);
+          const entry=financeEntryFromCall(state.calls[0],s,batch);assert.equal(entry.dueDate,'2026-09-15');assert.match(closureReply({totalKm:83,amount:259}),/83 km/);assert.match(closureReply({totalKm:83,amount:259}),/259/);
+          NODE
+          echo "exit=$?" >> "$REPORT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$REPORT"
+          git commit -m "Diagnostica testes de horário e financeiro" || exit 0
+          git push
