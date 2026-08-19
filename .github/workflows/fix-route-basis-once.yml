@@ -1,0 +1,27 @@
+name: Fix route basis once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-fix-route-basis.txt'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: python3 tools/fix_route_basis_tmp.py
+      - run: node --check tools/vercel-whatsapp-worker.mjs
+      - name: Verify
+        run: |
+          grep -q "baseAddressOverride: billingProfile" tools/vercel-whatsapp-worker.mjs
+          grep -q "routeBasis === 'origin_destination'" tools/vercel-whatsapp-worker.mjs
+          grep -q "billingProfile = ensureBillingProfile" tools/vercel-whatsapp-worker.mjs
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m "Respeita base e regra de KM de cada grupo" || exit 0
+          git push
