@@ -25,6 +25,10 @@ for (const [text, group, expected] of cases) {
   assert.equal(classifyRuntimeIntent(text, group), expected, `${group}: ${text}`);
 }
 
+assert.equal(classifyRuntimeIntent('O guincho chegou no local, o carro funcionou e o motorista não quer levar', 'Assistência', { status: 'em_atendimento' }), 'arrival_without_tow');
+assert.equal(classifyRuntimeIntent('Guincho chegou e o motorista n quer rebocar', 'Assistência', { status: 'autorizado' }), 'arrival_without_tow');
+assert.equal(classifyRuntimeIntent('O carro funcionou', 'Assistência', { status: 'autorizado' }), 'other');
+
 assert.equal(resolveGroupProfile('PREST. AMERICA GUINCHOS X POWER - BETIM').key, 'power');
 assert.equal(resolveGroupProfile('America Guincho Contagem Betim MG X Company Truck').key, 'company-truck');
 assert.equal(callStatusForIntent('pending_approval'), 'aguardando_aprovacao');

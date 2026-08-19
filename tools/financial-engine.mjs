@@ -241,20 +241,25 @@ export function upsertBillingBatch(state, call, profileRaw, settlement) {
 export function financeEntryFromCall(call, settlement, batch = null) {
   if (!call || settlement?.status !== 'ok' || !(Number(call.value) > 0)) return null;
   const billableCancellation = call.status === 'cancelado' && call.cancellationChargeRequired === true;
+  const displacementWithoutTow = call.serviceOutcome === 'deslocamento_sem_reboque' && call.displacementChargeRequired === true;
   return {
     id: crypto.randomUUID(),
-    description: billableCancellation
+    description: displacementWithoutTow
+      ? `Deslocamento sem reboque · chegada confirmada · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`
+      : billableCancellation
       ? `Cancelamento após 15 min · saída e deslocamento integral · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`
       : `Serviço de guincho · ${call.insurer || call.client || 'Seguradora'} · ${call.vehicle || 'Veículo'}`,
-    category: billableCancellation ? 'Cancelamento cobrável' : 'Serviço de guincho',
+    category: displacementWithoutTow ? 'Deslocamento sem reboque' : (billableCancellation ? 'Cancelamento cobrável' : 'Serviço de guincho'),
     amount: money(call.value),
     type: 'receita', status: 'pendente', dueDate: settlement.dueDate,
     client: call.client || call.insurer || '', insurer: call.insurer || call.client || '',
     sourceCallId: call.id, billingBatchId: batch?.id || null,
     cancellationChargeRequired: billableCancellation,
     cancellationChargeBasis: billableCancellation ? 'quilometragem_total' : null,
-    partialPaymentAllowed: billableCancellation ? false : null,
-    billableKm: billableCancellation ? Number(call.cancellationBillableKm ?? call.billableKm ?? call.totalKm ?? 0) : Number(call.billableKm ?? call.totalKm ?? 0),
+    displacementChargeRequired: displacementWithoutTow,
+    towPerformed: displacementWithoutTow ? false : null,
+    partialPaymentAllowed: (billableCancellation || displacementWithoutTow) ? false : null,
+    billableKm: displacementWithoutTow ? Number(call.displacementBillableKm ?? call.billableKm ?? 0) : (billableCancellation ? Number(call.cancellationBillableKm ?? call.billableKm ?? call.totalKm ?? 0) : Number(call.billableKm ?? call.totalKm ?? 0)),
     billingPeriodStart: settlement.batch?.periodStart || null,
     billingPeriodEnd: settlement.batch?.periodEnd || null,
     statementDue: settlement.batch?.statementDue || null,

@@ -91,4 +91,11 @@ assert.equal(entry.billableKm, 83);
 assert.equal(entry.partialPaymentAllowed, false);
 assert.match(entry.description, /saída e deslocamento integral/);
 
+const noTowCall = { ...billableCall, id: 'call-2', status: 'concluido', cancellationChargeRequired: false, serviceOutcome: 'deslocamento_sem_reboque', displacementChargeRequired: true, displacementBillableKm: 18, value: 135 };
+const noTowEntry = financeEntryFromCall(noTowCall, settlement, null);
+assert.equal(noTowEntry.category, 'Deslocamento sem reboque');
+assert.equal(noTowEntry.billableKm, 18);
+assert.equal(noTowEntry.towPerformed, false);
+assert.equal(noTowEntry.partialPaymentAllowed, false);
+
 console.log('CANCELLATION_POLICY_OK');

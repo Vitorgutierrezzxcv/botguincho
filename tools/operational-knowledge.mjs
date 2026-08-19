@@ -85,6 +85,11 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const profile = resolveGroupProfile(groupName);
   const base = inferLearningIntent(text);
 
+  const activeService = ['autorizado','a_caminho','em_atendimento'].includes(recentCall?.status);
+  const arrivalSignal = /\b(guincho|prestador|motorista)\s+(ja\s+)?(chegou|esta no local)|\bchegamos?\s+(ao|no)\s+local\b/.test(value);
+  const noTowSignal = /\b(carro|veiculo)\s+(voltou a\s+)?(funcionou|ligou|pegou)\b|\b(nao quer|n quer|nao deseja|recusou)\s+(levar|remover|rebocar)|\b(dispensou|dispensa)\s+(o\s+)?guincho\b|\bsem\s+reboque\b/.test(value);
+  if (activeService && arrivalSignal && noTowSignal) return 'arrival_without_tow';
+
   if (base === 'administrative_notice') return 'administrative_notice';
   if (base === 'cancellation') return 'cancellation';
   if (base === 'pending_approval') return 'pending_approval';
@@ -94,7 +99,6 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
 
   // A mesma pergunta de valor muda de significado conforme o estado do chamado.
   // Depois da autorização/execução, frases de finalização são fechamento, não nova cotação.
-  const activeService = ['autorizado','a_caminho','em_atendimento'].includes(recentCall?.status);
   const closureQuestion = /\b(finaliz|fechamento|fechamos|quanto finalizou|em quantos km|quantos km|km final|km e valor|valor final|finalizou em)\b/.test(value);
   if (activeService && (base === 'closure' || closureQuestion)) return 'closure';
 
