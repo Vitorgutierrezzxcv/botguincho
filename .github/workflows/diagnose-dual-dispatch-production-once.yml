@@ -1,0 +1,36 @@
+name: Diagnose dual dispatch production once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-dual-dispatch-live-diagnostic.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Capture production state
+        shell: bash
+        run: |
+          set +e
+          BASE='https://botguincho.vercel.app'
+          : > ops/dual-dispatch-live-diagnostic.txt
+          echo '### runtime-version' >> ops/dual-dispatch-live-diagnostic.txt
+          curl -sS --max-time 20 -w '\nhttp=%{http_code}\n' "$BASE/api/runtime-version?cb=$RANDOM" >> ops/dual-dispatch-live-diagnostic.txt 2>&1
+          echo '### status' >> ops/dual-dispatch-live-diagnostic.txt
+          curl -sS --max-time 25 -w '\nhttp=%{http_code}\n' "$BASE/api/worker/status?companyId=cliente-teste&cb=$RANDOM" >> ops/dual-dispatch-live-diagnostic.txt 2>&1
+          echo '### health' >> ops/dual-dispatch-live-diagnostic.txt
+          curl -sS --max-time 25 -w '\nhttp=%{http_code}\n' "$BASE/api/worker/health?companyId=cliente-teste&cb=$RANDOM" >> ops/dual-dispatch-live-diagnostic.txt 2>&1
+          echo '### capacity' >> ops/dual-dispatch-live-diagnostic.txt
+          curl -sS --max-time 25 -w '\nhttp=%{http_code}\n' "$BASE/api/worker/capacity?companyId=cliente-teste&cb=$RANDOM" >> ops/dual-dispatch-live-diagnostic.txt 2>&1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/dual-dispatch-live-diagnostic.txt
+          git commit -m "Registra diagnóstico do dual dispatch em produção" || exit 0
+          git push
