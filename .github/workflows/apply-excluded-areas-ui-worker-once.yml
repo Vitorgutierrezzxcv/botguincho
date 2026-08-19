@@ -1,0 +1,46 @@
+name: Apply excluded areas once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-excluded-areas-ui-worker.py'
+      - '.github/workflows/apply-excluded-areas-ui-worker-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply patch
+        run: python tools/apply-excluded-areas-ui-worker.py
+      - name: Validate excluded area rules
+        run: node tools/test-excluded-areas.mjs
+      - name: Validate operational knowledge
+        run: |
+          if [ -f tools/test-operational-knowledge.mjs ]; then node tools/test-operational-knowledge.mjs; fi
+      - name: Syntax checks
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/excluded-areas.mjs
+          node --check app.js
+          cmp -s index.html public/index.html
+          cmp -s app.js public/app.js
+          cmp -s sw.js public/sw.js
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs api/worker/reload.js index.html public/index.html app.js public/app.js sw.js public/sw.js
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Adiciona áreas fora de rota configuráveis [excluded-areas-applied]'
+          git push
