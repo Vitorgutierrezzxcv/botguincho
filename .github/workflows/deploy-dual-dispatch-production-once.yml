@@ -1,0 +1,108 @@
+name: Deploy dual dispatch production once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-dual-dispatch-production.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Wait for Vercel version
+        run: |
+          set -euo pipefail
+          BASE='https://botguincho.vercel.app'
+          for i in $(seq 1 70); do
+            if curl -fsS --max-time 15 "$BASE/api/runtime-version?cb=$RANDOM" -o /tmp/version.json; then
+              if python3 - <<'PY'
+          import json,sys
+          try:
+            d=json.load(open('/tmp/version.json'))
+            sys.exit(0 if d.get('version')=='dual-dispatch-v1' and d.get('maxConcurrentCalls')==2 else 1)
+          except Exception:
+            sys.exit(1)
+          PY
+              then exit 0; fi
+            fi
+            sleep 5
+          done
+          echo 'Vercel version did not become ready' >&2
+          exit 1
+      - name: Reload persistent worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE='https://botguincho.vercel.app'
+          REF=$(git rev-parse HEAD)
+          curl -fsS --max-time 150 -X POST "$BASE/api/worker/reload?companyId=cliente-teste" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "x-botguincho-source-ref: $REF" \
+            -H 'content-type: application/json' \
+            -d '{}' -o /tmp/reload.json
+          cat /tmp/reload.json
+      - name: Validate production runtime
+        run: |
+          set -euo pipefail
+          BASE='https://botguincho.vercel.app'
+          for i in $(seq 1 80); do
+            OK=0
+            curl -fsS --max-time 20 "$BASE/api/worker/status?companyId=cliente-teste&cb=$RANDOM" -o /tmp/status.json || OK=1
+            curl -fsS --max-time 20 "$BASE/api/worker/health?companyId=cliente-teste&cb=$RANDOM" -o /tmp/health.json || OK=1
+            curl -fsS --max-time 20 "$BASE/api/worker/capacity?companyId=cliente-teste&cb=$RANDOM" -o /tmp/capacity.json || OK=1
+            if [ "$OK" = 0 ] && python3 - <<'PY'
+          import json,sys
+          try:
+            s=json.load(open('/tmp/status.json')); h=json.load(open('/tmp/health.json')); c=json.load(open('/tmp/capacity.json'))
+            good=(s.get('whatsapp',{}).get('status')=='pronto' and not s.get('whatsapp',{}).get('qrDataUrl') and c.get('ok') is True and c.get('feature')=='dual-dispatch-v1' and c.get('maxConcurrentCalls')==2 and isinstance(c.get('activeCount'),int) and isinstance(c.get('slotsAvailable'),int) and h.get('checks',{}).get('routes',{}).get('ok') is True)
+            sys.exit(0 if good else 1)
+          except Exception:
+            sys.exit(1)
+          PY
+            then break; fi
+            sleep 5
+          done
+          python3 - <<'PY'
+          import json
+          s=json.load(open('/tmp/status.json')); h=json.load(open('/tmp/health.json')); c=json.load(open('/tmp/capacity.json'))
+          assert s.get('whatsapp',{}).get('status')=='pronto',s.get('whatsapp')
+          assert not s.get('whatsapp',{}).get('qrDataUrl'),'QR required after reload'
+          assert h.get('checks',{}).get('routes',{}).get('ok') is True,h.get('checks',{}).get('routes')
+          assert c.get('ok') is True,c
+          assert c.get('feature')=='dual-dispatch-v1',c
+          assert c.get('maxConcurrentCalls')==2,c
+          assert 0 <= int(c.get('activeCount',-1)) <= 2,c
+          assert 0 <= int(c.get('slotsAvailable',-1)) <= 2,c
+          print('DUAL_DISPATCH_PRODUCTION_OK')
+          PY
+      - name: Write validation report
+        run: |
+          python3 - <<'PY'
+          import json,datetime
+          s=json.load(open('/tmp/status.json')); h=json.load(open('/tmp/health.json')); c=json.load(open('/tmp/capacity.json')); r=json.load(open('/tmp/reload.json')); v=json.load(open('/tmp/version.json'))
+          checks=h.get('checks',{})
+          report={
+            'validatedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'companyId':'cliente-teste',
+            'version':v.get('version'),
+            'whatsapp':{'status':s.get('whatsapp',{}).get('status'),'qrRequired':bool(s.get('whatsapp',{}).get('qrDataUrl'))},
+            'tracker':{'ok':checks.get('tracker',{}).get('ok'),'ageSeconds':checks.get('tracker',{}).get('ageSeconds')},
+            'routes':{'ok':checks.get('routes',{}).get('ok')},
+            'capacity':{'maxConcurrentCalls':c.get('maxConcurrentCalls'),'activeCount':c.get('activeCount'),'slotsAvailable':c.get('slotsAvailable'),'canAccept':c.get('canAccept')},
+            'reload':{'ok':r.get('ok'),'sourceRef':r.get('sourceRef')},
+            'status':'dual_dispatch_production_operational'
+          }
+          open('ops/dual-dispatch-production-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/dual-dispatch-production-validation.json
+          git commit -m "Valida duas corridas simultâneas em produção" || exit 0
+          git push
