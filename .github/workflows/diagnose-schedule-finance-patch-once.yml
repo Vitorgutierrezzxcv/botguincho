@@ -1,0 +1,29 @@
+name: Diagnose schedule finance patch once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-schedule-finance-diagnostic.txt'
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Diagnose
+        run: |
+          set +e
+          python3 tools/apply_schedule_finance_tmp.py >/tmp/patch.log 2>&1
+          CODE=$?
+          {
+            echo "exit_code=$CODE"
+            cat /tmp/patch.log
+          } > ops/schedule-finance-patch-report.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/schedule-finance-patch-report.txt
+          git commit -m "Diagnostica integração de horário e financeiro" || exit 0
+          git push
+          exit 0
