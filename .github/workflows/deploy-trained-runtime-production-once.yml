@@ -16,7 +16,7 @@ jobs:
     env:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
-      SOURCE_REF: a67f85f655fbf69e9ee77605d10c373b44470b78
+      SOURCE_REF: de70f256a78dfcc614cf3b04569037c31aad7cdc
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +59,7 @@ jobs:
           assert d.get('workerProcessCount') == 1, f"Workers: {d.get('workerProcessCount')}"
           assert d.get('sessionPreserved') is True, 'Sessão não foi preservada'
           states=str(d.get('sourceState',''))
-          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs']:
+          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs']:
               assert f in states, f"Arquivo de runtime não sincronizado: {f}"
           print('RELOAD_OK')
           PY
@@ -126,7 +126,7 @@ jobs:
           selected=[x for x in g if x.get('selected')]
           report={
             'validatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'sourceRef': 'a67f85f655fbf69e9ee77605d10c373b44470b78',
+            'sourceRef': 'de70f256a78dfcc614cf3b04569037c31aad7cdc',
             'companyId': 'cliente-teste',
             'workerProcessCount': r.get('workerProcessCount'),
             'sessionPreserved': r.get('sessionPreserved'),
@@ -136,7 +136,7 @@ jobs:
             'groupsSelected': len(selected),
             'selectedGroupNames': [x.get('name') for x in selected],
             'knowledgeGroups': len(k),
-            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs'],
+            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs'],
             'status': 'trained_runtime_operational'
           }
           open('ops/trained-runtime-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
