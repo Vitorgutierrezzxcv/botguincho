@@ -1,0 +1,82 @@
+name: Apply operating hours and finance engine v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-schedule-finance-v2.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply integration
+        run: |
+          python3 tools/apply_schedule_finance_tmp.py
+          python3 tools/fix_financial_cycle_tmp.py
+      - name: Syntax checks
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/operating-hours.mjs
+          node --check tools/financial-engine.mjs
+          node --check app.js
+          test ! -f public/app.js || node --check public/app.js
+      - name: Operating hours regression
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { evaluateOperatingHours } from './tools/operating-hours.mjs';
+          const s={operatingHoursEnabled:true,operatingTimezone:'America/Sao_Paulo',weeklySchedule:{mon:{enabled:true,intervals:[{start:'08:00',end:'12:00'},{start:'13:00',end:'18:00'}]},tue:{enabled:false,intervals:[]},wed:{enabled:false,intervals:[]},thu:{enabled:false,intervals:[]},fri:{enabled:false,intervals:[]},sat:{enabled:false,intervals:[]},sun:{enabled:false,intervals:[]}}};
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-17T14:00:00Z')).open,true);
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-17T15:30:00Z')).open,false);
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-17T17:00:00Z')).open,true);
+          assert.equal(evaluateOperatingHours(s,new Date('2026-08-18T14:00:00Z')).open,false);
+          console.log('OPERATING_HOURS_OK');
+          NODE
+      - name: Finance regression
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { suggestBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, closureReply } from './tools/financial-engine.mjs';
+          let p=suggestBillingProfile('g1','Premium Assistência');p={...p,status:'approved'};
+          const s=settlementForCall(p,{id:'c1',sourceGroupId:'g1',value:259,completedAt:'2026-08-30T18:00:00Z'},'2026-08-30T18:00:00Z');
+          assert.equal(s.status,'ok');
+          assert.equal(s.batch.periodStart,'2026-07-30');
+          assert.equal(s.batch.statementDue,'2026-08-30');
+          assert.equal(s.dueDate,'2026-09-15');
+          const state={calls:[{id:'c1',sourceGroupId:'g1',insurer:'Premium Assistência',value:259,billableKm:83}],billingBatches:[]};
+          const batch=upsertBillingBatch(state,state.calls[0],p,s);
+          assert.equal(batch.totalAmount,259);assert.equal(batch.totalKm,83);
+          const entry=financeEntryFromCall(state.calls[0],s,batch);assert.equal(entry.dueDate,'2026-09-15');
+          assert.match(closureReply({totalKm:83,amount:259}),/83 km/);assert.match(closureReply({totalKm:83,amount:259}),/259/);
+          let segura=suggestBillingProfile('g2','Assistência Segura');segura={...segura,status:'approved'};
+          const s1=settlementForCall(segura,{id:'s1',sourceGroupId:'g2',value:100},'2026-08-03T15:00:00Z');
+          assert.equal(s1.dueDate,'2026-08-15');
+          const s2=settlementForCall(segura,{id:'s2',sourceGroupId:'g2',value:100},'2026-08-18T15:00:00Z');
+          assert.equal(s2.dueDate,'2026-08-30');
+          console.log('FINANCE_ENGINE_OK');
+          NODE
+      - name: Integration markers
+        run: |
+          grep -q "evaluateOperatingHours(settings)" tools/vercel-whatsapp-worker.mjs
+          grep -q "computeFullServiceRoute" tools/vercel-whatsapp-worker.mjs
+          grep -q "app.get('/api/billing'" tools/vercel-whatsapp-worker.mjs
+          grep -q "financial-engine.mjs" api/worker/reload.js
+          grep -q "operating-hours.mjs" api/worker/reload.js
+          grep -q "Horário de funcionamento + faturamento por grupo" app.js
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs tools/financial-engine.mjs api/worker/reload.js app.js sw.js
+          test ! -f public/app.js || git add public/app.js
+          test ! -f public/sw.js || git add public/sw.js
+          git commit -m "Integra horário e financeiro automático por grupo [schedule-finance-v2-applied]" || exit 0
+          git push
