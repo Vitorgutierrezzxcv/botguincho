@@ -16,7 +16,7 @@ jobs:
     env:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
-      SOURCE_REF: 5533954a8e6b160bf492accd2d29a717f2407283
+      SOURCE_REF: 2da4f661055c682e02d1de60d741d1eae9f1de09
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +59,7 @@ jobs:
           assert d.get('workerProcessCount') == 1, f"Workers: {d.get('workerProcessCount')}"
           assert d.get('sessionPreserved') is True, 'Sessão não foi preservada'
           states=str(d.get('sourceState',''))
-          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs']:
+          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs']:
               assert f in states, f"Arquivo de runtime não sincronizado: {f}"
           print('RELOAD_OK')
           PY
@@ -126,7 +126,7 @@ jobs:
           selected=[x for x in g if x.get('selected')]
           report={
             'validatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'sourceRef': '5533954a8e6b160bf492accd2d29a717f2407283',
+            'sourceRef': '2da4f661055c682e02d1de60d741d1eae9f1de09',
             'companyId': 'cliente-teste',
             'workerProcessCount': r.get('workerProcessCount'),
             'sessionPreserved': r.get('sessionPreserved'),
@@ -136,7 +136,7 @@ jobs:
             'groupsSelected': len(selected),
             'selectedGroupNames': [x.get('name') for x in selected],
             'knowledgeGroups': len(k),
-            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs'],
+            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs'],
             'status': 'trained_runtime_operational'
           }
           open('ops/trained-runtime-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
