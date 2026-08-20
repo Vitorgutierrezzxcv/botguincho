@@ -1,6 +1,6 @@
 {
-  "validatedAt": "2026-08-19T19:24:06.379355+00:00",
-  "sourceRef": "1ea7e30da02c0887ff0cd23a99723d00bc618a43",
+  "validatedAt": "2026-08-20T18:19:59.732881+00:00",
+  "sourceRef": "7639528c3d2bdd4057e8900e7121e2e5ed8e12ba",
   "companyId": "cliente-teste",
   "workerProcessCount": 1,
   "sessionPreserved": true,
@@ -10,7 +10,7 @@
   },
   "tracker": {
     "ok": true,
-    "ageSeconds": 7,
+    "ageSeconds": 1,
     "plate": "GSW0H17"
   },
   "routes": {
@@ -21,12 +21,16 @@
     "Tests guincho"
   ],
   "knowledgeGroups": 25,
+  "insurerSummaries": 25,
+  "driverPayrolls": 0,
+  "driverRulesValidated": true,
   "runtimeFilesSynced": [
     "vercel-whatsapp-worker.mjs",
     "learning-engine.mjs",
     "operational-knowledge.mjs",
     "cancellation-policy.mjs",
-    "worked-time-policy.mjs"
+    "worked-time-policy.mjs",
+    "driver-payroll.mjs"
   ],
   "status": "trained_runtime_operational"
 }
