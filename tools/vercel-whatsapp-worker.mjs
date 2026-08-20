@@ -8,15 +8,16 @@ import OpenAI from 'openai';
 import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
-import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
+import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, calculateApprovedCommercial, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, selectedGroupBillingView, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
 import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
-import { markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
+import { driverPayForCall, driverPayrollPeriodFor, markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
 import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
+import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, createTestRun, responseMatches, summarizeTestRun } from './test-center.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -29,6 +30,8 @@ const clientId = process.env.WHATSAPP_CLIENT_ID ?? 'cliente-teste';
 const dataDir = process.env.BOTGUINCHO_DATA_DIR ?? path.join(os.homedir(), '.botguincho-data');
 const clientDir = path.join(dataDir, clientId);
 const sessionDir = path.join(clientDir, 'whatsapp-session');
+const simulatorSessionDir = path.join(clientDir, 'whatsapp-simulator-session');
+const testCenterFile = path.join(clientDir, 'test-center.json');
 const settingsFile = path.join(clientDir, 'settings.json');
 const groupsFile = path.join(clientDir, 'groups.json');
 const registryFile = path.join(clientDir, 'group-registry.json');
@@ -51,6 +54,11 @@ let nominatimQueue = Promise.resolve();
 let lastNominatimRequestAt = 0;
 let whatsappRecoveryTimer = null;
 let lastWhatsappRecoveryAt = 0;
+let simulatorClient = null;
+let simulatorStatus = 'desconectado';
+let simulatorQrDataUrl = null;
+let simulatorLastError = null;
+let testCenterRuntime = { currentRun: null, targetGroupId: null, inbound: [] };
 
 const activity = [];
 const groupMemory = new Map();
@@ -321,7 +329,9 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     const explicitExisting = existingCallId ? state.calls.find((call) => call.id === existingCallId) || null : null;
     const recent = recentManagementCall(state, groupId);
     const recentCanAttach = transitionCanAttach && recent && !(status === 'autorizado' && isCapacityActiveCall(recent));
-    const existing = explicitExisting || exact || (recentCanAttach ? recent : null);
+    const isActiveTestGroup = testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId;
+    const candidateExisting = explicitExisting || exact || (recentCanAttach ? recent : null);
+    const existing = isActiveTestGroup && candidateExisting?.testMode !== true ? null : candidateExisting;
     const knowledge = await getGroupKnowledgeEntry(groupId);
     const checklist = Array.isArray(evidenceChecklist) ? evidenceChecklist : buildEvidenceChecklist(groupName, text);
     const previousChecklist = Array.isArray(existing?.evidenceChecklist) ? existing.evidenceChecklist : [];
@@ -442,6 +452,8 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       valueSource: displacementWithoutTow && Number(commercial?.calculatedAmount) > 0 ? 'deslocamento_ate_origem' : (isBillableCancellation && Number(commercial?.calculatedAmount) > 0 ? 'politica_cancelamento_km_total' : (existing?.valueSource || null)),
       createdAt: existing?.createdAt || transitionAt,
       updatedAt: transitionAt,
+      testMode: existing?.testMode === true || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId),
+      testRunId: existing?.testRunId || (testCenterRuntime.targetGroupId === groupId ? testCenterRuntime.currentRun?.id || null : null),
     };
 
     if (existing) state.calls = state.calls.map((x) => x.id === existing.id ? { ...x, ...patch } : x);
@@ -458,7 +470,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
 }
 
 function maybeCreateFinanceFromBillableCall(state, item) {
-  if (item?.historicalImport === true) return;
+  if (item?.historicalImport === true || item?.testMode === true) return;
   const billableCancellation = item?.status === 'cancelado' && item?.cancellationChargeRequired === true;
   if (!item || (item.status !== 'concluido' && !billableCancellation) || !managementAutomationEnabled(state, 'auto-finance')) return;
   if ((state.finance || []).some((entry) => entry.sourceCallId === item.id)) return;
@@ -2922,6 +2934,102 @@ async function startWhatsApp() {
   });
 }
 
+function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+async function readTestCenterState() { try { return await readJson(testCenterFile, { history: [] }); } catch { return { history: [] }; } }
+async function persistTestRun(run) { const state = await readTestCenterState(); await writeJson(testCenterFile, { history: [run, ...(state.history || []).filter((item) => item.id !== run.id)].slice(0, 20) }); }
+async function selectedTestGroup() {
+  const groups = await discoverGroups();
+  const wanted = TEST_GROUP_NAME.toLocaleLowerCase('pt-BR');
+  const group = groups.find((item) => item.selected && String(item.name || '').trim().toLocaleLowerCase('pt-BR') === wanted);
+  if (!group) throw new Error(`Selecione e autorize exatamente o grupo “${TEST_GROUP_NAME}”.`);
+  return group;
+}
+
+async function startTestSimulator() {
+  if (simulatorClient) return;
+  simulatorStatus = 'iniciando'; simulatorLastError = null; chromium.setGraphicsMode = false;
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath();
+  simulatorClient = new Client({
+    authStrategy: new LocalAuth({ clientId: `${clientId}-simulator`, dataPath: simulatorSessionDir }), authTimeoutMs: 300000,
+    puppeteer: { executablePath, headless: true, args: [...new Set([...chromium.args, '--disable-dev-shm-usage', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'])], protocolTimeout: 300000 },
+  });
+  simulatorClient.on('qr', async (qr) => { simulatorStatus = 'qr'; simulatorQrDataUrl = await QRCode.toDataURL(qr, { width: 420, margin: 1 }); });
+  simulatorClient.on('authenticated', () => { simulatorStatus = 'autenticado'; simulatorQrDataUrl = null; });
+  simulatorClient.on('ready', () => { simulatorStatus = 'pronto'; simulatorQrDataUrl = null; logEvent('test', 'Segundo WhatsApp conectado à Central de Testes.'); });
+  simulatorClient.on('message', async (message) => {
+    const chat = await message.getChat().catch(() => null); const groupId = chat?.id?._serialized || message?.from || '';
+    if (!message?.fromMe && testCenterRuntime.currentRun?.status === 'running' && groupId === testCenterRuntime.targetGroupId) {
+      testCenterRuntime.inbound.push({ at: Date.now(), text: String(message.body || ''), from: message.author || message.from || '' });
+      if (testCenterRuntime.inbound.length > 100) testCenterRuntime.inbound.shift();
+    }
+  });
+  simulatorClient.on('auth_failure', (reason) => { simulatorStatus = 'erro'; simulatorLastError = String(reason); });
+  simulatorClient.on('disconnected', (reason) => { simulatorStatus = 'desconectado'; simulatorLastError = String(reason); simulatorClient = null; });
+  simulatorClient.initialize().catch((error) => { simulatorStatus = 'erro'; simulatorLastError = String(error); simulatorClient = null; });
+}
+
+function engineScenario(id) {
+  const iso = '2026-08-20T12:00:00.000Z';
+  if (id === 'cancel_15_boundary' || id === 'cancel_after_15') {
+    const actual = evaluateCancellationPolicy({ authorizedAt: iso, cancelledAt: new Date(Date.parse(iso) + (id === 'cancel_15_boundary' ? 900 : 901) * 1000), billableKm: 72 });
+    const passed = id === 'cancel_15_boundary' ? !actual.chargeRequired && actual.billableKm === 0 : actual.chargeRequired && actual.billableKm === 72 && actual.partialPaymentAllowed === false;
+    return { passed, expected: id === 'cancel_15_boundary' ? 'Sem cobrança aos 15:00' : 'Cobrança integral aos 15:01', actual };
+  }
+  if (id === 'reject_half_payment') { const actual = enforceFullCancellationCommercial({ calculatedAmount: 200, reportedAmount: 100 }); return { passed: actual.reportedAmountRejected === true && actual.calculatedAmount === 200 && actual.partialPaymentAllowed === false, expected: 'R$ 200 integrais; R$ 100 rejeitados', actual }; }
+  if (['worked_15_boundary','worked_first_hour','worked_second_hour'].includes(id)) { const minutes = id === 'worked_15_boundary' ? 15 : id === 'worked_first_hour' ? 16 : 76; const expectedAmount = id === 'worked_15_boundary' ? 0 : id === 'worked_first_hour' ? 80 : 160; const actual = evaluateWorkedTime({ reportedMinutes: minutes }); return { passed: actual.amount === expectedAmount, expected: `R$ ${expectedAmount}`, actual }; }
+  if (id === 'dirt_round_trip') { const actual = calculateApprovedCommercial({ approvedRules: { services: { passeio: { basePrice: 130, includedKm: 50, pricePerKm: 3 } } }, vehicleType: 'passeio', totalKm: 100, reportedExtras: { dirtRoadKm: 20 } }); return { passed: actual.amount === 296 && actual.dirtRoadKm === 20 && actual.excessKm === 30, expected: 'R$ 296; 20 km de terra substituem o asfalto', actual }; }
+  if (['driver_50','driver_excess','driver_worked_hour'].includes(id)) { const km = id === 'driver_50' ? 50 : 80; const actual = driverPayForCall({ status: 'concluido', billableKm: km, workedTimeChargeRequired: id === 'driver_worked_hour', workedTimeAmount: id === 'driver_worked_hour' ? 80 : 0 }); const expected = id === 'driver_50' ? 40 : id === 'driver_excess' ? 61 : 141; return { passed: actual?.totalAmount === expected, expected: `R$ ${expected}`, actual }; }
+  if (id === 'driver_period') { const first = driverPayrollPeriodFor('2026-08-20T12:00:00Z'); const second = driverPayrollPeriodFor('2026-08-21T12:00:00Z'); return { passed: first.periodStart === '2026-07-20' && first.periodEnd === '2026-08-20' && second.periodStart === '2026-08-20' && second.periodEnd === '2026-09-20', expected: '20/07–20/08 e 20/08–20/09', actual: { first, second } }; }
+  return { passed: false, expected: 'Cenário conhecido', actual: null };
+}
+
+async function waitForTestResponse(after, timeoutMs, expectSilence = false) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) { const found = testCenterRuntime.inbound.find((item) => item.at >= after); if (found) return { passed: !expectSilence, response: found.text }; await delay(500); }
+  return { passed: expectSilence, response: '' };
+}
+
+async function executeTestRun(run) {
+  run.status = 'running'; run.startedAt = new Date().toISOString(); testCenterRuntime.currentRun = run; testCenterRuntime.inbound = [];
+  try {
+    if (run.results.some((item) => item.mode === 'whatsapp')) { if (!simulatorClient || simulatorStatus !== 'pronto') throw new Error('Conecte o segundo WhatsApp antes de executar conversas.'); testCenterRuntime.targetGroupId = (await selectedTestGroup()).id; }
+    for (const result of run.results) {
+      if (run.stopRequested) { result.status = 'skipped'; continue; }
+      result.status = 'running'; result.startedAt = new Date().toISOString(); run.totals = summarizeTestRun(run);
+      const scenario = TEST_SCENARIOS.find((item) => item.id === result.scenarioId);
+      try {
+        if (scenario.mode === 'engine') { const check = engineScenario(scenario.id); result.steps.push(check); result.status = check.passed ? 'passed' : 'failed'; }
+        else {
+          let passedAll = true;
+          for (const step of scenario.steps.slice(0, 20)) {
+            if (run.stopRequested) break;
+            const sentAt = Date.now(); await simulatorClient.sendMessage(testCenterRuntime.targetGroupId, step.send);
+            const observed = await waitForTestResponse(sentAt, step.expectSilence ? 12000 : TEST_RESPONSE_TIMEOUT_MS, step.expectSilence === true);
+            const passed = step.expectSilence ? observed.passed : observed.passed && responseMatches(observed.response, step.expect || []);
+            result.steps.push({ sent: step.send, response: observed.response, expected: step.expectSilence ? 'Nenhuma resposta' : step.expect, passed }); if (!passed) passedAll = false; await delay(TEST_MESSAGE_INTERVAL_MS);
+          }
+          result.status = run.stopRequested ? 'skipped' : passedAll ? 'passed' : 'failed';
+        }
+      } catch (error) { result.status = 'failed'; result.error = error instanceof Error ? error.message : String(error); }
+      result.finishedAt = new Date().toISOString(); run.totals = summarizeTestRun(run); await persistTestRun(run);
+    }
+    run.status = run.stopRequested ? 'stopped' : 'completed';
+  } catch (error) { run.status = 'failed'; run.error = error instanceof Error ? error.message : String(error); for (const result of run.results.filter((item) => item.status === 'queued')) result.status = 'skipped'; }
+  finally { run.finishedAt = new Date().toISOString(); run.totals = summarizeTestRun(run); await persistTestRun(run); testCenterRuntime.targetGroupId = null; }
+}
+
+app.get('/api/test-center', async (_req, res) => { const saved = await readTestCenterState(); res.json({ ok: true, targetGroupName: TEST_GROUP_NAME, simulator: { status: simulatorStatus, qrDataUrl: simulatorQrDataUrl, error: simulatorLastError }, scenarios: TEST_SCENARIOS, currentRun: testCenterRuntime.currentRun, history: saved.history || [] }); });
+app.post('/api/test-center', async (req, res) => {
+  try {
+    const action = String(req.body?.action || '');
+    if (action === 'connect') { await startTestSimulator(); return res.json({ ok: true, status: simulatorStatus }); }
+    if (action === 'stop') { if (testCenterRuntime.currentRun?.status === 'running') testCenterRuntime.currentRun.stopRequested = true; return res.json({ ok: true }); }
+    if (action === 'disconnect') { const current = simulatorClient; simulatorClient = null; if (current) await current.destroy().catch(() => undefined); simulatorStatus = 'desconectado'; simulatorQrDataUrl = null; return res.json({ ok: true }); }
+    if (action === 'run') { if (testCenterRuntime.currentRun?.status === 'running') return res.status(409).json({ ok: false, error: 'Já existe uma bateria de testes em execução.' }); const requested = Array.isArray(req.body?.scenarioIds) ? req.body.scenarioIds.filter((id) => TEST_SCENARIOS.some((item) => item.id === id)) : []; if (!requested.length) return res.status(400).json({ ok: false, error: 'Selecione pelo menos um cenário.' }); const run = createTestRun(requested); testCenterRuntime.currentRun = run; await persistTestRun(run); void executeTestRun(run); return res.json({ ok: true, run }); }
+    return res.status(400).json({ ok: false, error: 'Ação inválida.' });
+  } catch (error) { return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+});
+
 app.post('/api/internal/credential', (req, res) => {
   const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
   if (!token) return res.status(400).json({ ok: false, error: 'missing_token' });
@@ -3074,7 +3182,8 @@ app.get('/api/audit', async (req, res) => {
 
 app.get('/api/management', async (_req, res) => {
   try {
-    return res.json({ ok: true, data: await getManagement() });
+    const data = await getManagement();
+    return res.json({ ok: true, data: { ...data, calls: (data.calls || []).filter((item) => item.testMode !== true) } });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -3398,13 +3507,16 @@ async function gracefulShutdown(signal = 'shutdown') {
   gracefulShutdownStarted = true;
   logEvent('system', `Encerramento gracioso iniciado (${signal}).`);
   const current = waClient;
+  const currentSimulator = simulatorClient;
   waClient = null;
+  simulatorClient = null;
   if (current) {
     await Promise.race([
       current.destroy().catch(() => undefined),
       new Promise((resolve) => setTimeout(resolve, 8000)),
     ]);
   }
+  if (currentSimulator) await Promise.race([currentSimulator.destroy().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 8000))]);
   await new Promise((resolve) => setTimeout(resolve, 250));
   process.exit(0);
 }
