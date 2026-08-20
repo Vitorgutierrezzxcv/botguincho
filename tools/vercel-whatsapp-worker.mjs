@@ -11,7 +11,7 @@ import { createLearningStore, inferLearningIntent } from './learning-engine.mjs'
 import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
-import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, closureReply } from './financial-engine.mjs';
+import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, selectedGroupBillingView, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
 import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
@@ -3212,15 +3212,23 @@ app.get('/api/billing', async (_req, res) => {
     state.billingBatches = updateBatchTemporalStatuses(state.billingBatches || []);
     syncDriverPayrolls(state);
     const saved = await saveManagement(state);
+    const allowed = await getAllowedGroupIds();
+    const visible = selectedGroupBillingView({
+      profiles: saved.billingProfiles,
+      batches: saved.billingBatches,
+      finance: saved.finance,
+      calls: saved.calls,
+      historicalImports: saved.historicalImports,
+    }, allowed);
     const settings = await getSettings();
     return res.json({
       ok: true,
-      profiles: saved.billingProfiles || [],
-      batches: saved.billingBatches || [],
+      profiles: visible.profiles,
+      batches: visible.batches,
       finance: saved.finance || [],
-      insurerSummaries: buildInsurerSummaries({ profiles: saved.billingProfiles, batches: saved.billingBatches, finance: saved.finance, calls: saved.calls }),
+      insurerSummaries: buildInsurerSummaries(visible),
       driverPayrolls: saved.driverPayrolls || [],
-      historicalImports: saved.historicalImports || [],
+      historicalImports: visible.historicalImports,
       driverRules: { paymentDay: 20, baseKmLimit: 50, basePay: 40, excessKmRate: 0.70, workedTimeBelongsToDriver: true },
       baseAddress: settings.operationalBaseAddress || '',
     });
