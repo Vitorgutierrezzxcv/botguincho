@@ -11,6 +11,7 @@ function daysInMonth(year, monthIndex) { return new Date(Date.UTC(year, monthInd
 function atClosingDay(year, monthIndex) { return new Date(Date.UTC(year, monthIndex, Math.min(DRIVER_CLOSING_DAY, daysInMonth(year, monthIndex)), 12, 0, 0)); }
 
 function billableCall(call = {}) {
+  if (call.testMode === true) return false;
   return call.status === 'concluido' || (call.status === 'cancelado' && call.cancellationChargeRequired === true);
 }
 
