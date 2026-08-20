@@ -11,10 +11,11 @@ import { createLearningStore, inferLearningIntent } from './learning-engine.mjs'
 import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
-import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, closureReply } from './financial-engine.mjs';
+import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
 import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
+import { markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -143,6 +144,7 @@ const DEFAULT_MANAGEMENT = {
   finance: [],
   billingProfiles: [],
   billingBatches: [],
+  driverPayrolls: [],
   fleet: [{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: '', notes: '' }],
   automations: [
     { id: 'auto-confirm', name: 'Confirmar acionamento automaticamente', enabled: true, trigger: 'dispatch', action: 'confirm_eta' },
@@ -160,6 +162,7 @@ function normalizeManagement(data = {}) {
     finance: Array.isArray(data.finance) ? data.finance : [],
     billingProfiles: Array.isArray(data.billingProfiles) ? data.billingProfiles.map(sanitizeBillingProfile) : [],
     billingBatches: updateBatchTemporalStatuses(Array.isArray(data.billingBatches) ? data.billingBatches : []),
+    driverPayrolls: Array.isArray(data.driverPayrolls) ? data.driverPayrolls : [],
     fleet: Array.isArray(data.fleet) ? data.fleet : DEFAULT_MANAGEMENT.fleet,
     automations: Array.isArray(data.automations) ? data.automations : DEFAULT_MANAGEMENT.automations,
     updatedAt: data.updatedAt || null,
@@ -333,6 +336,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
           : (routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? null);
 
     const transitionAt = new Date().toISOString();
+    const assignedFleet = (state.fleet || []).find((item) => item.status === 'em_servico' && item.driver) || (state.fleet || []).find((item) => item.driver) || (state.fleet || [])[0] || null;
     const isBillableCancellation = status === 'cancelado' && cancellation?.chargeRequired === true;
     const displacementWithoutTow = serviceOutcome?.type === 'deslocamento_sem_reboque';
     if (isBillableCancellation && Number.isFinite(Number(cancellation?.billableKm))) {
@@ -362,6 +366,9 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       service: service || existing?.service || 'Reboque',
       client: groupName || existing?.client || 'Seguradora',
       insurer: groupName || existing?.insurer || '',
+      driverId: existing?.driverId || assignedFleet?.driverId || assignedFleet?.id || 'driver-primary',
+      driverName: existing?.driverName || assignedFleet?.driver || 'Motorista principal',
+      driverFleetId: existing?.driverFleetId || assignedFleet?.id || null,
       association: parsed.association || existing?.association || '',
       protocol: parsed.protocol || existing?.protocol || '',
       origin: originAddress || parsed.origin || existing?.origin || '',
@@ -437,6 +444,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     if (existing) state.calls = state.calls.map((x) => x.id === existing.id ? { ...x, ...patch } : x);
     else state.calls.unshift(patch);
     if (status === 'concluido' || isBillableCancellation) maybeCreateFinanceFromBillableCall(state, patch);
+    if (status === 'concluido' || isBillableCancellation) syncDriverPayrolls(state);
     await saveManagement(state);
     logEvent('management', `${groupName}: chamado ${existing ? 'atualizado' : 'criado'} → ${status}.`, { callId: patch.id, commercialStatus: patch.commercialRuleStatus, financeReviewRequired: patch.financeReviewRequired, cancellationChargeRequired: patch.cancellationChargeRequired, cancellationBillableKm: patch.cancellationBillableKm });
     return patch;
@@ -505,6 +513,7 @@ async function applyManagementAction(body = {}) {
         savedCall.valueSource = 'manual';
       }
       maybeCreateFinanceFromBillableCall(state, savedCall);
+      syncDriverPayrolls(state);
     }
     return saveManagement(state);
   }
@@ -3197,9 +3206,19 @@ app.get('/api/billing', async (_req, res) => {
     const groups = await discoverGroups().catch(() => []);
     for (const group of groups) ensureBillingProfile(state, group.id, group.name || 'Grupo do WhatsApp');
     state.billingBatches = updateBatchTemporalStatuses(state.billingBatches || []);
+    syncDriverPayrolls(state);
     const saved = await saveManagement(state);
     const settings = await getSettings();
-    return res.json({ ok: true, profiles: saved.billingProfiles || [], batches: saved.billingBatches || [], finance: saved.finance || [], baseAddress: settings.operationalBaseAddress || '' });
+    return res.json({
+      ok: true,
+      profiles: saved.billingProfiles || [],
+      batches: saved.billingBatches || [],
+      finance: saved.finance || [],
+      insurerSummaries: buildInsurerSummaries({ profiles: saved.billingProfiles, batches: saved.billingBatches, finance: saved.finance, calls: saved.calls }),
+      driverPayrolls: saved.driverPayrolls || [],
+      driverRules: { paymentDay: 20, baseKmLimit: 50, basePay: 40, excessKmRate: 0.70, workedTimeBelongsToDriver: true },
+      baseAddress: settings.operationalBaseAddress || '',
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: String(error?.message || error) });
   }
@@ -3233,6 +3252,12 @@ app.post('/api/billing', async (req, res) => {
       const saved = await saveManagement(state);
       return res.json({ ok: true, batch: saved.billingBatches.find((x) => x.id === batch.id), data: saved });
     }
+    if (action === 'driver_paid') {
+      const payroll = markDriverPayrollPaid(state, String(req.body?.payrollId || ''), req.body?.amount == null ? null : Number(req.body.amount));
+      if (!payroll) throw new Error('driver_payroll_not_found');
+      const saved = await saveManagement(state);
+      return res.json({ ok: true, payroll: saved.driverPayrolls.find((item) => item.id === payroll.id), data: saved });
+    }
     throw new Error('action_invalid');
   } catch (error) {
     return res.status(400).json({ ok: false, error: String(error?.message || error) });
@@ -3254,6 +3279,29 @@ app.get('/api/billing/export', async (req, res) => {
     const csv = '\uFEFF' + [cols.map(quote).join(';'), ...rows].join('\r\n');
     res.setHeader('content-type','text/csv; charset=utf-8');
     res.setHeader('content-disposition', `attachment; filename="fechamento-${String(batch.groupName || 'grupo').replace(/[^a-z0-9]+/gi,'-').slice(0,40)}-${batch.periodEnd || 'periodo'}.csv"`);
+    return res.send(csv);
+  } catch (error) { return res.status(500).send(String(error?.message || error)); }
+});
+
+app.get('/api/billing/driver-export', async (req, res) => {
+  try {
+    const state = await getManagement();
+    syncDriverPayrolls(state);
+    const payroll = (state.driverPayrolls || []).find((item) => item.id === String(req.query.payrollId || ''));
+    if (!payroll) return res.status(404).send('Folha do motorista não encontrada');
+    const calls = (state.calls || []).filter((call) => (payroll.callIds || []).includes(call.id));
+    const cols = ['Data','Motorista','Seguradora','Protocolo','Veículo','KM da corrida','Até 50 km','KM excedentes','Valor corrida','Hora trabalhada','Total motorista'];
+    const quote = (value) => `"${String(value ?? '').replace(/"/g,'""')}"`;
+    const rows = calls.map((call) => {
+      const km = Number(call.serviceOutcome === 'deslocamento_sem_reboque' ? (call.displacementBillableKm ?? call.billableKm ?? 0) : call.cancellationChargeRequired ? (call.cancellationBillableKm ?? call.billableKm ?? 0) : (call.billableKm ?? call.totalKm ?? 0));
+      const excess = Math.max(0, km - 50);
+      const routeAmount = Math.round((40 + excess * 0.70) * 100) / 100;
+      const worked = Number(call.workedTimeChargeRequired ? call.workedTimeAmount : 0);
+      return [call.completedAt || call.cancelledAt || call.updatedAt || '', call.driverName || payroll.driverName, call.insurer || call.client || '', call.protocol || '', call.vehicle || '', km, Math.min(km, 50), excess, routeAmount, worked, routeAmount + worked].map(quote).join(';');
+    });
+    const csv = '\uFEFF' + [cols.map(quote).join(';'), ...rows].join('\r\n');
+    res.setHeader('content-type','text/csv; charset=utf-8');
+    res.setHeader('content-disposition', `attachment; filename="motorista-${payroll.periodEnd || 'periodo'}.csv"`);
     return res.send(csv);
   } catch (error) { return res.status(500).send(String(error?.message || error)); }
 });
