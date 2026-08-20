@@ -1,6 +1,6 @@
 {
-  "validatedAt": "2026-08-20T19:19:30.649185+00:00",
-  "sourceRef": "1a681ae7278858aa93f318363bd7c05dbe0429c0",
+  "validatedAt": "2026-08-20T22:39:27.660864+00:00",
+  "sourceRef": "5280e2628ef9033d43cb2dd83174b916069a2c32",
   "companyId": "cliente-teste",
   "workerProcessCount": 1,
   "sessionPreserved": true,
@@ -10,7 +10,7 @@
   },
   "tracker": {
     "ok": true,
-    "ageSeconds": 3,
+    "ageSeconds": 8,
     "plate": "GSW0H17"
   },
   "routes": {
@@ -21,7 +21,7 @@
     "Tests guincho"
   ],
   "knowledgeGroups": 25,
-  "insurerSummaries": 25,
+  "insurerSummaries": 1,
   "driverPayrolls": 0,
   "driverRulesValidated": true,
   "historicalImports": 0,
