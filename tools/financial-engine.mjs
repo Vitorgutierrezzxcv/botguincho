@@ -253,6 +253,7 @@ export function financeEntryFromCall(call, settlement, batch = null) {
     amount: money(call.value),
     type: 'receita', status: 'pendente', dueDate: settlement.dueDate,
     client: call.client || call.insurer || '', insurer: call.insurer || call.client || '',
+    groupId: call.sourceGroupId || '',
     sourceCallId: call.id, billingBatchId: batch?.id || null,
     cancellationChargeRequired: billableCancellation,
     cancellationChargeBasis: billableCancellation ? 'quilometragem_total' : null,
@@ -301,6 +302,41 @@ export function updateBatchTemporalStatuses(batches = [], now = new Date()) {
     else if (item.statementDue && today >= item.statementDue) item.status = 'statement_due';
     return item;
   });
+}
+
+export function buildInsurerSummaries({ profiles = [], batches = [], finance = [], calls = [] } = {}) {
+  const byGroup = new Map();
+  const ensure = (groupId = '', groupName = 'Seguradora') => {
+    const normalizedName = norm(groupName);
+    const existingByName = !groupId ? [...byGroup.entries()].find(([, item]) => norm(item.groupName) === normalizedName) : null;
+    const key = groupId || existingByName?.[0] || `name:${normalizedName}`;
+    if (!byGroup.has(key)) byGroup.set(key, { groupId, groupName, callCount: 0, totalBilled: 0, receivable: 0, overdue: 0, received: 0, openClosings: 0, nextStatementDue: null, nextInvoiceDue: null, nextPaymentDue: null, profileStatus: 'needs_review', paymentMode: 'manual' });
+    return byGroup.get(key);
+  };
+  for (const profile of profiles) Object.assign(ensure(profile.groupId, profile.groupName), { profileStatus: profile.status, paymentMode: profile.paymentMode });
+  for (const call of calls) {
+    if (!(call.status === 'concluido' || call.cancellationChargeRequired === true)) continue;
+    const item = ensure(call.sourceGroupId, call.insurer || call.client || 'Seguradora');
+    item.callCount += 1; item.totalBilled = money(item.totalBilled + Number(call.value || 0));
+  }
+  const minDate = (current, incoming) => incoming && (!current || incoming < current) ? incoming : current;
+  for (const batch of batches) {
+    const item = ensure(batch.groupId, batch.groupName);
+    if (batch.status !== 'received') item.openClosings += 1;
+    if (!batch.statementSentAt) item.nextStatementDue = minDate(item.nextStatementDue, batch.statementDue);
+    if (batch.statementSentAt && !batch.invoiceSentAt) item.nextInvoiceDue = minDate(item.nextInvoiceDue, batch.invoiceDue);
+    if (batch.status !== 'received') item.nextPaymentDue = minDate(item.nextPaymentDue, batch.paymentDue);
+  }
+  for (const entry of finance) {
+    if (entry.type !== 'receita') continue;
+    const item = ensure(entry.groupId || '', entry.insurer || entry.client || 'Seguradora');
+    if (entry.status === 'pago') item.received = money(item.received + Number(entry.amount || 0));
+    else {
+      item.receivable = money(item.receivable + Number(entry.amount || 0));
+      if (entry.status === 'atrasado' || (entry.dueDate && entry.dueDate < dateOnly(new Date()))) item.overdue = money(item.overdue + Number(entry.amount || 0));
+    }
+  }
+  return [...byGroup.values()].map((item) => ({ ...item, totalBilled: money(item.totalBilled), receivable: money(item.receivable), overdue: money(item.overdue), received: money(item.received) })).sort((a, b) => b.receivable - a.receivable || a.groupName.localeCompare(b.groupName));
 }
 
 export function closureReply({ totalKm = null, amount = null, reviewRequired = false } = {}) {
