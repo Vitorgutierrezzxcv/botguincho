@@ -16,7 +16,7 @@ jobs:
     env:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
-      SOURCE_REF: 1ea7e30da02c0887ff0cd23a99723d00bc618a43
+      SOURCE_REF: 7639528c3d2bdd4057e8900e7121e2e5ed8e12ba
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +59,7 @@ jobs:
           assert d.get('workerProcessCount') == 1, f"Workers: {d.get('workerProcessCount')}"
           assert d.get('sessionPreserved') is True, 'Sessão não foi preservada'
           states=str(d.get('sourceState',''))
-          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs']:
+          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs','driver-payroll.mjs']:
               assert f in states, f"Arquivo de runtime não sincronizado: {f}"
           print('RELOAD_OK')
           PY
@@ -102,6 +102,7 @@ jobs:
           curl -fsS "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups.json
           curl -fsS "$BASE/api/worker/group-knowledge?companyId=$COMPANY" -o /tmp/knowledge.json
           curl -fsS "$BASE/api/worker/management?companyId=$COMPANY" -o /tmp/management.json
+          curl -fsS "$BASE/api/worker/billing?companyId=$COMPANY" -o /tmp/billing.json
           python3 - <<'PY'
           import json
           groups=json.load(open('/tmp/groups.json')).get('groups',[])
@@ -111,6 +112,14 @@ jobs:
           assert knowledge.get('ok') is True, knowledge
           management=json.load(open('/tmp/management.json'))
           assert management.get('ok') is True, management
+          billing=json.load(open('/tmp/billing.json'))
+          assert billing.get('ok') is True, billing
+          rules=billing.get('driverRules',{})
+          assert rules.get('paymentDay') == 20, rules
+          assert rules.get('baseKmLimit') == 50 and rules.get('basePay') == 40, rules
+          assert abs(float(rules.get('excessKmRate') or 0)-0.70) < 0.001, rules
+          assert rules.get('workedTimeBelongsToDriver') is True, rules
+          assert isinstance(billing.get('insurerSummaries'),list), billing
           print('LEARNING_ENDPOINTS_OK', [g.get('name') for g in selected])
           PY
 
@@ -123,10 +132,11 @@ jobs:
           r=json.load(open('/tmp/reload.json'))
           g=json.load(open('/tmp/groups.json')).get('groups',[])
           k=json.load(open('/tmp/knowledge.json')).get('groups',[])
+          b=json.load(open('/tmp/billing.json'))
           selected=[x for x in g if x.get('selected')]
           report={
             'validatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'sourceRef': '1ea7e30da02c0887ff0cd23a99723d00bc618a43',
+            'sourceRef': '7639528c3d2bdd4057e8900e7121e2e5ed8e12ba',
             'companyId': 'cliente-teste',
             'workerProcessCount': r.get('workerProcessCount'),
             'sessionPreserved': r.get('sessionPreserved'),
@@ -136,7 +146,10 @@ jobs:
             'groupsSelected': len(selected),
             'selectedGroupNames': [x.get('name') for x in selected],
             'knowledgeGroups': len(k),
-            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs'],
+            'insurerSummaries': len(b.get('insurerSummaries',[])),
+            'driverPayrolls': len(b.get('driverPayrolls',[])),
+            'driverRulesValidated': True,
+            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs','driver-payroll.mjs'],
             'status': 'trained_runtime_operational'
           }
           open('ops/trained-runtime-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
