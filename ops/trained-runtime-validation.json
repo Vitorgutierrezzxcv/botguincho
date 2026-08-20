@@ -1,6 +1,6 @@
 {
-  "validatedAt": "2026-08-20T18:19:59.732881+00:00",
-  "sourceRef": "7639528c3d2bdd4057e8900e7121e2e5ed8e12ba",
+  "validatedAt": "2026-08-20T19:19:30.649185+00:00",
+  "sourceRef": "1a681ae7278858aa93f318363bd7c05dbe0429c0",
   "companyId": "cliente-teste",
   "workerProcessCount": 1,
   "sessionPreserved": true,
@@ -10,7 +10,7 @@
   },
   "tracker": {
     "ok": true,
-    "ageSeconds": 1,
+    "ageSeconds": 3,
     "plate": "GSW0H17"
   },
   "routes": {
@@ -24,13 +24,15 @@
   "insurerSummaries": 25,
   "driverPayrolls": 0,
   "driverRulesValidated": true,
+  "historicalImports": 0,
   "runtimeFilesSynced": [
     "vercel-whatsapp-worker.mjs",
     "learning-engine.mjs",
     "operational-knowledge.mjs",
     "cancellation-policy.mjs",
     "worked-time-policy.mjs",
-    "driver-payroll.mjs"
+    "driver-payroll.mjs",
+    "historical-spreadsheet-import.mjs"
   ],
   "status": "trained_runtime_operational"
 }
