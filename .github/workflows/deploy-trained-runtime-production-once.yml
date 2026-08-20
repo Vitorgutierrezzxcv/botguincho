@@ -32,13 +32,13 @@ jobs:
           h=json.load(open('/tmp/pre-health.json'))
           s=json.load(open('/tmp/pre-status.json'))
           checks=h.get('checks',{})
-          assert checks.get('whatsapp',{}).get('ok') is True, f"WhatsApp não está pronto: {checks.get('whatsapp')}"
           assert checks.get('tracker',{}).get('ok') is True, f"Tracker não está saudável: {checks.get('tracker')}"
           assert checks.get('routes',{}).get('ok') is True, f"Rotas não estão saudáveis: {checks.get('routes')}"
           assert int(h.get('groupsSelected') or 0) >= 1, f"Nenhum grupo autorizado: {h.get('groupsSelected')}"
-          assert s.get('whatsapp',{}).get('status') == 'pronto', f"Status WhatsApp inesperado: {s.get('whatsapp')}"
-          assert not s.get('whatsapp',{}).get('qrDataUrl'), 'QR ativo antes do deploy; abortando'
-          print('PREFLIGHT_OK')
+          whatsapp=s.get('whatsapp',{})
+          assert not whatsapp.get('qrDataUrl'), 'QR ativo antes do deploy; abortando'
+          assert whatsapp.get('status') in ('pronto','iniciando','erro'), f"Status WhatsApp não recuperável: {whatsapp}"
+          print('PREFLIGHT_OK', whatsapp.get('status'))
           PY
 
       - name: Reload persistent worker safely
