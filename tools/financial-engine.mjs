@@ -339,6 +339,26 @@ export function buildInsurerSummaries({ profiles = [], batches = [], finance = [
   return [...byGroup.values()].map((item) => ({ ...item, totalBilled: money(item.totalBilled), receivable: money(item.receivable), overdue: money(item.overdue), received: money(item.received) })).sort((a, b) => b.receivable - a.receivable || a.groupName.localeCompare(b.groupName));
 }
 
+
+export function selectedGroupBillingView({ profiles = [], batches = [], finance = [], calls = [], historicalImports = [] } = {}, selectedGroupIds = []) {
+  const selected = new Set([...selectedGroupIds].map((value) => String(value || '')).filter(Boolean));
+  const selectedProfiles = profiles.filter((item) => selected.has(String(item?.groupId || '')));
+  const selectedNames = new Set(selectedProfiles.map((item) => norm(item?.groupName || '')).filter(Boolean));
+  const belongsToSelectedGroup = (item = {}) => {
+    const groupId = String(item.groupId || item.sourceGroupId || '');
+    if (groupId) return selected.has(groupId);
+    const groupName = norm(item.groupName || item.insurer || item.client || '');
+    return Boolean(groupName && selectedNames.has(groupName));
+  };
+  return {
+    profiles: selectedProfiles,
+    batches: batches.filter(belongsToSelectedGroup),
+    finance: finance.filter((item) => item.type !== 'receita' || belongsToSelectedGroup(item)),
+    calls: calls.filter(belongsToSelectedGroup),
+    historicalImports: historicalImports.filter(belongsToSelectedGroup),
+  };
+}
+
 export function closureReply({ totalKm = null, amount = null, reviewRequired = false } = {}) {
   const lines = [];
   if (Number.isFinite(Number(totalKm))) lines.push(`Finalizado em ${Number(totalKm).toLocaleString('pt-BR',{maximumFractionDigits:1})} km.`);
