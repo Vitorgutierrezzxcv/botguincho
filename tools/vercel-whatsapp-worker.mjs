@@ -16,6 +16,7 @@ import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, cap
 import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
 import { markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
+import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -145,6 +146,7 @@ const DEFAULT_MANAGEMENT = {
   billingProfiles: [],
   billingBatches: [],
   driverPayrolls: [],
+  historicalImports: [],
   fleet: [{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: '', notes: '' }],
   automations: [
     { id: 'auto-confirm', name: 'Confirmar acionamento automaticamente', enabled: true, trigger: 'dispatch', action: 'confirm_eta' },
@@ -163,6 +165,7 @@ function normalizeManagement(data = {}) {
     billingProfiles: Array.isArray(data.billingProfiles) ? data.billingProfiles.map(sanitizeBillingProfile) : [],
     billingBatches: updateBatchTemporalStatuses(Array.isArray(data.billingBatches) ? data.billingBatches : []),
     driverPayrolls: Array.isArray(data.driverPayrolls) ? data.driverPayrolls : [],
+    historicalImports: Array.isArray(data.historicalImports) ? data.historicalImports : [],
     fleet: Array.isArray(data.fleet) ? data.fleet : DEFAULT_MANAGEMENT.fleet,
     automations: Array.isArray(data.automations) ? data.automations : DEFAULT_MANAGEMENT.automations,
     updatedAt: data.updatedAt || null,
@@ -455,6 +458,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
 }
 
 function maybeCreateFinanceFromBillableCall(state, item) {
+  if (item?.historicalImport === true) return;
   const billableCancellation = item?.status === 'cancelado' && item?.cancellationChargeRequired === true;
   if (!item || (item.status !== 'concluido' && !billableCancellation) || !managementAutomationEnabled(state, 'auto-finance')) return;
   if ((state.finance || []).some((entry) => entry.sourceCallId === item.id)) return;
@@ -3216,6 +3220,7 @@ app.get('/api/billing', async (_req, res) => {
       finance: saved.finance || [],
       insurerSummaries: buildInsurerSummaries({ profiles: saved.billingProfiles, batches: saved.billingBatches, finance: saved.finance, calls: saved.calls }),
       driverPayrolls: saved.driverPayrolls || [],
+      historicalImports: saved.historicalImports || [],
       driverRules: { paymentDay: 20, baseKmLimit: 50, basePay: 40, excessKmRate: 0.70, workedTimeBelongsToDriver: true },
       baseAddress: settings.operationalBaseAddress || '',
     });
@@ -3258,6 +3263,12 @@ app.post('/api/billing', async (req, res) => {
       const saved = await saveManagement(state);
       return res.json({ ok: true, payroll: saved.driverPayrolls.find((item) => item.id === payroll.id), data: saved });
     }
+    if (action === 'import_history') {
+      const result = importHistoricalRecords(state, req.body || {});
+      syncDriverPayrolls(state);
+      const saved = await saveManagement(state);
+      return res.json({ ok: true, result, data: saved });
+    }
     throw new Error('action_invalid');
   } catch (error) {
     return res.status(400).json({ ok: false, error: String(error?.message || error) });
@@ -3270,7 +3281,7 @@ app.get('/api/billing/export', async (req, res) => {
     const batch = (state.billingBatches || []).find((x) => x.id === String(req.query.batchId || ''));
     if (!batch) return res.status(404).send('Lote não encontrado');
     const calls = (state.calls || []).filter((x) => (batch.callIds || []).includes(x.id));
-    const cols = ['Data','Tipo de cobrança','Grupo/Seguradora','Protocolo','Veículo','Placa','Origem','Destino','KM até origem','KM serviço','KM retorno base','KM total','Valor'];
+    const cols = ['Data','Tipo de cobrança','Transportadora/Grupo','Protocolo','Veículo','Placa','Origem','Destino','KM até origem','KM serviço','KM retorno base','KM total','Valor'];
     const quote = (value) => `"${String(value ?? '').replace(/"/g,'""')}"`;
     const rows = calls.map((call) => [
       call.completedAt || call.cancelledAt || call.updatedAt || '', call.cancellationChargeRequired ? 'Cancelamento após 15 min — saída/deslocamento integral' : 'Serviço concluído', call.insurer || call.client || '', call.protocol || '', call.vehicle || '', call.plate || '', call.origin || '', call.destination || '',
