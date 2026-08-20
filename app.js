@@ -50,7 +50,7 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPro
 if($('refreshHelp'))$('refreshHelp').onclick=loadHelp;
 if($('dismissOnboarding'))$('dismissOnboarding').onclick=()=>{localStorage.setItem('bg-onboarding-done','1');$('onboardingCard')?.remove()};
 if(localStorage.getItem('bg-onboarding-done')==='1')$('onboardingCard')?.remove();
-if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(console.error));
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(console.error));
 function ensureTestCenterUI(){
   if($('tests'))return;
   const style=document.createElement('style');style.textContent='.test-scenarios{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.test-scenario{display:flex;gap:11px;align-items:center;background:#11181e;border:1px solid #28353f;border-radius:13px;padding:13px}.test-scenario input{width:19px;height:19px;accent-color:var(--brand)}.test-scenario span{display:grid;gap:3px}.test-scenario small{color:var(--muted)}.test-step{padding:9px 0;border-top:1px solid #28343d}.test-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}@media(max-width:700px){.test-scenarios{grid-template-columns:1fr}}';document.head.appendChild(style);
