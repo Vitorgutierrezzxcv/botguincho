@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 export const TEST_GROUP_NAME = 'Tests guincho';
 export const TEST_MESSAGE_INTERVAL_MS = 3500;
 export const TEST_RESPONSE_TIMEOUT_MS = 45000;
-export const TEST_SUITE_VERSION = 'operational-v5';
+export const TEST_SUITE_VERSION = 'operational-v5.1-eta';
 
 export const TEST_SCENARIOS = [
   {
@@ -14,7 +14,8 @@ export const TEST_SCENARIOS = [
     id: 'complete_dispatch', category: 'Atendimento', name: 'Acionamento completo com origem e destino', mode: 'whatsapp',
     steps: [
       { send: 'Tem disponibilidade para um veículo de passeio agora?', expect: ['disponível', 'sim', 'atender'], forbid: ['indisponível', 'fora de rota'] },
-      { send: 'Origem: Rua das Rosas, 310, São Salvador, Betim - MG. Destino: Avenida Amazonas, 1200, Centro, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'aguardando autorização', 'previs'], forbid: ['confirmado', 'pode seguir'] },
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.\n\nDisponível?', expect: ['disponível', 'previsão'], expectAll: true, forbid: ['confirmado', 'pode seguir'] },
+      { send: 'Qual a prévia?', expect: ['previsão de chegada'], expectAll: true, forbid: ['cotação recebida', 'confirmado'] },
       { send: 'Confirmado, pode seguir com o atendimento.', expect: ['confirmado', 'cancelamento', '15'] },
     ],
   },
@@ -125,10 +126,12 @@ export function isTestCall(call = {}) {
   return call?.testMode === true || isTestGroupName(call?.insurer || call?.client || call?.groupName || '');
 }
 
-export function responseMatches(response = '', expected = [], forbidden = []) {
+export function responseMatches(response = '', expected = [], forbidden = [], requireAll = false) {
   const text = normalizeTestText(response);
   if (forbidden.some((term) => text.includes(normalizeTestText(term)))) return false;
-  return expected.some((term) => text.includes(normalizeTestText(term)));
+  return requireAll
+    ? expected.every((term) => text.includes(normalizeTestText(term)))
+    : expected.some((term) => text.includes(normalizeTestText(term)));
 }
 
 export function createTestRun(scenarioIds = [], now = new Date()) {

@@ -871,7 +871,7 @@ function greetingReply(text = '') {
 
 function asksEta(text = '') {
   const value = normalizeForIntent(text);
-  return /\b(quanto tempo|qual (?:o )?tempo|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)\b/.test(value);
+  return /\b(quanto tempo|qual (?:o )?tempo|qual (?:a )?previa|previa|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)\b/.test(value);
 }
 
 function asksDistance(text = '') {
@@ -2026,6 +2026,8 @@ async function resolveRouteQuestionTarget(groupId, readableText, quotedText = ''
   const quotedAddress = inlineAddress ? null : extractInlineRouteTarget(quotedText);
   const explicitAddress = inlineAddress || quotedAddress || null;
   let state = await getDispatchState(groupId);
+  const management = await getManagement().catch(() => ({ calls: [] }));
+  const recentCall = recentManagementCall(management, groupId);
   const shared = explicitAddress ? null : await getRecentSharedLocation(groupId, state);
   const originAt = new Date(state?.originUpdatedAt || state?.createdAt || 0).getTime();
   const stateHasOrigin = Boolean(state?.originAddress || state?.originCoordinates);
@@ -2045,19 +2047,24 @@ async function resolveRouteQuestionTarget(groupId, readableText, quotedText = ''
     state,
     inlineAddress,
     quotedAddress,
-    targetAddress: explicitAddress || state?.originAddress || null,
-    targetCoordinates: explicitAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || null),
+    targetAddress: explicitAddress || state?.originAddress || recentCall?.origin || null,
+    targetCoordinates: explicitAddress ? null : (sharedIsNewer ? shared.coordinates : state?.originCoordinates || recentCall?.originCoordinates || null),
     source: inlineAddress
       ? 'inline-address'
       : quotedAddress
         ? 'quoted-address'
         : sharedIsNewer
           ? shared.source
-          : 'dispatch-state',
+          : state?.originAddress || state?.originCoordinates
+            ? 'dispatch-state'
+            : recentCall?.origin || recentCall?.originCoordinates
+              ? 'management-call'
+              : 'dispatch-state',
+    recentCall,
   };
 }
 
-async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') {
+async function handleEtaQuestion(msg, groupName, readableText, quotedText = '', context = null) {
   const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);
   if (!target.targetAddress && !target.targetCoordinates) {
     logEvent('ignored', `${groupName}: pergunta de ETA sem destino identificável ignorada.`, { groupId: msg.from });
@@ -2094,6 +2101,19 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '') 
       ? { originAddress: target.targetAddress, originCoordinates: null, originUpdatedAt: new Date().toISOString() }
       : {}),
   });
+  const call = context?.recentCall || target.recentCall || null;
+  if (call) {
+    await recordDispatchInManagement({
+      groupId: msg.from, groupName, text: readableText,
+      originAddress: call.origin || target.targetAddress || null,
+      originCoordinates: call.originCoordinates || target.targetCoordinates || null,
+      destinationAddress: call.destination || null,
+      eta, status: call.status || 'cotacao', facts: extractOperationalFacts(readableText),
+      estimatedTotalKm: call.estimatedTotalKm ?? null,
+      existingCallId: call.id, eventType: 'previsao_atualizada',
+      phase: call.operationalPhase || 'consulta',
+    });
+  }
   const reply = formatEtaReply(eta, false);
   await replyAndRemember(msg, groupName, readableText, reply, {
     intent: 'eta',
@@ -2396,8 +2416,9 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
 
   const facts = context.facts;
   const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem'));
+  let route = null;
   if (hasOpportunityData) {
-    const route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
+    route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
     if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
       const queued = await estimateSecondCallArrival({
         management: context.management,
@@ -2406,16 +2427,32 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
       });
       if (queued.eta) route.eta = queued.eta;
     }
+    await setDispatchState(msg.from, {
+      originAddress: route.originAddress || null,
+      originCoordinates: route.originCoordinates || null,
+      destinationAddress: route.destinationAddress || null,
+      originUpdatedAt: new Date().toISOString(),
+      lastEta: route.eta || null,
+      lastEtaAt: route.eta ? new Date().toISOString() : null,
+    });
     await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText,
       originAddress: route.originAddress, originCoordinates: route.originCoordinates, destinationAddress: route.destinationAddress,
       eta: route.eta, status: 'cotacao', facts,
       estimatedTotalKm: route.estimatedTotalKm,
       evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
-      eventType: 'consulta_disponibilidade', phase: 'consulta',
+      eventType: 'consulta_disponibilidade', phase: 'aguardando_autorizacao',
     });
   }
-  await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability', activeCount: capacity.activeCount, slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1) });
+  const lines = ['Disponível ✅'];
+  if (route?.eta?.minutes) lines.push(formatEtaReply(route.eta, false));
+  else if (hasOpportunityData) lines.push('Estou atualizando a localização para calcular a previsão.');
+  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), {
+    intent: 'availability', activeCount: capacity.activeCount,
+    slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1),
+    etaMinutes: route?.eta?.minutes ?? null,
+    estimatedTotalKm: route?.estimatedTotalKm ?? null,
+  });
 }
 
 async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation, context) {
@@ -3123,7 +3160,7 @@ async function processIncomingMessage(msg) {
     }
 
     if (asksEta(readableText)) {
-      await handleEtaQuestion(msg, groupName, readableText, quotedText);
+      await handleEtaQuestion(msg, groupName, readableText, quotedText, operationalContext);
       return;
     }
 
@@ -3434,7 +3471,7 @@ async function executeTestRun(run) {
             if (run.stopRequested) break;
             const sentAt = Date.now(); await simulatorClient.sendMessage(testCenterRuntime.targetGroupId, step.send);
             const observed = await waitForTestResponse(sentAt, step.expectSilence ? 12000 : TEST_RESPONSE_TIMEOUT_MS, step.expectSilence === true);
-            const passed = step.expectSilence ? observed.passed : observed.passed && responseMatches(observed.response, step.expect || [], step.forbid || []);
+            const passed = step.expectSilence ? observed.passed : observed.passed && responseMatches(observed.response, step.expect || [], step.forbid || [], step.expectAll === true);
             result.steps.push({ sent: step.send, response: observed.response, expected: step.expectSilence ? 'Nenhuma resposta' : step.expect, forbidden: step.forbid || [], passed }); if (!passed) passedAll = false; await delay(TEST_MESSAGE_INTERVAL_MS);
           }
           result.status = run.stopRequested ? 'skipped' : passedAll ? 'passed' : 'failed';

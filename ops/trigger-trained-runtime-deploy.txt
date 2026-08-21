@@ -1,2 +1,2 @@
-deploy operational v5 test-history cleanup 2026-08-21T16:46:00Z
+deploy availability and eta follow-up fix 2026-08-21T17:35:00Z
 source dynamic github.sha

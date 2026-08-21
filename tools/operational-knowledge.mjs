@@ -144,6 +144,13 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const closureQuestion = /\b(finaliz|fechamento|fechamos|quanto finalizou|em quantos km|quantos km|km final|km e valor|valor final|finalizou em)\b/.test(value);
   if (activeService && (base === 'closure' || closureQuestion)) return 'closure';
 
+  // “Qual a prévia?” é uma pergunta de tempo/ETA sobre a oportunidade já
+  // recebida. Só permanece cotação quando a mesma mensagem também pede valor
+  // ou quilometragem comercial.
+  const etaQuestion = /\b(qual\s+(?:a\s+)?previa|previa|previsao(?:\s+de\s+chegada)?|quanto\s+tempo|quanto\s+demora|chega\s+em)\b/.test(value);
+  const commercialQuestion = /\b(valor|preco|cotacao|quanto\s+fica|km|quilometragem)\b/.test(value);
+  if (etaQuestion && !commercialQuestion) return 'eta';
+
   if (hasQuoteSignals(text)) return 'quote';
   if (base === 'authorization') return 'authorization';
   if (base === 'closure') return 'closure';

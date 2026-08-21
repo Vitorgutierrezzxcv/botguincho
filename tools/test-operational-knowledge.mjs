@@ -19,6 +19,7 @@ const cases = [
   ['Finalizado', 'Plus Assistência', 'closure'],
   ['Sr. prestador, evitem o envio de mensagens informando disponibilidade neste grupo', 'Assistência Segura', 'administrative_notice'],
   ['Bom dia, disponível? Origem: Rua X, 100 - Betim - MG', 'Solução Assistência', 'availability'],
+  ['Qual a prévia?', 'Tests guincho', 'eta'],
 ];
 
 for (const [text, group, expected] of cases) {
