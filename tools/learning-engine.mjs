@@ -2,7 +2,13 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 
 function normalize(value = '') {
-  return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(?:[a-z]\s+){2,}[a-z]\b/g, (match) => match.replace(/\s+/g, ''))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function brNumber(value) {
@@ -21,6 +27,13 @@ export function anonymizeLearningText(value = '') {
 export function inferLearningIntent(text = '') {
   const value = normalize(text);
   if (!value) return 'empty';
+
+  const hasOperationalContext = /\b(origem|destino|veiculo|placa|protocolo|reboque|guincho|pane|sinistro|servico|acionamento|associado|associacao|remocao)\b/.test(value);
+  const administrativeSignal = /\b(reuniao|comunicado(?: interno)?|aviso(?: geral)?|treinamento|rotina financeira|financeiro|atualizacao de cadastro|documentos|tabelas de valores|pagamentos? dia|contas)\b/.test(value);
+
+  // Horário em um comunicado (por exemplo, uma reunião amanhã às 9h) não é
+  // agendamento de guincho. Exige também contexto operacional do atendimento.
+  if (administrativeSignal && !hasOperationalContext) return 'administrative_notice';
 
   if (/\b(cancelou|cancelado|cancelada|pode deixar|conseguiu resolver|nao precisa mais|passou para outro|passar para outro|ja foi|protocolo errado|desconsidera|desconsiderar|sem saida|sem custos)\b/.test(value)) {
     return 'cancellation';
@@ -45,13 +58,13 @@ export function inferLearningIntent(text = '') {
 
   if (
     /\b(agendamento|agendado|agendada)\b/.test(value)
-    || /\bamanha\s+(?:as|às)\s*\d{1,2}/.test(value)
-    || /\bpara o dia\s+\d{1,2}[\/.-]\d{1,2}/.test(value)
+    || (hasOperationalContext && /\bamanha\s+(?:as|às)\s*\d{1,2}/.test(value))
+    || (hasOperationalContext && /\bpara o dia\s+\d{1,2}[\/.-]\d{1,2}/.test(value))
   ) {
     return 'scheduled_dispatch';
   }
 
-  if (/\b(pode seguir|pode ir|liberado|libera|autorizado|autorizada)\b/.test(value) || /^seguir\??$/.test(value)) return 'authorization';
+  if (/\b(pode\s*seguir|pode\s*ir|liberado|libera|autorizado|autorizada)\b/.test(value) || /^seguir\??$/.test(value)) return 'authorization';
 
   const hasClosingSignal = /\b(finalizamos|finalizado|finalizada|fechamento|fechado|concluido|concluida)\b/.test(value);
   const hasClosingData = /\b(km\s*total|km\s*totais|quilometragem\s*total|valor\s*total|fotos\s+no\s+destino|fotos\s+na\s+origem)\b/.test(value);

@@ -27,7 +27,7 @@ for (const [text, group, expected] of cases) {
 
 assert.equal(classifyRuntimeIntent('O guincho chegou no local, o carro funcionou e o motorista não quer levar', 'Assistência', { status: 'em_atendimento' }), 'arrival_without_tow');
 assert.equal(classifyRuntimeIntent('Guincho chegou e o motorista n quer rebocar', 'Assistência', { status: 'autorizado' }), 'arrival_without_tow');
-assert.equal(classifyRuntimeIntent('O carro funcionou', 'Assistência', { status: 'autorizado' }), 'other');
+assert.equal(classifyRuntimeIntent('O carro funcionou', 'Assistência', { status: 'autorizado' }), 'cancellation');
 assert.equal(classifyRuntimeIntent('O guincho chegou no local', 'Assistência', { status: 'a_caminho' }), 'arrival');
 assert.equal(classifyRuntimeIntent('Aqui começa a estrada de terra', 'Assistência', { status: 'a_caminho' }), 'dirt_road_start');
 

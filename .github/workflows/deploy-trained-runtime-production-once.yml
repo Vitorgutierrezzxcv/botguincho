@@ -16,11 +16,29 @@ jobs:
     env:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
-      SOURCE_REF: 410eb66af25b25083cd81a5e8a6af4af69a46fff
+      SOURCE_REF: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Validate complete operational rules
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/learning-engine.mjs
+          node --check tools/operational-knowledge.mjs
+          node --check app.js
+          node --check public/app.js
+          node -e "JSON.parse(require('fs').readFileSync('training/operational-runtime-v5.json','utf8'))"
+          node tools/test-learning-patterns.mjs
+          node tools/test-operational-knowledge.mjs
+          node tools/test-complete-operational-flows.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+          node tools/test-operating-hours.mjs
+          node tools/test-test-center.mjs
 
       - name: Preflight production health
         run: |
@@ -123,7 +141,7 @@ jobs:
           assert isinstance(billing.get('insurerSummaries'),list), billing
           assert isinstance(billing.get('historicalImports'),list), billing
           tests=json.load(open('/tmp/test-center.json'))
-          assert tests.get('ok') is True and len(tests.get('scenarios',[])) >= 15, tests
+          assert tests.get('ok') is True and len(tests.get('scenarios',[])) >= 20, tests
           assert tests.get('simulator',{}).get('status') in ('desconectado','pronto','qr','iniciando','autenticado'), tests
           print('LEARNING_ENDPOINTS_OK', [g.get('name') for g in selected])
           PY
@@ -131,7 +149,7 @@ jobs:
       - name: Write sanitized validation report
         run: |
           python3 - <<'PY'
-          import json,datetime
+          import json,datetime,os
           h=json.load(open('/tmp/post-health.json'))
           s=json.load(open('/tmp/post-status.json'))
           r=json.load(open('/tmp/reload.json'))
@@ -141,7 +159,7 @@ jobs:
           selected=[x for x in g if x.get('selected')]
           report={
             'validatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'sourceRef': '410eb66af25b25083cd81a5e8a6af4af69a46fff',
+            'sourceRef': os.environ['SOURCE_REF'],
             'companyId': 'cliente-teste',
             'workerProcessCount': r.get('workerProcessCount'),
             'sessionPreserved': r.get('sessionPreserved'),

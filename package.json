@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test:cancellation": "node tools/test-cancellation-policy.mjs",
+    "test:operational": "node tools/test-learning-patterns.mjs && node tools/test-operational-knowledge.mjs && node tools/test-complete-operational-flows.mjs",
     "wa:admin": "node tools/wa-admin-v2.mjs",
     "platform": "node tools/admin-platform.mjs"
   },
