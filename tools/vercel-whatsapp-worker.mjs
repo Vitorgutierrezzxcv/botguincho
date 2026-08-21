@@ -17,7 +17,7 @@ import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellation
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
 import { driverPayForCall, driverPayrollPeriodFor, markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
 import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
-import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, createTestRun, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
+import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -3447,7 +3447,7 @@ async function executeTestRun(run) {
   finally { run.finishedAt = new Date().toISOString(); run.totals = summarizeTestRun(run); await persistTestRun(run); testCenterRuntime.targetGroupId = null; }
 }
 
-app.get('/api/test-center', async (_req, res) => { const saved = await readTestCenterState(); res.json({ ok: true, targetGroupName: TEST_GROUP_NAME, simulator: { status: simulatorStatus, qrDataUrl: simulatorQrDataUrl, error: simulatorLastError }, scenarios: TEST_SCENARIOS, currentRun: testCenterRuntime.currentRun, history: saved.history || [] }); });
+app.get('/api/test-center', async (_req, res) => { const saved = await readTestCenterState(); res.json({ ok: true, suiteVersion: TEST_SUITE_VERSION, targetGroupName: TEST_GROUP_NAME, simulator: { status: simulatorStatus, qrDataUrl: simulatorQrDataUrl, error: simulatorLastError }, scenarios: TEST_SCENARIOS, currentRun: testCenterRuntime.currentRun?.suiteVersion === TEST_SUITE_VERSION ? testCenterRuntime.currentRun : null, history: currentTestHistory(saved.history) }); });
 app.post('/api/test-center', async (req, res) => {
   try {
     const action = String(req.body?.action || '');
