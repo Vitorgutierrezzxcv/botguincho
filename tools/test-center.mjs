@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 export const TEST_GROUP_NAME = 'Tests guincho';
 export const TEST_MESSAGE_INTERVAL_MS = 3500;
 export const TEST_RESPONSE_TIMEOUT_MS = 45000;
+export const TEST_SUITE_VERSION = 'operational-v5';
 
 export const TEST_SCENARIOS = [
   {
@@ -135,13 +136,17 @@ export function createTestRun(scenarioIds = [], now = new Date()) {
   const scenarios = TEST_SCENARIOS.filter((item) => !selected || selected.has(item.id));
   return {
     id: crypto.randomUUID(), status: 'queued', startedAt: null, finishedAt: null,
-    createdAt: now.toISOString(), stopRequested: false,
+    createdAt: now.toISOString(), stopRequested: false, suiteVersion: TEST_SUITE_VERSION,
     totals: { scenarios: scenarios.length, passed: 0, failed: 0, skipped: 0, running: 0 },
     results: scenarios.map((scenario) => ({
       scenarioId: scenario.id, name: scenario.name, category: scenario.category, mode: scenario.mode,
       status: 'queued', startedAt: null, finishedAt: null, steps: [], error: null,
     })),
   };
+}
+
+export function currentTestHistory(history = []) {
+  return (Array.isArray(history) ? history : []).filter((run) => run?.suiteVersion === TEST_SUITE_VERSION);
 }
 
 export function summarizeTestRun(run) {
