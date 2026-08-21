@@ -1,2 +1,2 @@
-deploy availability and eta follow-up fix 2026-08-21T17:35:00Z
+deploy automatic protocol pricing and tracker arrival 2026-08-21T18:30:00Z
 source dynamic github.sha
