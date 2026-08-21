@@ -1,6 +1,6 @@
 {
-  "validatedAt": "2026-08-20T22:39:27.660864+00:00",
-  "sourceRef": "5280e2628ef9033d43cb2dd83174b916069a2c32",
+  "validatedAt": "2026-08-21T02:03:27.169169+00:00",
+  "sourceRef": "9fe60276de673f08d8cb40cd6d7c0552d5519701",
   "companyId": "cliente-teste",
   "workerProcessCount": 1,
   "sessionPreserved": true,
@@ -10,7 +10,7 @@
   },
   "tracker": {
     "ok": true,
-    "ageSeconds": 8,
+    "ageSeconds": 22,
     "plate": "GSW0H17"
   },
   "routes": {
@@ -32,7 +32,8 @@
     "cancellation-policy.mjs",
     "worked-time-policy.mjs",
     "driver-payroll.mjs",
-    "historical-spreadsheet-import.mjs"
+    "historical-spreadsheet-import.mjs",
+    "test-center.mjs"
   ],
   "status": "trained_runtime_operational"
 }
