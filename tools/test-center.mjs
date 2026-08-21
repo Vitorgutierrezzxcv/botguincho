@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 export const TEST_GROUP_NAME = 'Tests guincho';
 export const TEST_MESSAGE_INTERVAL_MS = 3500;
 export const TEST_RESPONSE_TIMEOUT_MS = 45000;
-export const TEST_SUITE_VERSION = 'operational-v5.1-eta';
+export const TEST_SUITE_VERSION = 'operational-v5.2-auto-pricing-tracker';
 
 export const TEST_SCENARIOS = [
   {
@@ -61,6 +61,15 @@ export const TEST_SCENARIOS = [
     steps: [
       { send: 'PROTOCOLO: TESTE-101\nORIGEM: Rua das Rosas, 310, Betim - MG\nDESTINO: Avenida Amazonas, 1200, Betim - MG\nVEÍCULO: Fiat Uno\nDisponível?', expect: ['disponível'], forbid: ['confirmado'] },
       { send: 'PROTOCOLO: TESTE-101\nORIGEM: Rua das Rosas, 310, Betim - MG\nDESTINO: Avenida Amazonas, 1200, Betim - MG\nVEÍCULO: Fiat Uno', expect: ['protocolo', 'aguardando autorização'], forbid: ['confirmado'] },
+    ],
+  },
+  {
+    id: 'authorized_protocol_and_value', category: 'Autorização', name: 'Protocolo após autorização e cálculo automático', mode: 'whatsapp',
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'previs', 'aguardando autorização'] },
+      { send: 'Pode seguir.', expect: ['confirmado', 'quilometragem total calculada', 'valor estimado'], expectAll: true },
+      { send: 'PROTOCOLO: TESTE-AUTO-202\nASSOCIADO: Cliente Teste\nTELEFONE: 31999999999\nPLACA: ABC1D23\nMODELO: Fiat Palio\nMOTIVO: pane elétrica\nSERVIÇO: reboque leve\nORIGEM: Rua Guapé, 110, Dom Bosco, Betim - MG\nDESTINO: Avenida Coronel Abílio Rodrigues Pereira, 423, Bom Retiro, Betim - MG\nACOMPANHANTES: 1', expect: ['vinculado', 'quilometragem total', 'valor estimado'], expectAll: true, forbid: ['aguardando autorização'] },
+      { send: 'Fecha em quantos quilômetros? Envie os quilômetros totais e o valor.', expect: ['quilometragem total', 'valor calculado'], expectAll: true, forbid: ['em conferência'] },
     ],
   },
   {
