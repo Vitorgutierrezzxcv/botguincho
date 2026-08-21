@@ -13,4 +13,7 @@ const second = evaluateWorkedTime({ reportedMinutes: 76 });
 assert.equal(second.chargedHours, 2);
 assert.equal(second.amount, 160);
 assert.equal(addWorkedTimeToCommercial({ status: 'ok', calculatedAmount: 200 }, second).calculatedAmount, 360);
+const missingBase = addWorkedTimeToCommercial({ status: 'commercial_rule_not_approved', calculatedAmount: null }, first);
+assert.equal(missingBase.calculatedAmount, null);
+assert.equal(missingBase.reviewRequired, true);
 console.log('WORKED_TIME_POLICY_OK');

@@ -30,6 +30,12 @@ export function evaluateWorkedTime({ arrivedAt = null, finishedAt = new Date(), 
 
 export function addWorkedTimeToCommercial(commercial = {}, workedTime = {}) {
   if (!workedTime.chargeRequired) return { ...commercial, workedTimeAmount: 0 };
+  if (commercial.calculatedAmount === null || commercial.calculatedAmount === undefined || commercial.calculatedAmount === '') return {
+    ...commercial,
+    reviewRequired: true,
+    reviewReason: 'A hora trabalhada foi calculada, mas falta calcular o valor-base do atendimento.',
+    workedTimeAmount: workedTime.amount,
+  };
   const baseAmount = Number(commercial.calculatedAmount);
   if (!(baseAmount >= 0)) return {
     ...commercial,

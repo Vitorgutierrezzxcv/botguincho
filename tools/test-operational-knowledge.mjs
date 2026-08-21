@@ -31,6 +31,8 @@ assert.equal(classifyRuntimeIntent('Guincho chegou e o motorista n quer rebocar'
 assert.equal(classifyRuntimeIntent('O carro funcionou', 'Assistência', { status: 'autorizado' }), 'cancellation');
 assert.equal(classifyRuntimeIntent('O guincho chegou no local', 'Assistência', { status: 'a_caminho' }), 'arrival');
 assert.equal(classifyRuntimeIntent('Aqui começa a estrada de terra', 'Assistência', { status: 'a_caminho' }), 'dirt_road_start');
+assert.equal(classifyRuntimeIntent('Fecha em quantos quilômetros? Envie os quilômetros totais e o valor.', 'Tests guincho', { status: 'autorizado' }), 'value_summary');
+assert.equal(classifyRuntimeIntent('Qual o valor total e os km?', 'Tests guincho', { status: 'em_atendimento' }), 'value_summary');
 
 assert.equal(resolveGroupProfile('PREST. AMERICA GUINCHOS X POWER - BETIM').key, 'power');
 assert.equal(resolveGroupProfile('America Guincho Contagem Betim MG X Company Truck').key, 'company-truck');
@@ -43,6 +45,13 @@ assert.equal(facts.vehicleType, 'leve');
 assert.equal(facts.extras.toll, 12.8);
 assert.equal(extractOperationalFacts('Ficou 35 minutos no local').onSiteMinutes, 35);
 assert.equal(extractOperationalFacts('Terra: 12,5 km').extras.dirtRoadKm, 12.5);
+const protocolFacts = extractOperationalFacts('PROTOCOLO: ABC-123\nASSOCIADO: Maria\nTELEFONE: 31999990000\nPLACA: ABC1D23\nMODELO: Fiat Palio\nMOTIVO: pane elétrica\nSERVIÇO: reboque leve\nORIGEM: Rua A, 10, Betim - MG\nDESTINO: Rua B, 20, Betim - MG\nACOMPANHANTES: 1');
+assert.equal(protocolFacts.protocol, 'ABC-123');
+assert.equal(protocolFacts.associatedName, 'Maria');
+assert.equal(protocolFacts.contactPhone, '31999990000');
+assert.equal(protocolFacts.serviceReason, 'pane elétrica');
+assert.equal(protocolFacts.companions, 1);
+assert.equal(protocolFacts.vehicleType, 'leve');
 
 const rules = {
   services: {

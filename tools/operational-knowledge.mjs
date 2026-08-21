@@ -141,7 +141,11 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
 
   // A mesma pergunta de valor muda de significado conforme o estado do chamado.
   // Depois da autorização/execução, frases de finalização são fechamento, não nova cotação.
-  const closureQuestion = /\b(finaliz|fechamento|fechamos|quanto finalizou|em quantos km|quantos km|km final|km e valor|valor final|finalizou em)\b/.test(value);
+  const valueSummaryQuestion = /\b(fecha\s+em\s+quantos|quantos\s+(?:km|quilometros)|km\s+totais?|quilometragem\s+total|envie\s+os?\s+quilometros|envie.{0,24}\bvalor|qual\s+(?:o\s+)?valor(?:\s+total)?|valor\s+(?:e|com)\s+(?:os?\s+)?km)\b/.test(value);
+  const explicitClosure = /\b(finaliz(?:e|ado|ada|amos)|fechamento\s+(?:concluido|final)|conclu(?:a|ido|ida)|corrida\s+(?:encerrada|finalizada))\b/.test(value);
+  if (activeService && valueSummaryQuestion && !explicitClosure) return 'value_summary';
+
+  const closureQuestion = /\b(finaliz|fechamento|fechamos|quanto finalizou|em quantos km|km final|valor final|finalizou em)\b/.test(value);
   if (activeService && (base === 'closure' || closureQuestion)) return 'closure';
 
   // “Qual a prévia?” é uma pergunta de tempo/ETA sobre a oportunidade já
@@ -183,7 +187,7 @@ function firstNumber(text, patterns = []) {
 
 function labeled(text, labels = []) {
   const raw = String(text || '').replace(/\r/g, '');
-  const boundaries = 'ORIGEM|DESTINO|VE[IÍ]CULO|MODELO|PLACA|SERVI[CÇ]O|TIPO\\s*DE\\s*SERVI[CÇ]O|PROTOCOLO|N[º°]?\\s*PROTOCOLO|ASSOCIA[CÇ][AÃ]O|ASSIST[EÊ]NCIA|SEGURADORA|CLIENTE';
+  const boundaries = 'ORIGEM|DESTINO|VE[IÍ]CULO|MODELO|PLACA|SERVI[CÇ]O|TIPO\\s*DE\\s*SERVI[CÇ]O|PROTOCOLO|N[º°]?\\s*PROTOCOLO|ASSOCIA[CÇ][AÃ]O|ASSIST[EÊ]NCIA|SEGURADORA|CLIENTE|ASSOCIADO|SEGURADO|TELEFONE|CONTATO|MOTIVO|ACOMPANHANTES?';
   for (const label of labels) {
     const re = new RegExp(`(?:^|\\n)\\s*${label}\\s*[:=\\-]\\s*([^\\n]+)`, 'im');
     const match = raw.match(re);
@@ -231,6 +235,10 @@ export function extractOperationalFacts(text = '') {
   const vehicle = labeled(raw, ['VE[IÍ]CULO', 'MODELO']);
   const plate = labeled(raw, ['PLACA']);
   const service = labeled(raw, ['SERVI[CÇ]O', 'TIPO\\s*DE\\s*SERVI[CÇ]O']);
+  const associatedName = labeled(raw, ['ASSOCIADO', 'SEGURADO']);
+  const contactPhone = labeled(raw, ['TELEFONE', 'CONTATO']);
+  const serviceReason = labeled(raw, ['MOTIVO']);
+  const companions = firstNumber(raw, [/(?:acompanhantes?)\s*[:=\-]?\s*(\d{1,2})/i]);
 
   const dateMatch = raw.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))\b/);
   const timeMatch = raw.match(/\b(?:[aà]s?\s*)?(\d{1,2})[:h](\d{2})\b/i);
@@ -259,6 +267,10 @@ export function extractOperationalFacts(text = '') {
     vehicle,
     plate,
     service,
+    associatedName,
+    contactPhone,
+    serviceReason,
+    companions,
     vehicleType: inferVehicleType(`${vehicle} ${service} ${raw}`),
     scheduledAt,
     onSiteMinutes,
