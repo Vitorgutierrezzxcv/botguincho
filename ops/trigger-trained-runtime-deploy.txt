@@ -1,2 +1,2 @@
-deploy automatic full test center corrected ref 2026-08-21T15:28:00Z
-source 410eb66af25b25083cd81a5e8a6af4af69a46fff
+deploy complete operational state machine v5 2026-08-21T16:32:49Z
+source dynamic github.sha

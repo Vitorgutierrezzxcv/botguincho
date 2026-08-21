@@ -1,0 +1,54 @@
+{
+  "version": 5,
+  "source": {
+    "screenshots": 184,
+    "cataloguedMessages": 16308,
+    "groups": 10,
+    "privacy": "anonymized",
+    "runtimeReviewDate": "2026-08-21"
+  },
+  "stateMachine": [
+    "consulta",
+    "cotacao",
+    "aguardando_dados",
+    "aguardando_autorizacao",
+    "autorizado",
+    "em_deslocamento",
+    "no_local_cliente",
+    "aguardando_cliente",
+    "veiculo_embarcado",
+    "no_destino",
+    "evidencias",
+    "concluido",
+    "cancelado"
+  ],
+  "globalRules": {
+    "authorization": "Uma ficha, protocolo, consulta, cotação ou confirmação genérica não autoriza. Exigir autorização expressa, salvo protocolo formal da Horizonte após oportunidade aceita.",
+    "cancellation": "Gratuito até 15:00 após autorização. A partir de 15:01, cobrar saída e deslocamento integrais pela quilometragem total. Pagamento parcial é proibido.",
+    "arrivalWithoutTow": "Se o guincho chegou e não houve reboque porque o veículo funcionou ou o cliente recusou, cobrar integralmente o deslocamento até a origem.",
+    "workedTime": "Há tolerância de 15 minutos no local. No 16º minuto começa a primeira hora integral de R$ 80; cada nova hora iniciada acrescenta R$ 80.",
+    "dirtRoad": "R$ 3,80 por km, ida e volta desde o início do trecho até a saída. A tarifa de terra substitui a de asfalto nesse trecho.",
+    "driver": "R$ 40 por corrida até 50 km; acima de 50 km somar R$ 0,70 por km excedente. Toda hora trabalhada pertence ao motorista. Período de pagamento do dia 20 ao dia 20.",
+    "administrative": "Reuniões, comunicados, cadastro, documentos e financeiro ficam sem resposta automática.",
+    "afterHours": "O horário bloqueia apenas novos atendimentos; ocorrências e fechamento de corridas ativas continuam sendo registrados.",
+    "evidence": "Pendências de fotos, vídeo, checklist e WebPrestador bloqueiam faturamento até serem concluídas."
+  },
+  "groupRules": {
+    "solucao": ["Disponibilidade não autoriza", "Exigir autorização expressa", "Fotos dos quatro ângulos na origem e destino"],
+    "top-brasil": ["Cotação não autoriza", "Pedágio separado", "Respeitar indisponibilidade e fora de rota"],
+    "saturno": ["Agendamento não é atendimento imediato", "Fotos, checklist, veículo na prancha e vídeo 360", "Hora parada histórica exige conferência"],
+    "plus": ["Identificar associação", "Pedágio e hora trabalhada separados", "Divergência matemática vai para revisão"],
+    "company-truck": ["Cotação Visão nunca autoriza nem gera receita", "Vídeo com placa, veículo, empresa, data e hora antes da nota"],
+    "horizonte": ["Protocolo formal após oportunidade aceita pode autorizar", "Cliente ausente: aguardar 10 minutos e registrar retorno para conferência", "Mudança de endereço atualiza a corrida ativa"],
+    "socorre": ["Associação obrigatória antes de precificar", "Saveiro é utilitário", "Cancelamento antes da execução não gera receita"],
+    "premium": ["Link do Maps é dado de localização", "Cotação e ETA antes da autorização", "Calendário de pagamento ambíguo exige revisão"],
+    "assistencia-segura": ["Comunicados administrativos sem resposta", "Cancelamento sem custos não gera receita", "Protocolo é conferência"],
+    "power": ["Nunca enviar disponibilidade proativa", "Por enquanto não siga bloqueia execução", "Fotos de embarque no WebPrestador antes do faturamento"]
+  },
+  "persistence": [
+    "Cada alteração gera evento cronológico com estado anterior, novo estado, texto e metadados.",
+    "Protocolo, associação, veículo, placa, origem, destino, ETA, rota congelada, chegada, tempo no local, terra, evidências, cancelamento, fechamento e valores permanecem vinculados à mesma corrida.",
+    "Uma nova solicitação no mesmo grupo não sobrescreve uma corrida ativa.",
+    "Corridas de teste são apagadas entre cenários e nunca entram no financeiro nem na folha."
+  ]
+}

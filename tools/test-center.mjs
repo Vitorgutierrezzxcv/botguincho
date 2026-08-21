@@ -13,7 +13,7 @@ export const TEST_SCENARIOS = [
     id: 'complete_dispatch', category: 'Atendimento', name: 'Acionamento completo com origem e destino', mode: 'whatsapp',
     steps: [
       { send: 'Tem disponibilidade para um veículo de passeio agora?', expect: ['disponível', 'sim', 'atender'], forbid: ['indisponível', 'fora de rota'] },
-      { send: 'Origem: Rua das Rosas, 310, São Salvador, Betim - MG. Destino: Avenida Amazonas, 1200, Centro, Betim - MG. Veículo: Fiat Uno.', expect: ['previs', 'min', 'confirm', 'dispon'] },
+      { send: 'Origem: Rua das Rosas, 310, São Salvador, Betim - MG. Destino: Avenida Amazonas, 1200, Centro, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'aguardando autorização', 'previs'], forbid: ['confirmado', 'pode seguir'] },
       { send: 'Confirmado, pode seguir com o atendimento.', expect: ['confirmado', 'cancelamento', '15'] },
     ],
   },
@@ -53,6 +53,51 @@ export const TEST_SCENARIOS = [
   {
     id: 'non_operational', category: 'Segurança', name: 'Mensagem administrativa sem resposta', mode: 'whatsapp',
     steps: [{ send: 'Pessoal, segue comunicado interno: reunião amanhã às 9h.', expectSilence: true }],
+  },
+  {
+    id: 'protocol_requires_authorization', category: 'Autorização', name: 'Protocolo não autoriza sozinho', mode: 'whatsapp',
+    steps: [
+      { send: 'PROTOCOLO: TESTE-101\nORIGEM: Rua das Rosas, 310, Betim - MG\nDESTINO: Avenida Amazonas, 1200, Betim - MG\nVEÍCULO: Fiat Uno\nDisponível?', expect: ['disponível'], forbid: ['confirmado'] },
+      { send: 'PROTOCOLO: TESTE-101\nORIGEM: Rua das Rosas, 310, Betim - MG\nDESTINO: Avenida Amazonas, 1200, Betim - MG\nVEÍCULO: Fiat Uno', expect: ['protocolo', 'aguardando autorização'], forbid: ['confirmado'] },
+    ],
+  },
+  {
+    id: 'repeated_authorization', category: 'Autorização', name: 'Autorização repetida sem duplicar corrida', mode: 'whatsapp',
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'aguardando autorização'] },
+      { send: 'Pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'Confirmado, pode seguir.', expect: ['já registrada', 'ja registrada'], forbid: ['cancelamento sem cobrança'] },
+    ],
+  },
+  {
+    id: 'customer_absent', category: 'Ocorrência', name: 'Cliente ausente no local', mode: 'whatsapp',
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'aguardando autorização'] },
+      { send: 'Pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'] },
+      { send: 'O cliente não apareceu; estou aguardando o cliente.', expect: ['cliente ausente', 'tolerância', '15'] },
+    ],
+  },
+  {
+    id: 'route_update', category: 'Execução', name: 'Alteração de destino durante a corrida', mode: 'whatsapp',
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'aguardando autorização'] },
+      { send: 'Pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'Alteração de destino. Novo destino: Rua Rio de Janeiro, 500, Betim - MG.', expect: ['novo destino', 'registrado'] },
+    ],
+  },
+  {
+    id: 'full_lifecycle', category: 'Atendimento', name: 'Fluxo completo até o fechamento', mode: 'whatsapp',
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['dados', 'aguardando autorização'] },
+      { send: 'Pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'Saindo agora para o atendimento.', expect: ['saída registrada', 'saida registrada'] },
+      { send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'] },
+      { send: 'O veículo está na prancha.', expect: ['embarque', 'registrado'] },
+      { send: 'Chegamos ao destino e entregamos na oficina.', expect: ['chegada ao destino', 'evidências'] },
+      { send: 'Fotos enviadas e checklist concluído.', expect: ['evidência', 'evidências'] },
+      { send: 'Finalizado com 20 km.', expect: ['finalizado', 'revisão', 'fechamento'] },
+    ],
   },
   { id: 'cancel_15_boundary', category: 'Cancelamento', name: 'Limite exato de 15 minutos', mode: 'engine' },
   { id: 'cancel_after_15', category: 'Cancelamento', name: 'Cancelamento após 15 minutos', mode: 'engine' },

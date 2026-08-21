@@ -8,7 +8,7 @@ import OpenAI from 'openai';
 import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
-import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, calculateApprovedCommercial, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
+import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, markEvidenceChecklist, appendOperationalTimeline, calculateApprovedCommercial, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, selectedGroupBillingView, closureReply } from './financial-engine.mjs';
@@ -77,14 +77,17 @@ const learningStore = createLearningStore({ knowledgeFile: groupKnowledgeFile, h
 const SYSTEM_AI_RULES = `
 REGRAS PRIORITÁRIAS DO BOT GUINCHO:
 - Responda somente ao assunto operacional da mensagem atual.
-- É proibido responder "Disponível", "Confirmado" ou equivalentes quando a mensagem não estiver perguntando disponibilidade nem enviando um acionamento.
-- Acionamentos, disponibilidade, localização e ETA são tratados pelo código antes de chegar até você. Não tente refazer esses fluxos.
-- Não faça triagem. Não peça placa, contato, ponto de referência, segurança do local, chave, rodas, garagem, acessibilidade ou outros dados adicionais.
+- É proibido responder "Disponível", "Confirmado" ou equivalentes sem uma pergunta de disponibilidade ou uma autorização expressa vinculada a uma corrida registrada.
+- Uma ficha completa, um protocolo, uma cotação ou a frase "confirmado" da própria central não equivalem, sozinhos, a "pode seguir".
+- Consulta, cotação, dados recebidos, aguardando autorização, autorização, saída, chegada, ocorrência, evidência e fechamento são estados diferentes. Nunca reinicie o fluxo por causa de uma atualização.
+- Acionamentos, disponibilidade, localização, ETA, cancelamento, hora trabalhada, estrada de terra e fechamento são tratados pelo código antes de chegar até você. Não tente refazer esses fluxos.
+- Só peça dados quando o código indicar que faltam origem/localização, destino ou veículo. Não invente outras perguntas de triagem.
 - Não faça listas ou checklists.
 - Não termine com pergunta.
 - Responda em português do Brasil, de forma natural e profissional, em no máximo duas linhas.
 - Se a pessoa apenas informar uma condição operacional, como "a rua é estreita" ou "precisa caminhão menor", reconheça de forma curta, por exemplo "Entendido.".
 - Nunca invente disponibilidade, localização, preço, ETA ou informação que não esteja no contexto.
+- Comunicados internos, reuniões, cadastro, financeiro e avisos gerais devem ficar sem resposta.
 - Nunca diga que é IA, bot ou modelo de linguagem.
 `.trim();
 
@@ -233,6 +236,15 @@ function recentManagementCall(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
   }) || null;
 }
 
+function recentManagementRecord(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
+  const now = Date.now();
+  return (state.calls || []).find((call) => {
+    if (call.sourceGroupId !== groupId) return false;
+    const age = now - new Date(call.updatedAt || call.createdAt || 0).getTime();
+    return age >= 0 && age < maxAgeMs;
+  }) || null;
+}
+
 function oldestActiveManagementCallForGroup(state, groupId) {
   return activeCallsForCapacity(state).find((call) => call.sourceGroupId === groupId) || null;
 }
@@ -307,7 +319,7 @@ async function estimateSecondCallArrival({ management, targetAddress = null, tar
   };
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null, dirtRoad = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null, dirtRoad = null, dirtRoadEnd = null, eventType = null, phase = null, towPerformed = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
@@ -333,16 +345,27 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     const transitionCanAttach = ['aguardando_aprovacao','autorizado','agendado','cancelado','concluido'].includes(status);
     const explicitExisting = existingCallId ? state.calls.find((call) => call.id === existingCallId) || null : null;
     const recent = recentManagementCall(state, groupId);
-    const recentCanAttach = transitionCanAttach && recent && !(status === 'autorizado' && isCapacityActiveCall(recent));
+    // Um novo pedido no mesmo grupo não pode sobrescrever uma corrida que já
+    // está em execução. Atualizações de uma corrida ativa sempre passam o id.
+    const recentCanAttach = transitionCanAttach && recent && !isCapacityActiveCall(recent);
     const isActiveTestGroup = isTestGroupName(groupName) || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId);
-    const candidateExisting = explicitExisting || exact || (recentCanAttach ? recent : null);
+    const passiveOpportunityStatus = ['cotacao','aguardando_dados','aguardando_aprovacao','agendado'].includes(status);
+    const exactCanAttach = exact && !(passiveOpportunityStatus && isCapacityActiveCall(exact));
+    const candidateExisting = explicitExisting || exactCanAttach || (recentCanAttach ? recent : null);
     const existing = isActiveTestGroup && candidateExisting?.testMode !== true ? null : candidateExisting;
     const knowledge = await getGroupKnowledgeEntry(groupId);
     const checklist = Array.isArray(evidenceChecklist) ? evidenceChecklist : buildEvidenceChecklist(groupName, text);
     const previousChecklist = Array.isArray(existing?.evidenceChecklist) ? existing.evidenceChecklist : [];
     const mergedChecklist = [...previousChecklist];
     for (const item of checklist) {
-      if (!mergedChecklist.some((x) => x.label === item.label)) mergedChecklist.push(item);
+      const index = mergedChecklist.findIndex((x) => x.label === item.label);
+      if (index < 0) mergedChecklist.push(item);
+      else mergedChecklist[index] = {
+        ...mergedChecklist[index],
+        ...item,
+        done: mergedChecklist[index]?.done === true || item?.done === true,
+        completedAt: mergedChecklist[index]?.completedAt || item?.completedAt || null,
+      };
     }
 
     let autoBillableKm = billingProfile?.routeBasis === 'origin_destination'
@@ -375,6 +398,45 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     if (financiallyFinalized && commercial?.status === 'ok' && Number(commercial.calculatedAmount) > 0) value = Number(commercial.calculatedAmount);
     if (financiallyFinalized && commercial?.reviewRequired) value = 0;
 
+    const groupProfile = resolveGroupProfile(groupName);
+    const associationMissing = financiallyFinalized && groupProfile.associationRequired === true && !(parsed.association || existing?.association);
+    const incompleteEvidence = financiallyFinalized && mergedChecklist.some((item) => item?.done !== true);
+    const commercialReviewRequired = commercial ? commercial.reviewRequired === true : existing?.commercialReviewRequired === true;
+    const commercialReviewReason = commercial?.reviewRequired
+      ? (commercial.reviewReason || `Valor informado diverge do cálculo aprovado em ${commercial.delta ?? 'valor não calculável'}.`)
+      : (commercialReviewRequired ? existing?.commercialReviewReason || '' : '');
+    const reviewReasons = [
+      commercialReviewReason,
+      associationMissing ? 'A associação responsável precisa ser informada antes do faturamento.' : '',
+      incompleteEvidence ? 'Existem evidências obrigatórias pendentes antes do faturamento.' : '',
+    ].filter(Boolean);
+    const financeReviewRequired = reviewReasons.length > 0;
+    if (financiallyFinalized && financeReviewRequired) value = 0;
+    if (financiallyFinalized && !financeReviewRequired && !(value > 0)) {
+      const resolvedCalculatedValue = Number(commercial?.calculatedAmount ?? existing?.calculatedValue ?? 0);
+      if (resolvedCalculatedValue > 0) value = resolvedCalculatedValue;
+    }
+
+    const derivedEventType = eventType || ({
+      cotacao: 'consulta_registrada', aguardando_aprovacao: 'aguardando_autorizacao', autorizado: 'autorizacao',
+      a_caminho: 'saida', em_atendimento: 'atendimento_no_local', agendado: 'agendamento',
+      cancelado: 'cancelamento', concluido: 'fechamento', aguardando_dados: 'dados_incompletos',
+    })[status] || 'atualizacao';
+    const operationalTimeline = appendOperationalTimeline(existing?.operationalTimeline || [], {
+      at: transitionAt,
+      type: derivedEventType,
+      fromStatus: existing?.status || null,
+      toStatus: status,
+      text,
+      meta: {
+        phase: phase || existing?.operationalPhase || null,
+        protocol: parsed.protocol || null,
+        cancellationChargeRequired: cancellation?.chargeRequired === true,
+        workedTimeAmount: workedTime?.amount ?? null,
+        dirtRoadBillableKm: dirtRoad?.billableKm ?? existing?.dirtRoadBillableKm ?? null,
+      },
+    });
+
     const patch = {
       id: existing?.id || crypto.randomUUID(),
       dispatchKey: existing?.dispatchKey || dispatchKey,
@@ -406,14 +468,19 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       reportedValue: parsed.centralReportedValue ?? existing?.reportedValue ?? null,
       calculatedValue: commercial?.calculatedAmount ?? existing?.calculatedValue ?? null,
       commercialRuleStatus: knowledge?.commercialStatus || existing?.commercialRuleStatus || 'none',
-      financeReviewRequired: commercial?.reviewRequired ?? existing?.financeReviewRequired ?? false,
-      financeReviewReason: commercial?.reviewRequired ? (commercial.reviewReason || `Valor informado diverge do cálculo aprovado em ${commercial.delta ?? 'valor não calculável'}.`) : (existing?.financeReviewReason || ''),
+      financeReviewRequired,
+      financeReviewReason: reviewReasons.join(' '),
+      commercialReviewRequired,
+      commercialReviewReason,
       evidenceChecklist: mergedChecklist,
+      evidenceComplete: mergedChecklist.length === 0 || mergedChecklist.every((item) => item?.done === true),
+      operationalTimeline,
+      operationalPhase: phase || existing?.operationalPhase || null,
       scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
       lastOperationalText: String(text || '').slice(0, 4000),
       completedAt: status === 'concluido' ? transitionAt : (existing?.completedAt || null),
       serviceOutcome: displacementWithoutTow ? 'deslocamento_sem_reboque' : (existing?.serviceOutcome || null),
-      towPerformed: displacementWithoutTow ? false : (existing?.towPerformed ?? null),
+      towPerformed: displacementWithoutTow ? false : (towPerformed ?? existing?.towPerformed ?? null),
       arrivalConfirmed: (displacementWithoutTow || arrival) ? true : (existing?.arrivalConfirmed === true),
       arrivalConfirmedAt: displacementWithoutTow ? (serviceOutcome.arrivedAt || transitionAt) : (arrival?.arrivedAt || existing?.arrivalConfirmedAt || null),
       onSiteFinishedAt: workedTime?.finishedAt || existing?.onSiteFinishedAt || null,
@@ -426,6 +493,8 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       workedTimeRoundingRule: workedTime?.roundingRule || existing?.workedTimeRoundingRule || 'hora_iniciada_apos_tolerancia',
       dirtRoadStartCoordinates: dirtRoad?.startCoordinates || existing?.dirtRoadStartCoordinates || null,
       dirtRoadCapturedAt: dirtRoad?.capturedAt || existing?.dirtRoadCapturedAt || null,
+      dirtRoadEndCoordinates: dirtRoadEnd?.endCoordinates || existing?.dirtRoadEndCoordinates || null,
+      dirtRoadEndedAt: dirtRoadEnd?.endedAt || existing?.dirtRoadEndedAt || null,
       dirtRoadOneWayKm: dirtRoad?.oneWayKm ?? existing?.dirtRoadOneWayKm ?? null,
       dirtRoadBillableKm: dirtRoad?.billableKm ?? existing?.dirtRoadBillableKm ?? null,
       dirtRoadRatePerKm: dirtRoad ? 3.8 : (existing?.dirtRoadRatePerKm ?? 3.8),
@@ -772,6 +841,7 @@ function normalizeForIntent(value = '') {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/\b(?:[a-z]\s+){2,}[a-z]\b/g, (match) => match.replace(/\s+/g, ''))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -2281,7 +2351,9 @@ function outOfRouteReply(settings) {
 
 async function currentOperationalContext(groupId, groupName, text) {
   const management = await getManagement();
-  const provisionalRecentCall = recentManagementCall(management, groupId);
+  const evidenceOrProtocol = /\[imagem recebida\]|\b(fotos?|checklist|v[ií]deo|evid[eê]ncias?|protocolo)\b/i.test(String(text || ''));
+  const provisionalRecentCall = recentManagementCall(management, groupId)
+    || (evidenceOrProtocol ? recentManagementRecord(management, groupId) : null);
   const knowledge = await getGroupKnowledgeEntry(groupId);
   const approvedRules = knowledge?.commercialStatus === 'approved' ? knowledge.approvedCommercialRules : null;
   const billingProfile = ensureBillingProfile(management, groupId, groupName);
@@ -2340,6 +2412,7 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
       eta: route.eta, status: 'cotacao', facts,
       estimatedTotalKm: route.estimatedTotalKm,
       evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+      eventType: 'consulta_disponibilidade', phase: 'consulta',
     });
   }
   await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', { intent: 'availability', activeCount: capacity.activeCount, slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1) });
@@ -2379,6 +2452,7 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     eta: route.eta, status: 'cotacao', facts: context.facts, commercial,
     estimatedTotalKm: route.estimatedTotalKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    eventType: 'cotacao', phase: 'cotacao',
   });
 
   const lines = [];
@@ -2400,21 +2474,121 @@ async function handlePendingApprovalRuntime(msg, groupName, readableText, contex
     destinationAddress: call?.destination || context.facts.destination || null,
     eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
     status: 'aguardando_aprovacao', facts: context.facts, existingCallId: call?.id || null,
+    eventType: 'aguardando_autorizacao', phase: 'aguardando_autorizacao',
   });
   await replyAndRemember(msg, groupName, readableText, 'Certo, aguardando autorização.', { intent: 'pending_approval' });
 }
 
-async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
-  if (context.intent === 'formal_dispatch' || looksLikeDispatch(readableText)) {
-    await handleDispatch(msg, groupName, readableText, incomingLocation);
+function missingDispatchData(facts = {}) {
+  const missing = [];
+  if (!facts.origin) missing.push('origem completa ou localização');
+  if (!facts.destination) missing.push('destino completo');
+  if (!facts.vehicle && !facts.vehicleType) missing.push('veículo');
+  return missing;
+}
+
+function pendingOpportunityCall(call = null) {
+  return call && ['cotacao','aguardando_dados','aguardando_aprovacao','agendado'].includes(call.status) ? call : null;
+}
+
+async function handleIncompleteDispatchRuntime(msg, groupName, readableText, context) {
+  const call = pendingOpportunityCall(context.recentCall);
+  const combinedFacts = {
+    ...context.facts,
+    origin: context.facts.origin || call?.origin || '',
+    destination: context.facts.destination || call?.destination || '',
+    vehicle: context.facts.vehicle || call?.vehicle || '',
+  };
+  const missing = missingDispatchData(combinedFacts);
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: combinedFacts.origin || null, destinationAddress: combinedFacts.destination || null,
+    eta: null, status: 'aguardando_dados', facts: combinedFacts, existingCallId: call?.id || null,
+    eventType: 'dados_incompletos', phase: 'aguardando_dados',
+  });
+  await replyAndRemember(msg, groupName, readableText, `Para prosseguir, informe: ${missing.length ? missing.join(', ') : 'origem, destino e veículo'}.`, { intent: 'incomplete_dispatch', missing });
+}
+
+async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const call = pendingOpportunityCall(context.recentCall);
+  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation).catch(() => ({
+    eta: null, estimatedTotalKm: null, originAddress: context.facts.origin || call?.origin || null,
+    destinationAddress: context.facts.destination || call?.destination || null, originCoordinates: incomingLocation || call?.originCoordinates || null,
+  }));
+  const combinedFacts = {
+    ...context.facts,
+    origin: route.originAddress || call?.origin || '',
+    destination: route.destinationAddress || call?.destination || '',
+    vehicle: context.facts.vehicle || call?.vehicle || '',
+  };
+  const missing = missingDispatchData(combinedFacts);
+  if (missing.length) {
+    await handleIncompleteDispatchRuntime(msg, groupName, readableText, { ...context, facts: combinedFacts });
     return;
   }
+  const associationMissing = context.profile.associationRequired === true && !(combinedFacts.association || call?.association);
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: route.originAddress || call?.origin || null, originCoordinates: route.originCoordinates || call?.originCoordinates || null,
+    destinationAddress: route.destinationAddress || call?.destination || null,
+    eta: route.eta, status: 'aguardando_aprovacao', facts: combinedFacts,
+    estimatedTotalKm: route.estimatedTotalKm, evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    existingCallId: call?.id || null, eventType: 'dados_do_atendimento', phase: 'aguardando_autorizacao',
+  });
+  const details = route.eta?.minutes ? ` Previsão até a origem: ${route.eta.minutes} min.` : '';
+  const association = associationMissing ? ' Informe também a associação responsável.' : '';
+  await replyAndRemember(msg, groupName, readableText, `Dados do atendimento recebidos ✅${details}${association} Aguardando autorização expressa para seguir.`, {
+    intent: 'dispatch_details', authorizationRequired: true, associationMissing,
+  });
+}
+
+async function handleProtocolRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  const status = call?.status || 'aguardando_aprovacao';
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: context.facts.origin || call?.origin || null,
+    destinationAddress: context.facts.destination || call?.destination || null,
+    eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
+    status, facts: context.facts, existingCallId: call?.id || null,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    eventType: call ? 'protocolo_atualizado' : 'protocolo_recebido',
+    phase: call?.operationalPhase || 'aguardando_autorizacao',
+  });
+  const reply = call && isCapacityActiveCall(call)
+    ? 'Protocolo vinculado ao atendimento em andamento ✅'
+    : call?.status === 'concluido'
+      ? 'Protocolo vinculado ao atendimento concluído ✅'
+      : 'Protocolo recebido e registrado ✅ Aguardando autorização expressa para seguir.';
+  await replyAndRemember(msg, groupName, readableText, reply, { intent: context.intent, authorizationRequired: !call || (!isCapacityActiveCall(call) && call?.status !== 'concluido') });
+}
+
+async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
   const call = context.recentCall;
 
   // Uma autorização repetida do mesmo chamado não consome uma nova vaga.
   if (call && isCapacityActiveCall(call)) {
-    const eta = call.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm, queued: call.queued === true } : null;
-    await replyAndRemember(msg, groupName, readableText, eta ? formatEtaReply(eta, true) : 'Confirmado ✅', { intent: 'authorization-repeat', callId: call.id });
+    await recordDispatchInManagement({
+      groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
+      destinationAddress: call.destination || null, eta: null, status: call.status, facts: context.facts,
+      existingCallId: call.id, eventType: 'autorizacao_repetida', phase: call.operationalPhase || 'autorizado',
+    });
+    await replyAndRemember(msg, groupName, readableText, 'Autorização já registrada neste atendimento ✅', { intent: 'authorization-repeat', callId: call.id });
+    return;
+  }
+
+  if (!call) {
+    await replyAndRemember(msg, groupName, readableText, 'Recebi a autorização, mas ainda faltam os dados do atendimento. Envie origem, destino e veículo para vincular corretamente.', { intent: 'authorization-without-call' });
+    return;
+  }
+
+  if (context.profile.associationRequired === true && !(context.facts.association || call.association)) {
+    await recordDispatchInManagement({
+      groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
+      destinationAddress: call.destination || null, eta: null, status: 'aguardando_aprovacao', facts: context.facts,
+      existingCallId: call.id, eventType: 'associacao_pendente', phase: 'aguardando_associacao',
+    });
+    await replyAndRemember(msg, groupName, readableText, 'Antes de seguir, informe a associação responsável por este atendimento.', { intent: 'association-required' });
     return;
   }
 
@@ -2441,6 +2615,7 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
     originAddress: targetAddress, originCoordinates: targetCoordinates, destinationAddress: call?.destination || context.facts.destination || null,
     eta, status: 'autorizado', facts: context.facts,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
+    eventType: 'autorizacao', phase: eta?.queued ? 'autorizado_em_fila' : 'autorizado',
   });
   if (saved && eta?.queued) {
     saved.queued = true;
@@ -2457,12 +2632,95 @@ async function handleScheduledRuntime(msg, groupName, readableText, context) {
     destinationAddress: context.facts.destination || call?.destination || null,
     eta: null, status: 'agendado', facts: context.facts,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
+    eventType: 'agendamento', phase: 'agendado',
   });
   await replyAndRemember(msg, groupName, readableText, 'Agendamento registrado ✅', { intent: 'scheduled_dispatch', scheduledAt: context.facts.scheduledAt });
 }
 
+async function handleDepartureRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: call?.destination || null, eta: null, status: 'a_caminho', facts: context.facts,
+    existingCallId: call?.id || null, eventType: 'saida', phase: 'em_deslocamento',
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Saída registrada ✅', { intent: 'departure', callId: call?.id || null });
+}
+
+async function handleWaitingCustomerRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  const waitMinutes = context.profile.absentCustomerWaitMinutes || ON_SITE_GRACE_MINUTES;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: call?.destination || null, eta: null, status: 'em_atendimento', facts: context.facts,
+    existingCallId: call?.id || null, eventType: 'cliente_ausente', phase: 'aguardando_cliente',
+  });
+  const groupRule = context.profile.absentCustomerWaitMinutes
+    ? `A regra deste grupo prevê aguardar ${waitMinutes} minutos; eventual retorno ou cobrança ficará registrado para conferência.`
+    : `A tolerância operacional no local é de ${waitMinutes} minutos. A partir do 16º minuto começa a primeira hora trabalhada integral de R$ 80,00.`;
+  await replyAndRemember(msg, groupName, readableText, `Cliente ausente registrado ✅ ${groupRule}`, { intent: 'waiting_customer', waitMinutes });
+}
+
+async function handleLoadedRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: call?.destination || null, eta: null, status: 'em_atendimento', facts: context.facts,
+    existingCallId: call?.id || null, eventType: 'veiculo_embarcado', phase: 'veiculo_embarcado', towPerformed: true,
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Embarque do veículo registrado ✅', { intent: 'loaded', towPerformed: true });
+}
+
+async function handleDestinationArrivalRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: call?.destination || null, eta: null, status: 'em_atendimento', facts: context.facts,
+    existingCallId: call?.id || null, eventType: 'chegada_destino', phase: 'no_destino', towPerformed: call?.towPerformed ?? true,
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Chegada ao destino registrada ✅ Envie as evidências finais exigidas e, depois, o fechamento.', { intent: 'destination_arrival' });
+}
+
+async function handleEvidenceRuntime(msg, groupName, readableText, context, hasMedia = false) {
+  const call = context.recentCall;
+  const baseChecklist = Array.isArray(call?.evidenceChecklist) && call.evidenceChecklist.length
+    ? call.evidenceChecklist
+    : buildEvidenceChecklist(groupName, readableText);
+  const checklist = markEvidenceChecklist(baseChecklist, readableText, hasMedia);
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: call?.destination || null, eta: null, status: call?.status || 'em_atendimento', facts: context.facts,
+    existingCallId: call?.id || null, evidenceChecklist: checklist,
+    eventType: 'evidencia_recebida', phase: call?.status === 'concluido' ? 'concluido' : 'evidencias',
+  });
+  const pending = checklist.filter((item) => item?.done !== true).map((item) => item.label);
+  const reply = pending.length
+    ? `Evidência registrada ✅ Ainda pendente: ${pending.join('; ')}.`
+    : 'Evidências obrigatórias concluídas ✅';
+  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'evidence', evidenceComplete: pending.length === 0, pendingEvidence: pending });
+}
+
+async function handleAddressUpdateRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  const destination = extractLabeledField(readableText, 'Destino') || context.facts.destination;
+  if (!destination) {
+    await replyAndRemember(msg, groupName, readableText, 'Informe o novo destino completo para atualizar a corrida.', { intent: 'address_update_missing_destination' });
+    return;
+  }
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
+    destinationAddress: destination, eta: null, status: call?.status || 'autorizado', facts: context.facts,
+    existingCallId: call?.id || null, eventType: 'destino_alterado', phase: call?.operationalPhase || 'rota_alterada',
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Novo destino registrado no atendimento ✅ A rota e o fechamento devem considerar este endereço.', { intent: 'address_update', destination });
+}
+
 async function handleCancellationRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
+  if (!call) {
+    await replyAndRemember(msg, groupName, readableText, 'Não encontrei atendimento ativo para cancelar. Informe o protocolo ou os dados da corrida.', { intent: 'cancellation-without-call' });
+    return;
+  }
   const cancelledAt = new Date().toISOString();
   const fullRouteKm = call?.routeBreakdown?.totalKm ?? call?.estimatedTotalKm ?? call?.totalKm ?? call?.billableKm ?? null;
   const cancellation = evaluateCancellationPolicy({
@@ -2488,7 +2746,7 @@ async function handleCancellationRuntime(msg, groupName, readableText, context) 
     originAddress: call?.origin || null, destinationAddress: call?.destination || null,
     eta: null, status: 'cancelado', facts: context.facts, commercial,
     estimatedTotalKm: cancellation.chargeRequired ? cancellation.billableKm : (call?.estimatedTotalKm ?? null),
-    existingCallId: call?.id || null, cancellation,
+    existingCallId: call?.id || null, cancellation, eventType: 'cancelamento', phase: 'cancelado',
   });
   logEvent('cancellation-policy', `${groupName}: cancelamento ${cancellation.chargeRequired ? 'após' : 'dentro do'} prazo de 15 minutos.`, {
     callId: saved?.id || call?.id || null,
@@ -2534,6 +2792,7 @@ async function handleArrivalWithoutTowRuntime(msg, groupName, readableText, cont
     eta: null, status: 'concluido', facts, commercial, estimatedTotalKm: displacementKm,
     existingCallId: call?.id || null,
     serviceOutcome: { type: 'deslocamento_sem_reboque', arrivedAt: call?.arrivalConfirmedAt || arrivedAt, billableKm: displacementKm }, workedTime,
+    eventType: 'finalizado_sem_reboque', phase: 'concluido_sem_reboque', towPerformed: false,
   });
   logEvent('arrival-without-tow', `${groupName}: chegada confirmada, sem reboque e com deslocamento cobrável.`, {
     callId: saved?.id || call?.id || null, arrivedAt, billableKm: displacementKm,
@@ -2555,7 +2814,7 @@ async function handleArrivalRuntime(msg, groupName, readableText, context) {
     groupId: msg.from, groupName, text: readableText,
     originAddress: call?.origin || null, destinationAddress: call?.destination || null,
     eta: null, status: 'em_atendimento', facts: context.facts,
-    existingCallId: call?.id || null, arrival: { arrivedAt },
+    existingCallId: call?.id || null, arrival: { arrivedAt }, eventType: 'chegada_origem', phase: 'no_local_cliente',
   });
   await replyAndRemember(msg, groupName, readableText, `Chegada registrada ✅ Há ${ON_SITE_GRACE_MINUTES} minutos de tolerância no local. A partir do 16º minuto, será cobrada a primeira hora trabalhada de R$ 80,00; cada nova hora iniciada acrescenta R$ 80,00.`, {
     intent: 'arrival', arrivedAt, onSiteGraceMinutes: ON_SITE_GRACE_MINUTES, workedHourRate: WORKED_HOUR_RATE,
@@ -2567,9 +2826,11 @@ async function handleDirtRoadStartRuntime(msg, groupName, readableText, incoming
   const shared = await getRecentSharedLocation(msg.from);
   const startCoordinates = incomingLocation || shared?.coordinates || null;
   if (!startCoordinates) {
+    await setDispatchState(msg.from, { pendingLocationPurpose: 'dirt_road_start', pendingLocationRequestedAt: new Date().toISOString() });
     await replyAndRemember(msg, groupName, readableText, 'Envie a localização exata do ponto onde começa a estrada de terra. A partir desse ponto, calcularei ida e volta a R$ 3,80 por km.', { intent: 'dirt_road_location_required' });
     return;
   }
+  await setDispatchState(msg.from, { pendingLocationPurpose: null, pendingLocationRequestedAt: null });
   const clientCoordinates = call?.originCoordinates || (call?.origin ? await geocodeAddress(call.origin).catch(() => null) : null);
   if (!clientCoordinates) {
     await replyAndRemember(msg, groupName, readableText, 'Localização do início da estrada de terra recebida. Não consegui localizar o endereço do cliente para calcular o trecho; informe também os quilômetros de terra.', { intent: 'dirt_road_distance_required' });
@@ -2587,14 +2848,48 @@ async function handleDirtRoadStartRuntime(msg, groupName, readableText, incoming
     groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
     destinationAddress: call?.destination || null, eta: null, status: call?.status || 'em_atendimento', facts: context.facts,
     existingCallId: call?.id || null, dirtRoad: { startCoordinates, capturedAt, oneWayKm, billableKm },
+    eventType: 'inicio_estrada_terra', phase: 'trecho_terra',
   });
   await replyAndRemember(msg, groupName, readableText, `Trecho de terra registrado ✅ ${oneWayKm.toLocaleString('pt-BR')} km até o cliente; ${billableKm.toLocaleString('pt-BR')} km considerando ida e volta, cobrados a R$ 3,80/km. Nesse trecho, a tarifa de terra substitui a tarifa normal.`, {
     intent: 'dirt_road_start', dirtRoadOneWayKm: oneWayKm, dirtRoadBillableKm: billableKm, dirtRoadRatePerKm: 3.8,
   });
 }
 
+async function handleDirtRoadEndRuntime(msg, groupName, readableText, incomingLocation, context) {
+  const call = context.recentCall;
+  if (!call?.dirtRoadStartCoordinates) {
+    await replyAndRemember(msg, groupName, readableText, 'Não encontrei o início do trecho de terra desta corrida. Envie a localização do ponto inicial ou informe os quilômetros de terra.', { intent: 'dirt_road_start_missing' });
+    return;
+  }
+  const shared = await getRecentSharedLocation(msg.from);
+  const dirtStartedAt = new Date(call.dirtRoadCapturedAt || 0).getTime();
+  const sharedIsAfterStart = shared?.coordinates && Number.isFinite(shared.at) && shared.at > dirtStartedAt;
+  const endCoordinates = incomingLocation || (sharedIsAfterStart ? shared.coordinates : null);
+  if (!endCoordinates) {
+    await setDispatchState(msg.from, { pendingLocationPurpose: 'dirt_road_end', pendingLocationRequestedAt: new Date().toISOString() });
+    await replyAndRemember(msg, groupName, readableText, 'Envie a localização exata do ponto onde saiu da estrada de terra.', { intent: 'dirt_road_end_location_required' });
+    return;
+  }
+  await setDispatchState(msg.from, { pendingLocationPurpose: null, pendingLocationRequestedAt: null });
+  const endedAt = new Date().toISOString();
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
+    destinationAddress: call.destination || null, eta: null, status: call.status || 'em_atendimento', facts: context.facts,
+    existingCallId: call.id, dirtRoadEnd: { endCoordinates, endedAt },
+    eventType: 'fim_estrada_terra', phase: 'trecho_terra_concluido',
+  });
+  const km = Number(call.dirtRoadBillableKm || 0);
+  const amount = Number(call.dirtRoadChargeAmount || (km * 3.8));
+  const details = km > 0 ? ` ${km.toLocaleString('pt-BR')} km de ida e volta, total de ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.` : '';
+  await replyAndRemember(msg, groupName, readableText, `Saída da estrada de terra registrada ✅${details} A tarifa de R$ 3,80/km substitui a tarifa de asfalto somente nesse trecho.`, { intent: 'dirt_road_end', dirtRoadBillableKm: km, dirtRoadAmount: amount });
+}
+
 async function handleClosureRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
+  if (!call) {
+    await replyAndRemember(msg, groupName, readableText, 'Não encontrei atendimento ativo para finalizar. Informe o protocolo da corrida.', { intent: 'closure-without-call' });
+    return;
+  }
   const reportedTotalKm = context.facts.totalKm ?? null;
   const automaticKm = call?.billableKm ?? call?.routeBreakdown?.totalKm ?? null;
   const facts = {
@@ -2614,6 +2909,7 @@ async function handleClosureRuntime(msg, groupName, readableText, context) {
     status: 'concluido', facts, commercial,
     estimatedTotalKm: automaticKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null, workedTime,
+    eventType: 'fechamento', phase: 'concluido',
   });
   if (commercial.reviewRequired) {
     logEvent('finance-review', `${groupName}: fechamento exige conferência financeira.`, { callId: saved?.id, calculated: commercial.calculatedAmount, reported: commercial.reportedAmount, delta: commercial.delta });
@@ -2685,8 +2981,25 @@ async function processIncomingMessage(msg) {
       return;
     }
 
+    const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
+    const runtimeIntent = operationalContext.intent;
+
+    // Comunicados internos nunca devem receber resposta automática, inclusive
+    // fora do expediente. Eles continuam registrados no histórico de aprendizado.
+    if (shouldStaySilent(runtimeIntent, groupName)) {
+      logEvent('ignored', `${groupName}: comunicado administrativo aprendido sem resposta.`, { groupId: msg.from, intent: runtimeIntent });
+      return;
+    }
+
     const operating = evaluateOperatingHours(settings);
-    if (!operating.open) {
+    const activeFlowIntents = new Set([
+      'cancellation', 'arrival_without_tow', 'arrival', 'departure', 'waiting_customer', 'loaded',
+      'destination_arrival', 'evidence', 'address_update', 'dirt_road_start', 'dirt_road_end',
+      'closure', 'protocol_update',
+    ]);
+    const pendingLocationState = location && !text ? await getDispatchState(msg.from) : null;
+    const completingPendingLocation = ['dirt_road_start','dirt_road_end'].includes(pendingLocationState?.pendingLocationPurpose);
+    if (!operating.open && !activeFlowIntents.has(runtimeIntent) && !completingPendingLocation) {
       const reply = String(settings.outOfHoursReply || 'Motorista fora de rota.').trim().slice(0,300) || 'Motorista fora de rota.';
       await replyAndRemember(msg, groupName, readableText, reply, { intent: 'out-of-hours', day: operating.dayKey, localTime: operating.localTime, reason: operating.reason });
       logEvent('coverage', `${groupName}: mensagem recusada fora do horário de funcionamento.`, { groupId: msg.from, day: operating.dayKey, localTime: operating.localTime, reason: operating.reason });
@@ -2694,14 +3007,21 @@ async function processIncomingMessage(msg) {
     }
 
     if (location && !text) {
+      const dispatchState = await getDispatchState(msg.from);
+      if (dispatchState?.pendingLocationPurpose === 'dirt_road_start' || dispatchState?.pendingLocationPurpose === 'dirt_road_end') {
+        const locationContext = await currentOperationalContext(msg.from, groupName, dispatchState.pendingLocationPurpose === 'dirt_road_start' ? 'Início da estrada de terra' : 'Fim da estrada de terra');
+        if (dispatchState.pendingLocationPurpose === 'dirt_road_start') {
+          await handleDirtRoadStartRuntime(msg, groupName, readableText, location, locationContext);
+        } else {
+          await handleDirtRoadEndRuntime(msg, groupName, readableText, location, locationContext);
+        }
+        return;
+      }
       logEvent('system', `${groupName}: localizacao do WhatsApp armazenada; aguardando pergunta/acionamento.`, { groupId: msg.from });
       return;
     }
 
-    const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
-    const runtimeIntent = operationalContext.intent;
-
-    const canBeRejectedByArea = ['availability','quote','dispatch','authorization','formal_dispatch','scheduled_dispatch'].includes(runtimeIntent);
+    const canBeRejectedByArea = ['availability','quote','dispatch_details','incomplete_dispatch','protocol_received','authorization','formal_dispatch','scheduled_dispatch'].includes(runtimeIntent);
     if (canBeRejectedByArea) {
       const excludedArea = await findConfiguredExcludedArea({
         groupId: msg.from, readableText, facts: operationalContext.facts, incomingLocation, settings,
@@ -2717,11 +3037,6 @@ async function processIncomingMessage(msg) {
       }
     }
 
-    if (shouldStaySilent(runtimeIntent, groupName)) {
-      logEvent('ignored', `${groupName}: comunicado administrativo aprendido sem resposta.`, { groupId: msg.from, intent: runtimeIntent });
-      return;
-    }
-
     if (runtimeIntent === 'quote') {
       await handleQuoteRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
       return;
@@ -2732,6 +3047,18 @@ async function processIncomingMessage(msg) {
     }
     if (runtimeIntent === 'pending_approval') {
       await handlePendingApprovalRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'incomplete_dispatch') {
+      await handleIncompleteDispatchRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'dispatch_details') {
+      await handleDispatchDetailsRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'protocol_received' || runtimeIntent === 'protocol_update') {
+      await handleProtocolRuntime(msg, groupName, readableText, operationalContext);
       return;
     }
     if (runtimeIntent === 'scheduled_dispatch') {
@@ -2750,8 +3077,36 @@ async function processIncomingMessage(msg) {
       await handleArrivalRuntime(msg, groupName, readableText, operationalContext);
       return;
     }
+    if (runtimeIntent === 'departure') {
+      await handleDepartureRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'waiting_customer') {
+      await handleWaitingCustomerRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'loaded') {
+      await handleLoadedRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'destination_arrival') {
+      await handleDestinationArrivalRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'evidence') {
+      await handleEvidenceRuntime(msg, groupName, readableText, operationalContext, Boolean(imageDataUrl));
+      return;
+    }
+    if (runtimeIntent === 'address_update') {
+      await handleAddressUpdateRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
     if (runtimeIntent === 'dirt_road_start') {
       await handleDirtRoadStartRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'dirt_road_end') {
+      await handleDirtRoadEndRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
       return;
     }
     if (runtimeIntent === 'closure') {
@@ -3045,6 +3400,23 @@ async function waitForTestResponse(after, timeoutMs, expectSilence = false) {
   return { passed: expectSilence, response: '' };
 }
 
+async function resetTestScenarioOperationalState(groupId) {
+  const state = await getManagement();
+  const removedIds = new Set((state.calls || [])
+    .filter((call) => call.sourceGroupId === groupId && isTestCall(call))
+    .map((call) => call.id));
+  state.calls = (state.calls || []).filter((call) => !removedIds.has(call.id));
+  state.finance = (state.finance || []).filter((item) => !removedIds.has(item.sourceCallId));
+  syncDriverPayrolls(state);
+  await saveManagement(state);
+  const dispatchStates = await getDispatchStates();
+  delete dispatchStates[groupId];
+  await writeJson(dispatchStateFile, dispatchStates, 0o600);
+  groupMemory.delete(groupId);
+  sharedLocations.delete(groupId);
+  testCenterRuntime.inbound = [];
+}
+
 async function executeTestRun(run) {
   run.status = 'running'; run.startedAt = new Date().toISOString(); testCenterRuntime.currentRun = run; testCenterRuntime.inbound = [];
   try {
@@ -3056,9 +3428,7 @@ async function executeTestRun(run) {
       try {
         if (scenario.mode === 'engine') { const check = engineScenario(scenario.id); result.steps.push(check); result.status = check.passed ? 'passed' : 'failed'; }
         else {
-          groupMemory.delete(testCenterRuntime.targetGroupId);
-          sharedLocations.delete(testCenterRuntime.targetGroupId);
-          testCenterRuntime.inbound = [];
+          await resetTestScenarioOperationalState(testCenterRuntime.targetGroupId);
           let passedAll = true;
           for (const step of scenario.steps.slice(0, 20)) {
             if (run.stopRequested) break;

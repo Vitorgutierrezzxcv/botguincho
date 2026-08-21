@@ -1,7 +1,13 @@
 import { inferLearningIntent } from './learning-engine.mjs';
 
 function norm(value = '') {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(?:[a-z]\s+){2,}[a-z]\b/g, (match) => match.replace(/\s+/g, ''))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 const GROUP_PROFILES = [
@@ -18,11 +24,13 @@ const GROUP_PROFILES = [
   {
     key: 'saturno', match: /saturno|\bsb\b/,
     evidence: ['Frente, traseira e laterais na origem', 'Checklist visível/assinado', 'Foto do veículo na prancha', 'Vídeo 360 quando exigido pelo protocolo'],
+    stoppedHourRequiresReview: true,
     safeguards: ['stopped_hour_needs_explicit_approval', 'scheduled_is_not_immediate'],
   },
   {
     key: 'plus', match: /plus assistencia/,
     evidence: ['Checklist/fotos exigidos pelo protocolo/WebPrestador'],
+    associationRequired: true,
     safeguards: ['association_can_change_rate', 'toll_separate', 'worked_hour_versioned', 'math_divergence_review'],
   },
   {
@@ -34,11 +42,13 @@ const GROUP_PROFILES = [
     key: 'horizonte', match: /horizonte/,
     evidence: ['Evidências e checklist descritos no protocolo'],
     formalProtocolCanAuthorize: true,
+    absentCustomerWaitMinutes: 10,
     safeguards: ['formal_protocol_after_acceptance_can_authorize'],
   },
   {
     key: 'socorre', match: /socorre assistencia|\bsocorre\b/,
     evidence: ['Fotos/checklist conforme protocolo da associação'],
+    associationRequired: true,
     safeguards: ['association_required_before_pricing'],
   },
   {
@@ -80,23 +90,52 @@ function hasQuoteSignals(text = '') {
     || (/\bdisponivel/.test(value) && /\b(valor|previa|km)\b/.test(value));
 }
 
+function hasOperationalContext(value = '') {
+  return /\b(origem|destino|veiculo|placa|protocolo|reboque|guincho|pane|sinistro|servico|acionamento|associado|associacao|remocao|cliente)\b/.test(value);
+}
+
+function hasAdministrativeSignals(value = '') {
+  return /\b(reuniao|comunicado(?: interno)?|aviso(?: geral)?|treinamento|rotina financeira|financeiro|atualizacao de cadastro|documentos|tabelas? de valores|pagamentos? dia|contas)\b/.test(value);
+}
+
+function hasIncompleteDispatch(value = '') {
+  const hasOrigin = /\borigem\s*[:=\-]/.test(value);
+  const hasDestination = /\bdestino\s*[:=\-]/.test(value);
+  const hasVehicle = /\b(veiculo|carro|moto|modelo)\s*[:=\-]/.test(value) || /\b(carro|moto|veiculo|carro de passeio|utilitario|motocicleta)\b/.test(value);
+  const vagueRequest = /\b(parado|pane|buscar|socorro|guincho|reboque)\b/.test(value);
+  return (hasOrigin || hasDestination || hasVehicle || vagueRequest) && !(hasOrigin && hasDestination && hasVehicle);
+}
+
 export function classifyRuntimeIntent(text = '', groupName = '', recentCall = null) {
   const value = norm(text);
   const profile = resolveGroupProfile(groupName);
   const base = inferLearningIntent(text);
 
   const activeService = ['autorizado','a_caminho','em_atendimento'].includes(recentCall?.status);
+  const evidenceContext = activeService || recentCall?.status === 'concluido';
+  if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';
+
+  const dirtRoadEndSignal = /\b(saiu|saimos|saindo|fim|terminou|acabou)\b.{0,28}\b(estrada|rua|trecho)\s+de\s+terra\b|\bvoltou\s+(o\s+)?asfalto\b/.test(value);
   const dirtRoadSignal = /\b(estrada|rua|trecho)\s+de\s+terra\b|\bcomeca\s+(aqui\s+)?(a\s+)?terra\b|\bacabou\s+o\s+asfalto\b/.test(value);
+  if (activeService && dirtRoadEndSignal) return 'dirt_road_end';
   if (activeService && dirtRoadSignal) return 'dirt_road_start';
   const arrivalSignal = /\b(guincho|prestador|motorista)\s+(ja\s+)?(chegou|esta no local)|\bchegamos?\s+(ao|no)\s+local\b/.test(value);
   const noTowSignal = /\b(carro|veiculo)\s+(voltou a\s+)?(funcionou|ligou|pegou)\b|\b(nao quer|n quer|nao deseja|recusou)\s+(levar|remover|rebocar)|\b(dispensou|dispensa)\s+(o\s+)?guincho\b|\bsem\s+reboque\b/.test(value);
-  if (activeService && arrivalSignal && noTowSignal) return 'arrival_without_tow';
+  if (activeService && noTowSignal && (arrivalSignal || recentCall?.arrivalConfirmed === true || recentCall?.status === 'em_atendimento')) return 'arrival_without_tow';
+  if (activeService && noTowSignal) return 'cancellation';
   if (activeService && arrivalSignal) return 'arrival';
 
-  if (base === 'administrative_notice') return 'administrative_notice';
+  if (activeService && /\b(cliente|segurado|associado)\b.{0,30}\b(nao esta|nao chegou|ausente|nao apareceu|demorando)\b|\baguardando\s+(o\s+)?(cliente|segurado|associado)\b/.test(value)) return 'waiting_customer';
+  if (activeService && /\b(novo|alteracao|mudou|troca)\b.{0,24}\bdestino\b|\bdestino\s+alterado\b/.test(value)) return 'address_update';
+  if (activeService && /\b(veiculo|carro|moto)\b.{0,24}\b(na prancha|embarcado|carregado|guinchado)\b|\bembarque\s+(concluido|realizado)\b/.test(value)) return 'loaded';
+  if (activeService && /\b(chegou|chegamos|entregue|entregamos)\b.{0,28}\b(destino|oficina|patio)\b/.test(value)) return 'destination_arrival';
+  if (activeService && /\b(saindo|saiu|a caminho|em deslocamento|iniciando deslocamento)\b/.test(value)) return 'departure';
+  if (evidenceContext && (/\b(fotos?|checklist|video|evidencias?)\b.{0,30}\b(enviad\w*|anexad\w*|realizad\w*|concluid\w*|feito|pronto)\b/.test(value) || value === '[imagem recebida]')) return 'evidence';
+  if (evidenceContext && /\bprotocolo\b/.test(value)) return 'protocol_update';
+
   if (base === 'cancellation') return 'cancellation';
   if (base === 'pending_approval') return 'pending_approval';
-  if (base === 'scheduled_dispatch') return 'scheduled_dispatch';
+  if (base === 'scheduled_dispatch' && (hasOperationalContext(value) || /\bagendamento|agendado|agendada\b/.test(value))) return 'scheduled_dispatch';
 
   if (profile.key === 'company-truck' && /cotacao\s+visao|tipo\s*:\s*visao/.test(value)) return 'quote';
 
@@ -110,13 +149,18 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   if (base === 'closure') return 'closure';
   if (base === 'eta') return 'eta';
 
+  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha
+  // completa/protocolo esteja na mesma mensagem. Nunca autoriza por acidente.
+  if (base === 'availability') return 'availability';
+
   if (hasFormalProtocol(text)) {
+    if (activeService) return 'protocol_update';
     if (profile.formalProtocolCanAuthorize && ['cotacao','aguardando_aprovacao','novo','disponibilidade'].includes(recentCall?.status)) return 'formal_dispatch';
-    return 'formal_dispatch';
+    return 'protocol_received';
   }
 
-  if (base === 'availability') return 'availability';
-  if (base === 'dispatch') return 'dispatch';
+  if (base === 'dispatch') return hasIncompleteDispatch(value) ? 'incomplete_dispatch' : 'dispatch_details';
+  if (hasIncompleteDispatch(value)) return 'incomplete_dispatch';
   return base;
 }
 
@@ -132,20 +176,29 @@ function firstNumber(text, patterns = []) {
 
 function labeled(text, labels = []) {
   const raw = String(text || '').replace(/\r/g, '');
+  const boundaries = 'ORIGEM|DESTINO|VE[IÍ]CULO|MODELO|PLACA|SERVI[CÇ]O|TIPO\\s*DE\\s*SERVI[CÇ]O|PROTOCOLO|N[º°]?\\s*PROTOCOLO|ASSOCIA[CÇ][AÃ]O|ASSIST[EÊ]NCIA|SEGURADORA|CLIENTE';
   for (const label of labels) {
     const re = new RegExp(`(?:^|\\n)\\s*${label}\\s*[:=\\-]\\s*([^\\n]+)`, 'im');
     const match = raw.match(re);
-    if (match?.[1]) return match[1].trim().slice(0, 500);
+    if (match?.[1]) {
+      const value = match[1].split(new RegExp(`\\s+(?=(?:${boundaries})\\s*[:=\\-])`, 'i'))[0];
+      return value.trim().replace(/[.;,]+$/, '').slice(0, 500);
+    }
+  }
+  for (const label of labels) {
+    const inline = new RegExp(`(?:^|\\s)${label}\\s*[:=\\-]\\s*(.+?)(?=\\s+(?:${boundaries})\\s*[:=\\-]|$)`, 'i');
+    const match = raw.match(inline);
+    if (match?.[1]) return match[1].trim().replace(/[.;,]+$/, '').slice(0, 500);
   }
   return '';
 }
 
 export function inferVehicleType(text = '') {
   const value = norm(text);
-  if (/\b(utilitario|utilitária|utilitaria|van|fiorino|master|ducato|sprinter)\b/.test(value)) return 'utilitario';
+  if (/\b(utilitario|utilitária|utilitaria|van|fiorino|master|ducato|sprinter|saveiro|strada|montana|courier)\b/.test(value)) return 'utilitario';
   if (/\b(moto|motocicleta|scooter)\b/.test(value)) return 'moto';
   if (/\b(pesado|caminhao|caminhão|onibus|ônibus)\b/.test(value)) return 'pesado';
-  if (/\b(leve|carro|automovel|automóvel|hatch|sedan|suv)\b/.test(value)) return 'leve';
+  if (/\b(leve|carro|veiculo|automovel|automóvel|hatch|sedan|suv|uno|gol|onix|ka|palio|classic|corsa|celta|hb20|kwid|sandero|logan|corolla|civic)\b/.test(value)) return 'leve';
   return null;
 }
 
@@ -181,6 +234,11 @@ export function extractOperationalFacts(text = '') {
     const hh = Number(timeMatch?.[1] || 0), mm = Number(timeMatch?.[2] || 0);
     const dt = new Date(fullYear, Number(dateMatch[2]) - 1, Number(dateMatch[1]), hh, mm);
     if (!Number.isNaN(dt.getTime())) scheduledAt = dt.toISOString();
+  } else if (/\bagend|\bamanha\b/.test(value) && /\bamanha\b/.test(value) && timeMatch) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() + 1);
+    dt.setHours(Number(timeMatch[1]), Number(timeMatch[2]), 0, 0);
+    scheduledAt = dt.toISOString();
   }
 
   return {
@@ -208,6 +266,35 @@ export function buildEvidenceChecklist(groupName = '', text = '') {
   if (/\bchecklist\b/.test(value) && !items.some((x) => norm(x).includes('checklist'))) items.push('Checklist solicitado no protocolo');
   if (/\bfoto/.test(value) && !items.some((x) => norm(x).includes('foto'))) items.push('Fotos solicitadas no protocolo');
   return [...new Set(items)].map((label) => ({ label, done: false }));
+}
+
+export function markEvidenceChecklist(checklist = [], text = '', hasMedia = false) {
+  const value = norm(text);
+  const marksPhotos = hasMedia || /\bfotos?\b/.test(value);
+  const marksVideo = /\bvideo\b/.test(value);
+  const marksChecklist = /\bchecklist\b/.test(value);
+  return (Array.isArray(checklist) ? checklist : []).map((item) => {
+    const label = norm(item?.label);
+    const done = item?.done === true
+      || (marksPhotos && /foto|angulo|frente|traseira|latera|prancha|embarque/.test(label))
+      || (marksVideo && /video/.test(label))
+      || (marksChecklist && /checklist|assinatura/.test(label));
+    return { ...item, done, completedAt: done && !item?.completedAt ? new Date().toISOString() : (item?.completedAt || null) };
+  });
+}
+
+export function appendOperationalTimeline(timeline = [], event = {}) {
+  const at = event.at || new Date().toISOString();
+  const row = {
+    id: event.id || `evt-${Date.parse(at) || Date.now()}-${(Array.isArray(timeline) ? timeline.length : 0) + 1}`,
+    at,
+    type: String(event.type || 'atualizacao'),
+    fromStatus: event.fromStatus || null,
+    toStatus: event.toStatus || null,
+    text: String(event.text || '').slice(0, 1200),
+    meta: event.meta && typeof event.meta === 'object' ? event.meta : {},
+  };
+  return [...(Array.isArray(timeline) ? timeline : []), row].slice(-200);
 }
 
 function chooseServiceRule(approvedRules, vehicleType) {
@@ -308,7 +395,15 @@ export function callStatusForIntent(intent = '') {
     pending_approval: 'aguardando_aprovacao',
     authorization: 'autorizado',
     formal_dispatch: 'autorizado',
-    dispatch: 'autorizado',
+    protocol_received: 'aguardando_aprovacao',
+    dispatch_details: 'aguardando_aprovacao',
+    incomplete_dispatch: 'aguardando_dados',
+    protocol_update: null,
+    departure: 'a_caminho',
+    arrival: 'em_atendimento',
+    waiting_customer: 'em_atendimento',
+    loaded: 'em_atendimento',
+    destination_arrival: 'em_atendimento',
     scheduled_dispatch: 'agendado',
     cancellation: 'cancelado',
     closure: 'concluido',
