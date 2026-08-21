@@ -1,2 +1,2 @@
-deploy complete operational state machine v5 2026-08-21T16:32:49Z
+deploy operational v5 test-history cleanup 2026-08-21T16:46:00Z
 source dynamic github.sha
