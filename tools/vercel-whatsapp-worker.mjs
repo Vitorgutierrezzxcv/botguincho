@@ -31,6 +31,8 @@ const dataDir = process.env.BOTGUINCHO_DATA_DIR ?? path.join(os.homedir(), '.bot
 const clientDir = path.join(dataDir, clientId);
 const sessionDir = path.join(clientDir, 'whatsapp-session');
 const simulatorSessionDir = path.join(clientDir, 'whatsapp-simulator-session');
+const simulatorSessionRoot = path.join(simulatorSessionDir, `session-${clientId}-simulator`);
+const simulatorAutoConnectFile = path.join(clientDir, 'whatsapp-simulator-enabled.json');
 const testCenterFile = path.join(clientDir, 'test-center.json');
 const settingsFile = path.join(clientDir, 'settings.json');
 const groupsFile = path.join(clientDir, 'groups.json');
@@ -58,6 +60,9 @@ let simulatorClient = null;
 let simulatorStatus = 'desconectado';
 let simulatorQrDataUrl = null;
 let simulatorLastError = null;
+let simulatorStartedAt = 0;
+let simulatorWatchdog = null;
+let simulatorRecoveryTimer = null;
 let testCenterRuntime = { currentRun: null, targetGroupId: null, inbound: [] };
 
 const activity = [];
@@ -2886,6 +2891,7 @@ async function startWhatsApp() {
     try {
       await discoverGroups();
     } catch {}
+    if (await simulatorAutoConnectEnabled()) scheduleSimulatorRecovery('primary-ready', 8000);
   });
 
   waClient.on('message_create', async (created) => {
@@ -2945,27 +2951,77 @@ async function selectedTestGroup() {
   return group;
 }
 
-async function startTestSimulator() {
+async function simulatorAutoConnectEnabled() {
+  try { return (await readJson(simulatorAutoConnectFile, {}))?.enabled === true; } catch { return false; }
+}
+
+async function setSimulatorAutoConnect(enabled) {
+  if (enabled) await writeJson(simulatorAutoConnectFile, { enabled: true, updatedAt: new Date().toISOString() });
+  else await fs.rm(simulatorAutoConnectFile, { force: true }).catch(() => undefined);
+}
+
+async function clearSimulatorChromiumLocks() {
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) await fs.rm(path.join(simulatorSessionRoot, name), { force: true, recursive: true }).catch(() => undefined);
+}
+
+function clearSimulatorTimers() {
+  if (simulatorWatchdog) clearTimeout(simulatorWatchdog);
+  if (simulatorRecoveryTimer) clearTimeout(simulatorRecoveryTimer);
+  simulatorWatchdog = null; simulatorRecoveryTimer = null;
+}
+
+async function resetTestSimulator(status = 'desconectado', error = null) {
+  clearSimulatorTimers();
+  const current = simulatorClient; simulatorClient = null; simulatorStartedAt = 0;
+  if (current) await Promise.race([current.destroy().catch(() => undefined), delay(8000)]);
+  await clearSimulatorChromiumLocks();
+  simulatorStatus = status; simulatorLastError = error; simulatorQrDataUrl = null;
+}
+
+function scheduleSimulatorRecovery(reason = 'unknown', delayMs = 15000) {
+  if (simulatorRecoveryTimer || gracefulShutdownStarted) return;
+  simulatorRecoveryTimer = setTimeout(async () => {
+    simulatorRecoveryTimer = null;
+    if (waStatus !== 'pronto' || !(await simulatorAutoConnectEnabled())) return;
+    logEvent('test', 'Reconectando automaticamente o segundo WhatsApp.', { reason });
+    await startTestSimulator({ force: true }).catch((error) => {
+      simulatorLastError = error instanceof Error ? error.message : String(error);
+      scheduleSimulatorRecovery('retry-after-failure', 20000);
+    });
+  }, delayMs);
+}
+
+async function startTestSimulator({ force = false } = {}) {
+  const stuck = simulatorClient && simulatorStatus === 'iniciando' && Date.now() - simulatorStartedAt > 45000;
+  if (simulatorClient && (force || stuck)) await resetTestSimulator('reiniciando');
   if (simulatorClient) return;
+  if (waStatus !== 'pronto') throw new Error('Aguarde o WhatsApp principal ficar pronto antes de conectar o segundo número.');
+  await clearSimulatorChromiumLocks();
   simulatorStatus = 'iniciando'; simulatorLastError = null; chromium.setGraphicsMode = false;
+  simulatorStartedAt = Date.now();
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath();
-  simulatorClient = new Client({
+  const client = new Client({
     authStrategy: new LocalAuth({ clientId: `${clientId}-simulator`, dataPath: simulatorSessionDir }), authTimeoutMs: 300000,
     puppeteer: { executablePath, headless: true, args: [...new Set([...chromium.args, '--disable-dev-shm-usage', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'])], protocolTimeout: 300000 },
   });
-  simulatorClient.on('qr', async (qr) => { simulatorStatus = 'qr'; simulatorQrDataUrl = await QRCode.toDataURL(qr, { width: 420, margin: 1 }); });
-  simulatorClient.on('authenticated', () => { simulatorStatus = 'autenticado'; simulatorQrDataUrl = null; });
-  simulatorClient.on('ready', () => { simulatorStatus = 'pronto'; simulatorQrDataUrl = null; logEvent('test', 'Segundo WhatsApp conectado à Central de Testes.'); });
-  simulatorClient.on('message', async (message) => {
+  simulatorClient = client;
+  client.on('qr', async (qr) => { if (simulatorClient !== client) return; simulatorStatus = 'qr'; simulatorQrDataUrl = await QRCode.toDataURL(qr, { width: 420, margin: 1 }); });
+  client.on('authenticated', () => { if (simulatorClient !== client) return; simulatorStatus = 'autenticado'; simulatorQrDataUrl = null; });
+  client.on('ready', () => { if (simulatorClient !== client) return; if (simulatorWatchdog) clearTimeout(simulatorWatchdog); simulatorWatchdog = null; simulatorStatus = 'pronto'; simulatorStartedAt = 0; simulatorQrDataUrl = null; logEvent('test', 'Segundo WhatsApp conectado à Central de Testes.'); });
+  client.on('message', async (message) => {
     const chat = await message.getChat().catch(() => null); const groupId = chat?.id?._serialized || message?.from || '';
     if (!message?.fromMe && testCenterRuntime.currentRun?.status === 'running' && groupId === testCenterRuntime.targetGroupId) {
       testCenterRuntime.inbound.push({ at: Date.now(), text: String(message.body || ''), from: message.author || message.from || '' });
       if (testCenterRuntime.inbound.length > 100) testCenterRuntime.inbound.shift();
     }
   });
-  simulatorClient.on('auth_failure', (reason) => { simulatorStatus = 'erro'; simulatorLastError = String(reason); });
-  simulatorClient.on('disconnected', (reason) => { simulatorStatus = 'desconectado'; simulatorLastError = String(reason); simulatorClient = null; });
-  simulatorClient.initialize().catch((error) => { simulatorStatus = 'erro'; simulatorLastError = String(error); simulatorClient = null; });
+  client.on('auth_failure', (reason) => { if (simulatorClient !== client) return; void resetTestSimulator('erro', String(reason)).then(() => scheduleSimulatorRecovery('auth-failure')); });
+  client.on('disconnected', (reason) => { if (simulatorClient !== client) return; void resetTestSimulator('reconectando', String(reason)).then(() => scheduleSimulatorRecovery('disconnected')); });
+  simulatorWatchdog = setTimeout(() => {
+    if (simulatorClient !== client || !['iniciando','autenticado'].includes(simulatorStatus)) return;
+    void resetTestSimulator('erro', 'A inicialização do segundo WhatsApp excedeu 75 segundos. Tentando novamente automaticamente.').then(() => scheduleSimulatorRecovery('startup-timeout', 5000));
+  }, 75000);
+  client.initialize().catch((error) => { if (simulatorClient !== client) return; void resetTestSimulator('erro', error instanceof Error ? error.message : String(error)).then(() => scheduleSimulatorRecovery('initialize-failure')); });
 }
 
 function engineScenario(id) {
@@ -3022,9 +3078,9 @@ app.get('/api/test-center', async (_req, res) => { const saved = await readTestC
 app.post('/api/test-center', async (req, res) => {
   try {
     const action = String(req.body?.action || '');
-    if (action === 'connect') { await startTestSimulator(); return res.json({ ok: true, status: simulatorStatus }); }
+    if (action === 'connect') { await setSimulatorAutoConnect(true); await startTestSimulator({ force: simulatorStatus === 'erro' || simulatorStatus === 'reiniciando' || (simulatorStatus === 'iniciando' && Date.now() - simulatorStartedAt > 45000) }); return res.json({ ok: true, status: simulatorStatus }); }
     if (action === 'stop') { if (testCenterRuntime.currentRun?.status === 'running') testCenterRuntime.currentRun.stopRequested = true; return res.json({ ok: true }); }
-    if (action === 'disconnect') { const current = simulatorClient; simulatorClient = null; if (current) await current.destroy().catch(() => undefined); simulatorStatus = 'desconectado'; simulatorQrDataUrl = null; return res.json({ ok: true }); }
+    if (action === 'disconnect') { await setSimulatorAutoConnect(false); await resetTestSimulator('desconectado'); return res.json({ ok: true }); }
     if (action === 'run') { if (testCenterRuntime.currentRun?.status === 'running') return res.status(409).json({ ok: false, error: 'Já existe uma bateria de testes em execução.' }); const requested = Array.isArray(req.body?.scenarioIds) ? req.body.scenarioIds.filter((id) => TEST_SCENARIOS.some((item) => item.id === id)) : []; if (!requested.length) return res.status(400).json({ ok: false, error: 'Selecione pelo menos um cenário.' }); const run = createTestRun(requested); testCenterRuntime.currentRun = run; await persistTestRun(run); void executeTestRun(run); return res.json({ ok: true, run }); }
     return res.status(400).json({ ok: false, error: 'Ação inválida.' });
   } catch (error) { return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
