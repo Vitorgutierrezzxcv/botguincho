@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { TEST_SCENARIOS, createTestRun, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
+import { TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 
 assert(TEST_SCENARIOS.length >= 15);
 assert(responseMatches('Confirmado. Cancelamento sem cobrança em até 15 minutos.', ['15']));
@@ -13,6 +13,8 @@ assert(isTestCall({ insurer: 'Tests guincho', status: 'autorizado' }));
 
 const run = createTestRun(['availability', 'cancel_after_15']);
 assert.equal(run.results.length, 2);
+assert.equal(run.suiteVersion, TEST_SUITE_VERSION);
+assert.deepEqual(currentTestHistory([{ id: 'old' }, run]), [run]);
 run.results[0].status = 'passed';
 run.results[1].status = 'failed';
 assert.deepEqual(summarizeTestRun(run), { scenarios: 2, passed: 1, failed: 1, skipped: 0, running: 0 });
