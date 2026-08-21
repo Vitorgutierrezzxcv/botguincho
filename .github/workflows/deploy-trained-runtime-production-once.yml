@@ -117,11 +117,14 @@ jobs:
       - name: Validate learning endpoints and authorized groups
         run: |
           set -euo pipefail
-          curl -fsS "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups.json
-          curl -fsS "$BASE/api/worker/group-knowledge?companyId=$COMPANY" -o /tmp/knowledge.json
-          curl -fsS "$BASE/api/worker/management?companyId=$COMPANY" -o /tmp/management.json
-          curl -fsS "$BASE/api/worker/billing?companyId=$COMPANY" -o /tmp/billing.json
-          curl -fsS "$BASE/api/worker/test-center?companyId=$COMPANY" -o /tmp/test-center.json
+          fetch_json() {
+            curl -fsS --max-time 45 --retry 5 --retry-delay 3 --retry-all-errors "$1" -o "$2"
+          }
+          fetch_json "$BASE/api/worker/groups?companyId=$COMPANY" /tmp/groups.json
+          fetch_json "$BASE/api/worker/group-knowledge?companyId=$COMPANY" /tmp/knowledge.json
+          fetch_json "$BASE/api/worker/management?companyId=$COMPANY" /tmp/management.json
+          fetch_json "$BASE/api/worker/billing?companyId=$COMPANY" /tmp/billing.json
+          fetch_json "$BASE/api/worker/test-center?companyId=$COMPANY" /tmp/test-center.json
           python3 - <<'PY'
           import json
           groups=json.load(open('/tmp/groups.json')).get('groups',[])
