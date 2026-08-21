@@ -4,6 +4,8 @@ import { TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, 
 assert(TEST_SCENARIOS.length >= 15);
 assert(responseMatches('Confirmado. Cancelamento sem cobrança em até 15 minutos.', ['15']));
 assert(responseMatches('LOCALIZAÇÃO necessária', ['localizacao']));
+assert(responseMatches('Disponível ✅\nPrevisão de chegada: 12 min.', ['disponível', 'previsão'], [], true));
+assert(!responseMatches('Disponível ✅', ['disponível', 'previsão'], [], true));
 assert(!responseMatches('Mensagem sem relação', ['confirmado', 'disponível']));
 assert(!responseMatches('Indisponível no momento.', ['disponível'], ['indisponível']));
 assert(TEST_SCENARIOS.find((item) => item.id === 'arrival').steps.length >= 3);
