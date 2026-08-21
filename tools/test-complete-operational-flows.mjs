@@ -18,6 +18,8 @@ const arrived = { status: 'em_atendimento', arrivalConfirmed: true };
 const intentCases = [
   // Consultas nunca autorizam por acidente.
   ['PROTOCOLO: 1\nORIGEM: Rua A\nDESTINO: Rua B\nVEÍCULO: Uno\nDisponível?', 'Solução Assistência', null, 'availability'],
+  ['Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.\n\nDisponível?', 'Tests guincho', null, 'availability'],
+  ['Qual a prévia?', 'Tests guincho', { status: 'cotacao', origin: 'Rua das Rosas, 310, Betim - MG' }, 'eta'],
   ['Disponível? Valor e prévia? Quantos kms totais?', 'Company Truck', null, 'quote'],
   ['SOLICITAÇÃO DE COTAÇÃO - REBOQUE Tipo: Visão', 'Company Truck', null, 'quote'],
   ['Origem: Rua A, 10. Destino: Rua B, 20. Veículo: Fiat Uno.', 'Solução Assistência', null, 'dispatch_details'],
