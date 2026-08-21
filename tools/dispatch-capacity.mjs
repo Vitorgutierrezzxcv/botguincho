@@ -7,6 +7,8 @@ function timestamp(value) {
 }
 
 export function isCapacityActiveCall(call = {}) {
+  // Simulações da Central de Testes nunca podem consumir vagas da operação real.
+  if (call?.testMode === true) return false;
   return ACTIVE_CAPACITY_STATUSES.has(String(call?.status || '').toLowerCase());
 }
 
