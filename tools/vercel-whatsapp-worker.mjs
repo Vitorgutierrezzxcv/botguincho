@@ -17,7 +17,7 @@ import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellation
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
 import { driverPayForCall, driverPayrollPeriodFor, markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
 import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
-import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, createTestRun, responseMatches, summarizeTestRun } from './test-center.mjs';
+import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, createTestRun, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -329,7 +329,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     const explicitExisting = existingCallId ? state.calls.find((call) => call.id === existingCallId) || null : null;
     const recent = recentManagementCall(state, groupId);
     const recentCanAttach = transitionCanAttach && recent && !(status === 'autorizado' && isCapacityActiveCall(recent));
-    const isActiveTestGroup = testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId;
+    const isActiveTestGroup = isTestGroupName(groupName) || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId);
     const candidateExisting = explicitExisting || exact || (recentCanAttach ? recent : null);
     const existing = isActiveTestGroup && candidateExisting?.testMode !== true ? null : candidateExisting;
     const knowledge = await getGroupKnowledgeEntry(groupId);
@@ -452,7 +452,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       valueSource: displacementWithoutTow && Number(commercial?.calculatedAmount) > 0 ? 'deslocamento_ate_origem' : (isBillableCancellation && Number(commercial?.calculatedAmount) > 0 ? 'politica_cancelamento_km_total' : (existing?.valueSource || null)),
       createdAt: existing?.createdAt || transitionAt,
       updatedAt: transitionAt,
-      testMode: existing?.testMode === true || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId),
+      testMode: existing?.testMode === true || isTestGroupName(groupName) || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId),
       testRunId: existing?.testRunId || (testCenterRuntime.targetGroupId === groupId ? testCenterRuntime.currentRun?.id || null : null),
     };
 
@@ -470,7 +470,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
 }
 
 function maybeCreateFinanceFromBillableCall(state, item) {
-  if (item?.historicalImport === true || item?.testMode === true) return;
+  if (item?.historicalImport === true || isTestCall(item)) return;
   const billableCancellation = item?.status === 'cancelado' && item?.cancellationChargeRequired === true;
   if (!item || (item.status !== 'concluido' && !billableCancellation) || !managementAutomationEnabled(state, 'auto-finance')) return;
   if ((state.finance || []).some((entry) => entry.sourceCallId === item.id)) return;
@@ -3183,7 +3183,7 @@ app.get('/api/audit', async (req, res) => {
 app.get('/api/management', async (_req, res) => {
   try {
     const data = await getManagement();
-    return res.json({ ok: true, data: { ...data, calls: (data.calls || []).filter((item) => item.testMode !== true) } });
+    return res.json({ ok: true, data: { ...data, calls: (data.calls || []).filter((item) => !isTestCall(item)) } });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
