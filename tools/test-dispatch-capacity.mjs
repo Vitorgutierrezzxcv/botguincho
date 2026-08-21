@@ -3,6 +3,7 @@ import { activeCallsForCapacity, capacitySnapshot, isCapacityActiveCall } from '
 
 assert.equal(isCapacityActiveCall({ status: 'autorizado' }), true);
 assert.equal(isCapacityActiveCall({ status: 'autorizado', testMode: true }), false);
+assert.equal(isCapacityActiveCall({ status: 'autorizado', insurer: 'Tests guincho' }), false);
 
 const state = {
   calls: [
