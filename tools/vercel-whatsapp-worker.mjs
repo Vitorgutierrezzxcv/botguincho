@@ -109,6 +109,37 @@ const DEFAULT_SETTINGS = {
   operationalBaseAddress: '',
 };
 
+const FLOW_ACTIVE_STATUSES = new Set(['autorizado', 'a_caminho', 'em_atendimento']);
+const DEFAULT_TEST_COMMERCIAL_RULES = {
+  detected: true,
+  source: 'test_default',
+  services: {
+    leve: { basePrice: 135, includedKm: 40, pricePerKm: 3, dirtRoadPricePerKm: 3.8 },
+    moto: { basePrice: 135, includedKm: 40, pricePerKm: 3, dirtRoadPricePerKm: 3.8 },
+    utilitario: { basePrice: 160, includedKm: 40, pricePerKm: 3.2, dirtRoadPricePerKm: 3.8 },
+  },
+  workedHour: WORKED_HOUR_RATE,
+  stoppedHour: WORKED_HOUR_RATE,
+  tollAllowed: true,
+};
+
+function isFlowActiveCall(call = {}) {
+  return FLOW_ACTIVE_STATUSES.has(String(call?.status || '').toLowerCase());
+}
+
+function commercialRulesForGroup(knowledge = null, groupName = '') {
+  if (knowledge?.commercialStatus === 'approved' && knowledge?.approvedCommercialRules) {
+    return { rules: knowledge.approvedCommercialRules, source: 'approved' };
+  }
+  if (knowledge?.draftCommercialRules?.detected) {
+    return { rules: knowledge.draftCommercialRules, source: 'group_description' };
+  }
+  if (isTestGroupName(groupName)) {
+    return { rules: DEFAULT_TEST_COMMERCIAL_RULES, source: 'test_default' };
+  }
+  return { rules: null, source: 'missing' };
+}
+
 function getAiClient() {
   if (!aiCredential) return null;
   return new OpenAI({ apiKey: aiCredential, baseURL: 'https://ai-gateway.vercel.sh/v1' });
@@ -229,20 +260,24 @@ async function getGroupKnowledgeEntry(groupId) {
 
 function recentManagementCall(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
   const now = Date.now();
-  return (state.calls || []).find((call) => {
-    if (call.sourceGroupId !== groupId) return false;
-    const age = now - new Date(call.updatedAt || call.createdAt || 0).getTime();
-    return age >= 0 && age < maxAgeMs && !['concluido','cancelado'].includes(call.status);
-  }) || null;
+  return (state.calls || [])
+    .filter((call) => {
+      if (call.sourceGroupId !== groupId) return false;
+      const age = now - new Date(call.updatedAt || call.createdAt || 0).getTime();
+      return age >= 0 && age < maxAgeMs && !['concluido','cancelado'].includes(call.status);
+    })
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())[0] || null;
 }
 
 function recentManagementRecord(state, groupId, maxAgeMs = 48 * 60 * 60 * 1000) {
   const now = Date.now();
-  return (state.calls || []).find((call) => {
-    if (call.sourceGroupId !== groupId) return false;
-    const age = now - new Date(call.updatedAt || call.createdAt || 0).getTime();
-    return age >= 0 && age < maxAgeMs;
-  }) || null;
+  return (state.calls || [])
+    .filter((call) => {
+      if (call.sourceGroupId !== groupId) return false;
+      const age = now - new Date(call.updatedAt || call.createdAt || 0).getTime();
+      return age >= 0 && age < maxAgeMs;
+    })
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())[0] || null;
 }
 
 function oldestActiveManagementCallForGroup(state, groupId) {
@@ -319,15 +354,15 @@ async function estimateSecondCallArrival({ management, targetAddress = null, tar
   };
 }
 
-async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial = null, estimatedTotalKm = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null, dirtRoad = null, dirtRoadEnd = null, eventType = null, phase = null, towPerformed = null }) {
+async function recordDispatchInManagement({ groupId, groupName, text, originAddress, destinationAddress, originCoordinates = null, eta, status = 'autorizado', facts = null, commercial: requestedCommercial = null, estimatedTotalKm = null, routeSnapshotOverride = null, evidenceChecklist = null, existingCallId = null, cancellation = null, serviceOutcome = null, arrival = null, workedTime = null, dirtRoad = null, dirtRoadEnd = null, eventType = null, phase = null, towPerformed = null }) {
   try {
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
     const billingProfile = ensureBillingProfile(state, groupId, groupName);
     const routeOrigin = originAddress || parsed.origin || '';
     const routeDestination = destinationAddress || parsed.destination || '';
-    let routeSnapshot = null;
-    if (status === 'autorizado' && (routeOrigin || originCoordinates) && routeDestination) {
+    let routeSnapshot = routeSnapshotOverride;
+    if (!routeSnapshot && status === 'autorizado' && (routeOrigin || originCoordinates) && routeDestination) {
       routeSnapshot = await computeFullServiceRoute({ originAddress: routeOrigin || null, originCoordinates, destinationAddress: routeDestination, baseAddressOverride: billingProfile?.baseAddress || '' }).catch((error) => {
         logEvent('warning', 'Não foi possível congelar a rota completa do atendimento autorizado.', { error: String(error), groupId });
         return null;
@@ -347,10 +382,10 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     const recent = recentManagementCall(state, groupId);
     // Um novo pedido no mesmo grupo não pode sobrescrever uma corrida que já
     // está em execução. Atualizações de uma corrida ativa sempre passam o id.
-    const recentCanAttach = transitionCanAttach && recent && !isCapacityActiveCall(recent);
+    const recentCanAttach = transitionCanAttach && recent && !isFlowActiveCall(recent);
     const isActiveTestGroup = isTestGroupName(groupName) || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId);
     const passiveOpportunityStatus = ['cotacao','aguardando_dados','aguardando_aprovacao','agendado'].includes(status);
-    const exactCanAttach = exact && !(passiveOpportunityStatus && isCapacityActiveCall(exact));
+    const exactCanAttach = exact && !(passiveOpportunityStatus && isFlowActiveCall(exact));
     const candidateExisting = explicitExisting || exactCanAttach || (recentCanAttach ? recent : null);
     const existing = isActiveTestGroup && candidateExisting?.testMode !== true ? null : candidateExisting;
     const knowledge = await getGroupKnowledgeEntry(groupId);
@@ -369,12 +404,12 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     }
 
     let autoBillableKm = billingProfile?.routeBasis === 'origin_destination'
-      ? (routeSnapshot?.serviceLeg?.km ?? existing?.routeBreakdown?.serviceLeg?.km ?? estimatedTotalKm ?? null)
+      ? (routeSnapshot?.serviceLeg?.km ?? existing?.routeBreakdown?.serviceLeg?.km ?? estimatedTotalKm ?? existing?.estimatedTotalKm ?? null)
       : billingProfile?.routeBasis === 'insurer_reported'
         ? (parsed.totalKm ?? existing?.totalKm ?? null)
         : billingProfile?.routeBasis === 'manual'
-          ? null
-          : (routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? null);
+          ? (isTestGroupName(groupName) ? (routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? existing?.estimatedTotalKm ?? null) : null)
+          : (routeSnapshot?.totalKm ?? existing?.billableKm ?? estimatedTotalKm ?? existing?.estimatedTotalKm ?? null);
 
     const transitionAt = new Date().toISOString();
     const assignedFleet = (state.fleet || []).find((item) => item.status === 'em_servico' && item.driver) || (state.fleet || []).find((item) => item.driver) || (state.fleet || [])[0] || null;
@@ -385,6 +420,21 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     }
     if (displacementWithoutTow && Number.isFinite(Number(serviceOutcome?.billableKm))) {
       autoBillableKm = Number(serviceOutcome.billableKm);
+    }
+    const resolvedRules = commercialRulesForGroup(knowledge, groupName);
+    let commercial = requestedCommercial;
+    if (!commercial && (isFlowActiveCall({ status }) || status === 'concluido' || isBillableCancellation)) {
+      const automaticFacts = {
+        ...parsed,
+        vehicleType: parsed.vehicleType || existing?.vehicleType || null,
+        totalKm: autoBillableKm ?? parsed.totalKm ?? routeSnapshot?.totalKm ?? existing?.billableKm ?? existing?.totalKm ?? null,
+        extras: {
+          ...(parsed.extras || {}),
+          dirtRoadKm: parsed.extras?.dirtRoadKm ?? dirtRoad?.billableKm ?? existing?.dirtRoadBillableKm ?? 0,
+        },
+      };
+      commercial = reconcileCommercial({ approvedRules: resolvedRules.rules, facts: automaticFacts, estimatedTotalKm: automaticFacts.totalKm });
+      commercial.ruleSource = resolvedRules.source;
     }
     const authorizedAt = status === 'autorizado'
       ? (existing?.authorizedAt || transitionAt)
@@ -451,8 +501,12 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       driverFleetId: existing?.driverFleetId || assignedFleet?.id || null,
       association: parsed.association || existing?.association || '',
       protocol: parsed.protocol || existing?.protocol || '',
+      associatedName: parsed.associatedName || existing?.associatedName || '',
+      contactPhone: parsed.contactPhone || existing?.contactPhone || '',
+      serviceReason: parsed.serviceReason || existing?.serviceReason || '',
+      companions: parsed.companions ?? existing?.companions ?? null,
       origin: originAddress || parsed.origin || existing?.origin || '',
-      originCoordinates: originCoordinates || existing?.originCoordinates || null,
+      originCoordinates: originCoordinates || routePointCoordinates(routeSnapshot?.origin) || existing?.originCoordinates || null,
       destination: destinationAddress || parsed.destination || existing?.destination || '',
       status,
       value,
@@ -467,7 +521,8 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       estimatedTotalKm: estimatedTotalKm ?? routeSnapshot?.totalKm ?? existing?.estimatedTotalKm ?? null,
       reportedValue: parsed.centralReportedValue ?? existing?.reportedValue ?? null,
       calculatedValue: commercial?.calculatedAmount ?? existing?.calculatedValue ?? null,
-      commercialRuleStatus: knowledge?.commercialStatus || existing?.commercialRuleStatus || 'none',
+      commercialRuleStatus: resolvedRules.source === 'test_default' ? 'test_default' : (knowledge?.commercialStatus || existing?.commercialRuleStatus || 'none'),
+      commercialRuleSource: commercial?.ruleSource || resolvedRules.source || existing?.commercialRuleSource || 'missing',
       financeReviewRequired,
       financeReviewReason: reviewReasons.join(' '),
       commercialReviewRequired,
@@ -483,6 +538,10 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       towPerformed: displacementWithoutTow ? false : (towPerformed ?? existing?.towPerformed ?? null),
       arrivalConfirmed: (displacementWithoutTow || arrival) ? true : (existing?.arrivalConfirmed === true),
       arrivalConfirmedAt: displacementWithoutTow ? (serviceOutcome.arrivedAt || transitionAt) : (arrival?.arrivedAt || existing?.arrivalConfirmedAt || null),
+      arrivalSource: arrival?.source || existing?.arrivalSource || null,
+      onSiteGraceDeadlineAt: (arrival?.arrivedAt || existing?.arrivalConfirmedAt)
+        ? (existing?.onSiteGraceDeadlineAt || new Date(new Date(arrival?.arrivedAt || existing.arrivalConfirmedAt).getTime() + ON_SITE_GRACE_MINUTES * 60_000).toISOString())
+        : null,
       onSiteFinishedAt: workedTime?.finishedAt || existing?.onSiteFinishedAt || null,
       onSiteElapsedMinutes: workedTime?.elapsedMinutes ?? existing?.onSiteElapsedMinutes ?? null,
       onSiteGraceMinutes: workedTime ? ON_SITE_GRACE_MINUTES : (existing?.onSiteGraceMinutes ?? ON_SITE_GRACE_MINUTES),
@@ -882,6 +941,20 @@ function asksDistance(text = '') {
 function asksTrackerLocation(text = '') {
   const value = normalizeForIntent(text);
   return /\b(onde esta o guincho|onde ta o guincho|localizacao do guincho|localizacao atual|posicao do guincho|posicao atual)\b/.test(value);
+}
+
+function formatKm(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : null;
+}
+
+function formatCurrency(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0
+    ? number.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+    : null;
 }
 
 function isOperationalMessage(text = '') {
@@ -1758,7 +1831,7 @@ async function computeEtaWithRetry(input = {}, options = {}) {
 async function computeFullServiceRoute({ originAddress = null, destinationAddress = null, originCoordinates = null, baseAddressOverride = '' } = {}) {
   const settings = await getSettings();
   const baseAddress = String(baseAddressOverride || settings.operationalBaseAddress || '').trim();
-  if ((!originAddress && !originCoordinates) || !destinationAddress || !baseAddress) return null;
+  if ((!originAddress && !originCoordinates) || !destinationAddress) return null;
 
   const reading = await getFreshTrackerReading();
   if (!reading) return null;
@@ -1768,7 +1841,10 @@ async function computeFullServiceRoute({ originAddress = null, destinationAddres
     ? { latitude: Number(originCoordinates.latitude), longitude: Number(originCoordinates.longitude), displayName: originAddress || 'Localização compartilhada' }
     : await geocodeAddress(originAddress);
   const destination = await geocodeAddress(destinationAddress);
-  const base = await geocodeAddress(baseAddress);
+  // Sem uma base configurada, fecha o circuito no ponto real de saída do
+  // caminhão. Assim o cálculo continua completo e auditável, sem inventar um
+  // endereço de retorno.
+  const base = baseAddress ? await geocodeAddress(baseAddress) : { ...start, displayName: reading.address || 'Ponto de saída do caminhão' };
   if (!origin || !destination || !base) return null;
 
   const legToOrigin = await routeBetween(start, origin);
@@ -1779,11 +1855,11 @@ async function computeFullServiceRoute({ originAddress = null, destinationAddres
   const totalMinutes = Number(legToOrigin.minutes || 0) + Number(serviceLeg.minutes || 0) + Number(returnToBase.minutes || 0);
   return {
     capturedAt: new Date().toISOString(),
-    basis: 'truck_origin_destination_base',
+    basis: baseAddress ? 'truck_origin_destination_base' : 'truck_origin_destination_start',
     start: { address: reading.address || '', latitude: start.latitude, longitude: start.longitude },
     origin: { address: originAddress || origin.displayName || '', latitude: origin.latitude, longitude: origin.longitude },
     destination: { address: destinationAddress, latitude: destination.latitude, longitude: destination.longitude },
-    base: { address: baseAddress, latitude: base.latitude, longitude: base.longitude },
+    base: { address: baseAddress || reading.address || 'Ponto de saída do caminhão', latitude: base.latitude, longitude: base.longitude },
     legToOrigin: { km: legToOrigin.distanceKm, minutes: legToOrigin.minutes },
     serviceLeg: { km: serviceLeg.distanceKm, minutes: serviceLeg.minutes },
     returnToBase: { km: returnToBase.distanceKm, minutes: returnToBase.minutes },
@@ -1791,6 +1867,174 @@ async function computeFullServiceRoute({ originAddress = null, destinationAddres
     totalMinutes,
     routing: 'osrm_with_fallback',
   };
+}
+
+const TRACKER_ARRIVAL_RADIUS_KM = 0.25;
+const TRACKER_EXIT_RADIUS_KM = 0.45;
+const TRACKER_STOP_SPEED_KPH = 3;
+const TRACKER_EXIT_SPEED_KPH = 5;
+const TRACKER_ARRIVAL_READINGS = 2;
+
+function distanceBetweenCoordinatesKm(a, b) {
+  if (!validCoordinates(a?.latitude, a?.longitude) || !validCoordinates(b?.latitude, b?.longitude)) return null;
+  const radians = (degrees) => Number(degrees) * Math.PI / 180;
+  const lat1 = radians(a.latitude);
+  const lat2 = radians(b.latitude);
+  const deltaLat = radians(Number(b.latitude) - Number(a.latitude));
+  const deltaLon = radians(Number(b.longitude) - Number(a.longitude));
+  const h = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function trackerCallCommercial(call, knowledge, groupName, workedTime = null) {
+  const resolution = commercialRulesForGroup(knowledge, groupName);
+  const totalKm = call.billableKm ?? call.routeBreakdown?.totalKm ?? call.totalKm ?? call.estimatedTotalKm ?? null;
+  const facts = {
+    vehicleType: call.vehicleType || null,
+    totalKm,
+    extras: { dirtRoadKm: call.dirtRoadBillableKm ?? 0 },
+  };
+  let commercial = reconcileCommercial({ approvedRules: resolution.rules, facts, estimatedTotalKm: totalKm });
+  if (workedTime) commercial = addWorkedTimeToCommercial(commercial, workedTime);
+  return { ...commercial, ruleSource: resolution.source };
+}
+
+async function sendTrackerNotice(groupId, text) {
+  if (!waClient || waStatus !== 'pronto' || !groupId || !text) return false;
+  try {
+    botReplyFingerprints.set(`${groupId}|${normalizeForIntent(text)}`, Date.now());
+    await waClient.sendMessage(groupId, text);
+    logEvent('tracker-notice', text, { groupId });
+    return true;
+  } catch (error) {
+    logEvent('warning', 'Não foi possível enviar o aviso automático do rastreador.', { groupId, error: String(error) });
+    return false;
+  }
+}
+
+async function reconcileTrackerOperations(reading) {
+  const truck = await trackerCoordinates(reading).catch(() => null);
+  if (!truck) return;
+  const state = await getManagement();
+  const allActive = (state.calls || [])
+    .filter((call) => isFlowActiveCall(call))
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+
+  // A central de testes pode acumular simulações abertas. Somente a simulação
+  // mais recente de cada grupo participa da automação do rastreador.
+  const selected = [];
+  const selectedTestGroups = new Set();
+  for (const call of allActive) {
+    if (isTestCall(call)) {
+      if (selectedTestGroups.has(call.sourceGroupId)) continue;
+      selectedTestGroups.add(call.sourceGroupId);
+    }
+    selected.push(call);
+  }
+  if (!selected.length) return;
+
+  const now = new Date();
+  const notices = [];
+  let changed = false;
+  for (const call of selected) {
+    let origin = routePointCoordinates(call.originCoordinates) || routePointCoordinates(call.routeBreakdown?.origin);
+    if (!origin && call.origin) origin = await geocodeAddress(call.origin).catch(() => null);
+    if (!origin) continue;
+    const distanceKm = distanceBetweenCoordinatesKm(truck, origin);
+    if (!Number.isFinite(distanceKm)) continue;
+    const speed = reading.speedKph === null || reading.speedKph === undefined ? null : Number(reading.speedKph);
+    const stopped = Number.isFinite(speed) ? speed <= TRACKER_STOP_SPEED_KPH : reading.ignition === 'off';
+    const next = { ...call, trackerLastDistanceToOriginKm: Math.round(distanceKm * 1000) / 1000, trackerLastReadingAt: reading.receivedAt || now.toISOString() };
+
+    if (!call.arrivalConfirmedAt) {
+      if (distanceKm <= TRACKER_ARRIVAL_RADIUS_KM && stopped) {
+        const isNewReading = call.trackerArrivalCandidateLastReadingAt !== reading.receivedAt;
+        next.trackerArrivalCandidateAt = call.trackerArrivalCandidateAt || now.toISOString();
+        next.trackerArrivalCandidateReadings = Number(call.trackerArrivalCandidateReadings || 0) + (isNewReading ? 1 : 0);
+        next.trackerArrivalCandidateLastReadingAt = reading.receivedAt || now.toISOString();
+        if (next.trackerArrivalCandidateReadings >= TRACKER_ARRIVAL_READINGS) {
+          const arrivedAt = now.toISOString();
+          next.status = 'em_atendimento';
+          next.operationalPhase = 'no_local_cliente';
+          next.arrivalConfirmed = true;
+          next.arrivalConfirmedAt = arrivedAt;
+          next.arrivalSource = 'tracker_geofence';
+          next.arrivalTrackerDistanceKm = next.trackerLastDistanceToOriginKm;
+          next.onSiteGraceMinutes = ON_SITE_GRACE_MINUTES;
+          next.onSiteGraceDeadlineAt = new Date(now.getTime() + ON_SITE_GRACE_MINUTES * 60_000).toISOString();
+          next.trackerArrivalNoticePending = true;
+          next.operationalTimeline = appendOperationalTimeline(call.operationalTimeline || [], {
+            at: arrivedAt, type: 'chegada_automatica', fromStatus: call.status, toStatus: 'em_atendimento',
+            text: 'Chegada detectada automaticamente pelo rastreador.',
+            meta: { source: 'tracker_geofence', distanceKm: next.arrivalTrackerDistanceKm, graceMinutes: ON_SITE_GRACE_MINUTES },
+          });
+          logEvent('tracker-arrival', `${call.client || call.insurer}: chegada automática detectada.`, { callId: call.id, groupId: call.sourceGroupId, distanceKm });
+        }
+      } else {
+        next.trackerArrivalCandidateAt = null;
+        next.trackerArrivalCandidateReadings = 0;
+        next.trackerArrivalCandidateLastReadingAt = null;
+      }
+    } else if (!call.onSiteFinishedAt) {
+      const workedTime = evaluateWorkedTime({ arrivedAt: call.arrivalConfirmedAt, finishedAt: now });
+      const previousHours = Number(call.workedTimeChargedHours || 0);
+      next.onSiteElapsedMinutes = workedTime.elapsedMinutes;
+      next.workedTimeChargeRequired = workedTime.chargeRequired;
+      next.workedTimeChargedHours = workedTime.chargedHours;
+      next.workedTimeHourlyRate = WORKED_HOUR_RATE;
+      next.workedTimeAmount = workedTime.amount;
+      const knowledge = await getGroupKnowledgeEntry(call.sourceGroupId);
+      const commercial = trackerCallCommercial(next, knowledge, call.client || call.insurer || '', workedTime);
+      if (commercial.calculatedAmount !== null && commercial.calculatedAmount !== undefined && Number.isFinite(Number(commercial.calculatedAmount))) {
+        next.calculatedValue = commercial.calculatedAmount;
+        next.commercialRuleSource = commercial.ruleSource;
+      }
+      if (workedTime.chargedHours > previousHours) next.trackerWorkedHourNoticePending = workedTime.chargedHours;
+
+      if (distanceKm > TRACKER_EXIT_RADIUS_KM && Number.isFinite(speed) && speed >= TRACKER_EXIT_SPEED_KPH) {
+        next.onSiteFinishedAt = now.toISOString();
+        next.status = 'a_caminho';
+        next.operationalPhase = 'em_deslocamento_destino';
+        next.trackerDepartureNoticePending = true;
+        next.operationalTimeline = appendOperationalTimeline(call.operationalTimeline || [], {
+          at: now.toISOString(), type: 'saida_local_automatica', fromStatus: call.status, toStatus: 'a_caminho',
+          text: 'Saída do local do cliente detectada automaticamente pelo rastreador.',
+          meta: { elapsedMinutes: workedTime.elapsedMinutes, workedTimeAmount: workedTime.amount },
+        });
+      }
+    }
+
+    next.updatedAt = now.toISOString();
+    state.calls = state.calls.map((item) => item.id === call.id ? next : item);
+    changed = true;
+
+    if (next.trackerArrivalNoticePending && !next.trackerArrivalNotifiedAt) {
+      const deadline = new Date(next.onSiteGraceDeadlineAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+      notices.push({ callId: next.id, groupId: next.sourceGroupId, type: 'arrival', text: `Chegada detectada pelo localizador ✅\nOs 15 minutos de tolerância começaram agora, até ${deadline}. A partir do 16º minuto, será cobrada a primeira hora inteira de R$ 80,00.` });
+    }
+    if (Number(next.trackerWorkedHourNoticePending || 0) > Number(next.trackerWorkedHoursNotified || 0)) {
+      const hours = Number(next.trackerWorkedHourNoticePending);
+      const total = formatCurrency(next.calculatedValue);
+      notices.push({ callId: next.id, groupId: next.sourceGroupId, type: 'worked', hours, text: `Tempo no local ultrapassou 15 minutos. Hora trabalhada registrada: ${hours} hora(s) iniciada(s) × R$ 80,00 = ${formatCurrency(hours * WORKED_HOUR_RATE)}.${total ? `\nValor atualizado do atendimento: ${total}.` : ''}` });
+    }
+    if (next.trackerDepartureNoticePending && !next.trackerDepartureNotifiedAt) {
+      const total = formatCurrency(next.calculatedValue);
+      notices.push({ callId: next.id, groupId: next.sourceGroupId, type: 'departure', text: `Saída do local do cliente detectada pelo localizador ✅\nTempo no local: ${next.onSiteElapsedMinutes || 0} min.${next.workedTimeAmount > 0 ? ` Hora trabalhada: ${formatCurrency(next.workedTimeAmount)}.` : ''}${total ? ` Valor atualizado: ${total}.` : ''}` });
+    }
+  }
+
+  if (changed) await saveManagement(state);
+  for (const notice of notices) {
+    if (!(await sendTrackerNotice(notice.groupId, notice.text))) continue;
+    const latest = await getManagement();
+    latest.calls = latest.calls.map((call) => {
+      if (call.id !== notice.callId) return call;
+      if (notice.type === 'arrival') return { ...call, trackerArrivalNoticePending: false, trackerArrivalNotifiedAt: new Date().toISOString() };
+      if (notice.type === 'worked') return { ...call, trackerWorkedHourNoticePending: null, trackerWorkedHoursNotified: notice.hours, trackerWorkedHourNotifiedAt: new Date().toISOString() };
+      return { ...call, trackerDepartureNoticePending: false, trackerDepartureNotifiedAt: new Date().toISOString() };
+    });
+    await saveManagement(latest);
+  }
 }
 
 function trackerContextText(location) {
@@ -2375,7 +2619,8 @@ async function currentOperationalContext(groupId, groupName, text) {
   const provisionalRecentCall = recentManagementCall(management, groupId)
     || (evidenceOrProtocol ? recentManagementRecord(management, groupId) : null);
   const knowledge = await getGroupKnowledgeEntry(groupId);
-  const approvedRules = knowledge?.commercialStatus === 'approved' ? knowledge.approvedCommercialRules : null;
+  const commercialResolution = commercialRulesForGroup(knowledge, groupName);
+  const approvedRules = commercialResolution.rules;
   const billingProfile = ensureBillingProfile(management, groupId, groupName);
   const facts = extractOperationalFacts(text);
   const provisionalIntent = classifyRuntimeIntent(text, groupName, provisionalRecentCall);
@@ -2383,7 +2628,7 @@ async function currentOperationalContext(groupId, groupName, text) {
     ? (oldestActiveManagementCallForGroup(management, groupId) || provisionalRecentCall)
     : provisionalRecentCall;
   const intent = classifyRuntimeIntent(text, groupName, recentCall);
-  return { management, recentCall, knowledge, approvedRules, billingProfile, facts, intent, profile: resolveGroupProfile(groupName) };
+  return { management, recentCall, knowledge, approvedRules, commercialRuleSource: commercialResolution.source, billingProfile, facts, intent, profile: resolveGroupProfile(groupName) };
 }
 
 async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null) {
@@ -2582,29 +2827,49 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
 async function handleProtocolRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
   const status = call?.status || 'aguardando_aprovacao';
-  await recordDispatchInManagement({
+  const flowActive = isFlowActiveCall(call);
+  const nextOrigin = context.facts.origin || call?.origin || null;
+  const nextOriginCoordinates = context.facts.origin ? null : (call?.originCoordinates || null);
+  const nextDestination = context.facts.destination || call?.destination || null;
+  const nextEta = flowActive && nextOrigin
+    ? await computeEtaWithRetry({ targetAddress: nextOrigin, targetCoordinates: nextOriginCoordinates }).catch(() => null)
+    : (call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null);
+  const nextRouteSnapshot = flowActive && nextOrigin && nextDestination
+    ? await computeFullServiceRoute({
+        originAddress: nextOrigin, originCoordinates: nextOriginCoordinates,
+        destinationAddress: nextDestination, baseAddressOverride: context.billingProfile?.baseAddress || '',
+      }).catch(() => null)
+    : null;
+  const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
-    originAddress: context.facts.origin || call?.origin || null,
-    destinationAddress: context.facts.destination || call?.destination || null,
-    eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
+    originAddress: nextOrigin,
+    originCoordinates: nextOriginCoordinates,
+    destinationAddress: nextDestination,
+    eta: nextEta,
+    routeSnapshotOverride: nextRouteSnapshot,
     status, facts: context.facts, existingCallId: call?.id || null,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
     eventType: call ? 'protocolo_atualizado' : 'protocolo_recebido',
     phase: call?.operationalPhase || 'aguardando_autorizacao',
   });
-  const reply = call && isCapacityActiveCall(call)
-    ? 'Protocolo vinculado ao atendimento em andamento ✅'
+  const km = formatKm(saved?.billableKm ?? saved?.routeBreakdown?.totalKm ?? saved?.estimatedTotalKm);
+  const amount = formatCurrency(saved?.calculatedValue);
+  const calculation = flowActive && (km || amount)
+    ? `\n${km ? `Quilometragem total: ${km} km.` : ''}${km && amount ? ' ' : ''}${amount ? `Valor estimado: ${amount}.` : ''}`
+    : '';
+  const reply = flowActive
+    ? `Protocolo vinculado ao atendimento em andamento ✅${calculation}`
     : call?.status === 'concluido'
       ? 'Protocolo vinculado ao atendimento concluído ✅'
       : 'Protocolo recebido e registrado ✅ Aguardando autorização expressa para seguir.';
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: context.intent, authorizationRequired: !call || (!isCapacityActiveCall(call) && call?.status !== 'concluido') });
+  await replyAndRemember(msg, groupName, readableText, reply, { intent: context.intent, authorizationRequired: !call || (!flowActive && call?.status !== 'concluido'), callId: saved?.id || call?.id || null, billableKm: saved?.billableKm ?? null, calculatedValue: saved?.calculatedValue ?? null });
 }
 
 async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
   const call = context.recentCall;
 
   // Uma autorização repetida do mesmo chamado não consome uma nova vaga.
-  if (call && isCapacityActiveCall(call)) {
+  if (call && isFlowActiveCall(call)) {
     await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
       destinationAddress: call.destination || null, eta: null, status: call.status, facts: context.facts,
@@ -2658,7 +2923,11 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
     saved.queued = true;
     saved.precedingCallId = eta.precedingCallId || null;
   }
-  await replyAndRemember(msg, groupName, readableText, eta ? formatEtaReply(eta, true) : 'Confirmado ✅', { intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true, rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null });
+  const km = formatKm(saved?.billableKm ?? saved?.routeBreakdown?.totalKm ?? saved?.estimatedTotalKm);
+  const amount = formatCurrency(saved?.calculatedValue);
+  const calculationLines = [km ? `Quilometragem total calculada: ${km} km.` : null, amount ? `Valor estimado: ${amount}.` : null].filter(Boolean);
+  const confirmation = eta ? formatEtaReply(eta, true) : 'Confirmado ✅\nCancelamento sem cobrança em até 15 min. Após esse prazo, saída e deslocamento integrais pela quilometragem total.';
+  await replyAndRemember(msg, groupName, readableText, [confirmation, ...calculationLines].join('\n'), { intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true, rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null, callId: saved?.id || null, billableKm: saved?.billableKm ?? null, calculatedValue: saved?.calculatedValue ?? null });
 }
 
 async function handleScheduledRuntime(msg, groupName, readableText, context) {
@@ -2921,6 +3190,70 @@ async function handleDirtRoadEndRuntime(msg, groupName, readableText, incomingLo
   await replyAndRemember(msg, groupName, readableText, `Saída da estrada de terra registrada ✅${details} A tarifa de R$ 3,80/km substitui a tarifa de asfalto somente nesse trecho.`, { intent: 'dirt_road_end', dirtRoadBillableKm: km, dirtRoadAmount: amount });
 }
 
+async function handleValueSummaryRuntime(msg, groupName, readableText, context) {
+  const call = context.recentCall;
+  if (!call || !isFlowActiveCall(call)) {
+    await replyAndRemember(msg, groupName, readableText, 'Não encontrei atendimento autorizado para calcular. Envie o protocolo da corrida.', { intent: 'value-summary-without-call' });
+    return;
+  }
+
+  const routeSnapshot = call.routeBreakdown || await computeFullServiceRoute({
+    originAddress: call.origin || null,
+    originCoordinates: call.originCoordinates || null,
+    destinationAddress: call.destination || null,
+    baseAddressOverride: context.billingProfile?.baseAddress || '',
+  }).catch(() => null);
+  const pricingKm = context.billingProfile?.routeBasis === 'origin_destination'
+    ? (routeSnapshot?.serviceLeg?.km ?? call.billableKm ?? call.totalKm ?? null)
+    : context.billingProfile?.routeBasis === 'insurer_reported'
+      ? (call.totalKm ?? call.billableKm ?? null)
+      : context.billingProfile?.routeBasis === 'manual' && !isTestGroupName(groupName)
+        ? (call.billableKm ?? call.totalKm ?? null)
+        : (routeSnapshot?.totalKm ?? call.billableKm ?? call.totalKm ?? call.estimatedTotalKm ?? null);
+  const facts = {
+    ...context.facts,
+    vehicleType: context.facts.vehicleType || call.vehicleType || null,
+    totalKm: pricingKm,
+    extras: {
+      ...(context.facts.extras || {}),
+      dirtRoadKm: context.facts.extras?.dirtRoadKm ?? call.dirtRoadBillableKm ?? 0,
+    },
+  };
+  let commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts, estimatedTotalKm: pricingKm });
+  const workedTime = call.arrivalConfirmedAt && !call.onSiteFinishedAt
+    ? evaluateWorkedTime({ arrivedAt: call.arrivalConfirmedAt, finishedAt: new Date() })
+    : {
+        chargeRequired: call.workedTimeChargeRequired === true,
+        chargedHours: Number(call.workedTimeChargedHours || 0),
+        hourlyRate: WORKED_HOUR_RATE,
+        amount: Number(call.workedTimeAmount || 0),
+      };
+  commercial = addWorkedTimeToCommercial(commercial, workedTime);
+  commercial.ruleSource = context.commercialRuleSource;
+
+  const saved = await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: call.origin || null, originCoordinates: call.originCoordinates || null,
+    destinationAddress: call.destination || null,
+    eta: call.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
+    status: call.status, facts, commercial, estimatedTotalKm: pricingKm,
+    routeSnapshotOverride: routeSnapshot,
+    existingCallId: call.id, eventType: 'consulta_valor', phase: call.operationalPhase || 'autorizado',
+  });
+
+  const km = formatKm(saved?.billableKm ?? routeSnapshot?.totalKm ?? pricingKm);
+  const amount = formatCurrency(saved?.calculatedValue ?? commercial.calculatedAmount);
+  const lines = [];
+  if (km) lines.push(`Quilometragem total: ${km} km.`);
+  if (amount) lines.push(`Valor calculado do atendimento: ${amount}.`);
+  if (workedTime.chargeRequired) lines.push(`Hora trabalhada: ${workedTime.chargedHours} hora(s) iniciada(s) × R$ 80,00 = ${formatCurrency(workedTime.amount)}.`);
+  if (!amount) lines.push('A tabela comercial desta transportadora ainda precisa ser configurada para informar o valor com segurança.');
+  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), {
+    intent: 'value_summary', callId: call.id, billableKm: saved?.billableKm ?? pricingKm,
+    calculatedValue: saved?.calculatedValue ?? commercial.calculatedAmount, commercialStatus: commercial.status,
+  });
+}
+
 async function handleClosureRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
   if (!call) {
@@ -3032,7 +3365,7 @@ async function processIncomingMessage(msg) {
     const activeFlowIntents = new Set([
       'cancellation', 'arrival_without_tow', 'arrival', 'departure', 'waiting_customer', 'loaded',
       'destination_arrival', 'evidence', 'address_update', 'dirt_road_start', 'dirt_road_end',
-      'closure', 'protocol_update',
+      'closure', 'value_summary', 'protocol_update',
     ]);
     const pendingLocationState = location && !text ? await getDispatchState(msg.from) : null;
     const completingPendingLocation = ['dirt_road_start','dirt_road_end'].includes(pendingLocationState?.pendingLocationPurpose);
@@ -3148,6 +3481,10 @@ async function processIncomingMessage(msg) {
     }
     if (runtimeIntent === 'closure') {
       await handleClosureRuntime(msg, groupName, readableText, operationalContext);
+      return;
+    }
+    if (runtimeIntent === 'value_summary') {
+      await handleValueSummaryRuntime(msg, groupName, readableText, operationalContext);
       return;
     }
     if (runtimeIntent === 'authorization' || runtimeIntent === 'formal_dispatch') {
@@ -3944,6 +4281,9 @@ app.post('/api/tracker-bridge', async (req, res) => {
       'tracker',
       `GConnect Android: ${reading.plate} · ${reading.speedKph ?? '?'} km/h · ${reading.address || 'sem endereço'}.`,
     );
+    await reconcileTrackerOperations(reading).catch((error) => {
+      logEvent('warning', 'Falha ao reconciliar o atendimento com a localização do caminhão.', { error: String(error) });
+    });
 
     return res.json({ ok: true, receivedAt: reading.receivedAt });
   } catch (error) {
