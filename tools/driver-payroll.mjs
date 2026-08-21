@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isTestCall } from './test-center.mjs';
 
 export const DRIVER_CLOSING_DAY = 20;
 export const DRIVER_BASE_KM_LIMIT = 50;
@@ -11,7 +12,7 @@ function daysInMonth(year, monthIndex) { return new Date(Date.UTC(year, monthInd
 function atClosingDay(year, monthIndex) { return new Date(Date.UTC(year, monthIndex, Math.min(DRIVER_CLOSING_DAY, daysInMonth(year, monthIndex)), 12, 0, 0)); }
 
 function billableCall(call = {}) {
-  if (call.testMode === true) return false;
+  if (isTestCall(call)) return false;
   return call.status === 'concluido' || (call.status === 'cancelado' && call.cancellationChargeRequired === true);
 }
 

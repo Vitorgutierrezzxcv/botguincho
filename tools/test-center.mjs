@@ -58,6 +58,14 @@ export function normalizeTestText(value = '') {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
+export function isTestGroupName(value = '') {
+  return normalizeTestText(value).trim() === normalizeTestText(TEST_GROUP_NAME);
+}
+
+export function isTestCall(call = {}) {
+  return call?.testMode === true || isTestGroupName(call?.insurer || call?.client || call?.groupName || '');
+}
+
 export function responseMatches(response = '', expected = []) {
   const text = normalizeTestText(response);
   return expected.some((term) => text.includes(normalizeTestText(term)));
