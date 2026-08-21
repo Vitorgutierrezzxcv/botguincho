@@ -7,6 +7,7 @@ assert.deepEqual(driverPayrollPeriodFor('2026-08-21T00:00:00Z'), { periodStart: 
 
 const short = driverPayForCall({ status: 'concluido', billableKm: 50 });
 assert.equal(driverPayForCall({ status: 'concluido', billableKm: 50, testMode: true }), null);
+assert.equal(driverPayForCall({ status: 'concluido', billableKm: 50, insurer: 'Tests guincho' }), null);
 assert.equal(short.routeAmount, 40);
 assert.equal(short.totalAmount, 40);
 const long = driverPayForCall({ status: 'concluido', billableKm: 60, workedTimeChargeRequired: true, workedTimeAmount: 80 });
