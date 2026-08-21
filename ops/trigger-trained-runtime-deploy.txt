@@ -1,2 +1,2 @@
-deploy central de testes whatsapp 2026-08-20T23:02:30Z
-source ba4e9d5e1fa244b848059cd98972f286f8b25129
+deploy capacity test isolation 2026-08-21T02:03:00Z
+source 9fe60276de673f08d8cb40cd6d7c0552d5519701
