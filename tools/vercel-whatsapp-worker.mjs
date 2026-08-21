@@ -3056,13 +3056,16 @@ async function executeTestRun(run) {
       try {
         if (scenario.mode === 'engine') { const check = engineScenario(scenario.id); result.steps.push(check); result.status = check.passed ? 'passed' : 'failed'; }
         else {
+          groupMemory.delete(testCenterRuntime.targetGroupId);
+          sharedLocations.delete(testCenterRuntime.targetGroupId);
+          testCenterRuntime.inbound = [];
           let passedAll = true;
           for (const step of scenario.steps.slice(0, 20)) {
             if (run.stopRequested) break;
             const sentAt = Date.now(); await simulatorClient.sendMessage(testCenterRuntime.targetGroupId, step.send);
             const observed = await waitForTestResponse(sentAt, step.expectSilence ? 12000 : TEST_RESPONSE_TIMEOUT_MS, step.expectSilence === true);
-            const passed = step.expectSilence ? observed.passed : observed.passed && responseMatches(observed.response, step.expect || []);
-            result.steps.push({ sent: step.send, response: observed.response, expected: step.expectSilence ? 'Nenhuma resposta' : step.expect, passed }); if (!passed) passedAll = false; await delay(TEST_MESSAGE_INTERVAL_MS);
+            const passed = step.expectSilence ? observed.passed : observed.passed && responseMatches(observed.response, step.expect || [], step.forbid || []);
+            result.steps.push({ sent: step.send, response: observed.response, expected: step.expectSilence ? 'Nenhuma resposta' : step.expect, forbidden: step.forbid || [], passed }); if (!passed) passedAll = false; await delay(TEST_MESSAGE_INTERVAL_MS);
           }
           result.status = run.stopRequested ? 'skipped' : passedAll ? 'passed' : 'failed';
         }
@@ -3081,7 +3084,7 @@ app.post('/api/test-center', async (req, res) => {
     if (action === 'connect') { await setSimulatorAutoConnect(true); await startTestSimulator({ force: simulatorStatus === 'erro' || simulatorStatus === 'reiniciando' || (simulatorStatus === 'iniciando' && Date.now() - simulatorStartedAt > 45000) }); return res.json({ ok: true, status: simulatorStatus }); }
     if (action === 'stop') { if (testCenterRuntime.currentRun?.status === 'running') testCenterRuntime.currentRun.stopRequested = true; return res.json({ ok: true }); }
     if (action === 'disconnect') { await setSimulatorAutoConnect(false); await resetTestSimulator('desconectado'); return res.json({ ok: true }); }
-    if (action === 'run') { if (testCenterRuntime.currentRun?.status === 'running') return res.status(409).json({ ok: false, error: 'Já existe uma bateria de testes em execução.' }); const requested = Array.isArray(req.body?.scenarioIds) ? req.body.scenarioIds.filter((id) => TEST_SCENARIOS.some((item) => item.id === id)) : []; if (!requested.length) return res.status(400).json({ ok: false, error: 'Selecione pelo menos um cenário.' }); const run = createTestRun(requested); testCenterRuntime.currentRun = run; await persistTestRun(run); void executeTestRun(run); return res.json({ ok: true, run }); }
+    if (action === 'run' || action === 'run_all') { if (testCenterRuntime.currentRun?.status === 'running') return res.status(409).json({ ok: false, error: 'Já existe uma bateria de testes em execução.' }); const requested = action === 'run_all' ? TEST_SCENARIOS.map((item) => item.id) : (Array.isArray(req.body?.scenarioIds) ? req.body.scenarioIds.filter((id) => TEST_SCENARIOS.some((item) => item.id === id)) : []); if (!requested.length) return res.status(400).json({ ok: false, error: 'Selecione pelo menos um cenário.' }); const run = createTestRun(requested); testCenterRuntime.currentRun = run; await persistTestRun(run); void executeTestRun(run); return res.json({ ok: true, run }); }
     return res.status(400).json({ ok: false, error: 'Ação inválida.' });
   } catch (error) { return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
 });

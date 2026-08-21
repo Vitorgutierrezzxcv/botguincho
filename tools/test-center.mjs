@@ -7,12 +7,12 @@ export const TEST_RESPONSE_TIMEOUT_MS = 45000;
 export const TEST_SCENARIOS = [
   {
     id: 'availability', category: 'Atendimento', name: 'Disponibilidade imediata', mode: 'whatsapp',
-    steps: [{ send: 'Boa tarde, possui disponibilidade para um atendimento agora em Betim?', expect: ['dispon', 'sim', 'atender'] }],
+    steps: [{ send: 'Boa tarde, possui disponibilidade para um atendimento agora em Betim?', expect: ['disponível', 'sim', 'atender'], forbid: ['indisponível', 'fora de rota'] }],
   },
   {
     id: 'complete_dispatch', category: 'Atendimento', name: 'Acionamento completo com origem e destino', mode: 'whatsapp',
     steps: [
-      { send: 'Tem disponibilidade para um veículo de passeio agora?', expect: ['dispon', 'sim', 'atender'] },
+      { send: 'Tem disponibilidade para um veículo de passeio agora?', expect: ['disponível', 'sim', 'atender'], forbid: ['indisponível', 'fora de rota'] },
       { send: 'Origem: Rua das Rosas, 310, São Salvador, Betim - MG. Destino: Avenida Amazonas, 1200, Centro, Betim - MG. Veículo: Fiat Uno.', expect: ['previs', 'min', 'confirm', 'dispon'] },
       { send: 'Confirmado, pode seguir com o atendimento.', expect: ['confirmado', 'cancelamento', '15'] },
     ],
@@ -27,15 +27,28 @@ export const TEST_SCENARIOS = [
   },
   {
     id: 'arrival', category: 'Atendimento', name: 'Registro de chegada', mode: 'whatsapp',
-    steps: [{ send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'] }],
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['previs', 'confirm', 'dispon'] },
+      { send: 'Confirmado, pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'] },
+    ],
   },
   {
     id: 'arrival_without_tow', category: 'Cobrança', name: 'Chegou, carro funcionou e não houve reboque', mode: 'whatsapp',
-    steps: [{ send: 'Chegamos ao local, mas o carro voltou a funcionar e o cliente não quer mais levar. Finalize sem reboque.', expect: ['deslocamento', 'integral', 'sem o reboque', 'pagamento parcial'] }],
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['previs', 'confirm', 'dispon'] },
+      { send: 'Confirmado, pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'] },
+      { send: 'O carro voltou a funcionar e o cliente não quer mais levar. Finalize sem reboque.', expect: ['deslocamento', 'integral', 'sem reboque', 'pagamento parcial'] },
+    ],
   },
   {
     id: 'dirt_road_start', category: 'Cobrança', name: 'Início de estrada de terra sem localização', mode: 'whatsapp',
-    steps: [{ send: 'Começou agora a estrada de terra.', expect: ['localização', 'terra', '3,80', 'quilômetros'] }],
+    steps: [
+      { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['previs', 'confirm', 'dispon'] },
+      { send: 'Confirmado, pode seguir.', expect: ['confirmado', '15'] },
+      { send: 'Começou agora a estrada de terra.', expect: ['localização', 'terra', '3,80', 'quilômetros'] },
+    ],
   },
   {
     id: 'non_operational', category: 'Segurança', name: 'Mensagem administrativa sem resposta', mode: 'whatsapp',
@@ -66,8 +79,9 @@ export function isTestCall(call = {}) {
   return call?.testMode === true || isTestGroupName(call?.insurer || call?.client || call?.groupName || '');
 }
 
-export function responseMatches(response = '', expected = []) {
+export function responseMatches(response = '', expected = [], forbidden = []) {
   const text = normalizeTestText(response);
+  if (forbidden.some((term) => text.includes(normalizeTestText(term)))) return false;
   return expected.some((term) => text.includes(normalizeTestText(term)));
 }
 

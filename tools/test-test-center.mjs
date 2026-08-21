@@ -5,6 +5,8 @@ assert(TEST_SCENARIOS.length >= 15);
 assert(responseMatches('Confirmado. Cancelamento sem cobrança em até 15 minutos.', ['15']));
 assert(responseMatches('LOCALIZAÇÃO necessária', ['localizacao']));
 assert(!responseMatches('Mensagem sem relação', ['confirmado', 'disponível']));
+assert(!responseMatches('Indisponível no momento.', ['disponível'], ['indisponível']));
+assert(TEST_SCENARIOS.find((item) => item.id === 'arrival').steps.length >= 3);
 assert(isTestGroupName('Tests guincho'));
 assert(isTestGroupName('  TESTS GUINCHO '));
 assert(isTestCall({ insurer: 'Tests guincho', status: 'autorizado' }));

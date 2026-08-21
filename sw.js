@@ -1,4 +1,4 @@
-const CACHE='bot-guincho-pwa-v14';
+const CACHE='bot-guincho-pwa-v15';
 const ASSETS=['/','/index.html','/app.css','/app.js','/manifest.webmanifest','/icon.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();
 e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).catch(()=>{}))});
