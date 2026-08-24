@@ -27,15 +27,15 @@
     },
     {
       "source": "/health",
-      "destination": "/api/worker/health"
+      "destination": "/api/worker/health?path=health"
     },
     {
       "source": "/api/health",
-      "destination": "/api/worker/health"
+      "destination": "/api/worker/health?path=health"
     },
     {
       "source": "/api/runtime-version",
-      "destination": "/api/worker/runtime-version"
+      "destination": "/api/worker/runtime-version?path=runtime-version"
     }
   ]
 }

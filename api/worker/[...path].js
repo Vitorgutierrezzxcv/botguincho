@@ -22,14 +22,22 @@ const ROUTES = {
 };
 
 function requestedPath(req) {
-  const value = req.query?.path;
-  return (Array.isArray(value) ? value.join('/') : String(value || '')).replace(/^\/+|\/+$/g, '');
+  const value = req.query?.path ?? req.query?.['...path'];
+  const dynamicPath = (Array.isArray(value) ? value.join('/') : String(value || '')).replace(/^\/+|\/+$/g, '');
+  if (dynamicPath) return dynamicPath;
+  for (const candidate of [req.url, req.originalUrl]) {
+    const pathname = String(candidate || '').split('?')[0];
+    const marker = '/api/worker/';
+    const index = pathname.indexOf(marker);
+    if (index >= 0) return decodeURIComponent(pathname.slice(index + marker.length)).replace(/^\/+|\/+$/g, '');
+  }
+  return '';
 }
 
 function targetWithQuery(req, target) {
   const query = new URLSearchParams();
   for (const [key, raw] of Object.entries(req.query || {})) {
-    if (key === 'path' || key === 'companyId') continue;
+    if (key === 'path' || key === '...path' || key === 'companyId') continue;
     for (const value of Array.isArray(raw) ? raw : [raw]) query.append(key, String(value));
   }
   const suffix = query.toString();
