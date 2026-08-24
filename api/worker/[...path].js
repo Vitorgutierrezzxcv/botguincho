@@ -40,6 +40,11 @@ export default async function handler(req, res) {
   res.setHeader('cache-control', 'no-store');
   const path = requestedPath(req);
 
+  if (path === 'runtime-version') {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
+    return res.status(200).json({ ok: true, version: 'simple-dispatch-v1', maxConcurrentCalls: 2, secondCallEtaCapMinutes: 60 });
+  }
+
   if (path === 'diagnostics') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
     const result = await sandboxDiagnostics(requestCredential(req), requestTenant(req));

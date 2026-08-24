@@ -27,7 +27,15 @@
     },
     {
       "source": "/health",
-      "destination": "/api/health"
+      "destination": "/api/worker/health"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/worker/health"
+    },
+    {
+      "source": "/api/runtime-version",
+      "destination": "/api/worker/runtime-version"
     }
   ]
 }
