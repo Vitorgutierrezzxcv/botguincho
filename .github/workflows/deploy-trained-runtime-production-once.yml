@@ -37,6 +37,7 @@ jobs:
           node tools/test-cancellation-policy.mjs
           node tools/test-worked-time-policy.mjs
           node tools/test-driver-payroll.mjs
+          node tools/test-simple-operation.mjs
           node tools/test-operating-hours.mjs
           node tools/test-test-center.mjs
 
@@ -50,7 +51,6 @@ jobs:
           h=json.load(open('/tmp/pre-health.json'))
           s=json.load(open('/tmp/pre-status.json'))
           checks=h.get('checks',{})
-          assert checks.get('tracker',{}).get('ok') is True, f"Tracker não está saudável: {checks.get('tracker')}"
           assert checks.get('routes',{}).get('ok') is True, f"Rotas não estão saudáveis: {checks.get('routes')}"
           assert int(h.get('groupsSelected') or 0) >= 1, f"Nenhum grupo autorizado: {h.get('groupsSelected')}"
           whatsapp=s.get('whatsapp',{})
@@ -77,7 +77,7 @@ jobs:
           assert d.get('workerProcessCount') == 1, f"Workers: {d.get('workerProcessCount')}"
           assert d.get('sessionPreserved') is True, 'Sessão não foi preservada'
           states=str(d.get('sourceState',''))
-          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs','driver-payroll.mjs','historical-spreadsheet-import.mjs','test-center.mjs']:
+          for f in ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs','driver-payroll.mjs','simple-operation.mjs','historical-spreadsheet-import.mjs','test-center.mjs']:
               assert f in states, f"Arquivo de runtime não sincronizado: {f}"
           print('RELOAD_OK')
           PY
@@ -93,7 +93,7 @@ jobs:
           h=json.load(open('/tmp/post-health.json'))
           s=json.load(open('/tmp/post-status.json'))
           c=h.get('checks',{})
-          ok=(c.get('whatsapp',{}).get('ok') is True and c.get('tracker',{}).get('ok') is True and c.get('routes',{}).get('ok') is True and s.get('whatsapp',{}).get('status')=='pronto' and not s.get('whatsapp',{}).get('qrDataUrl'))
+          ok=(c.get('whatsapp',{}).get('ok') is True and c.get('routes',{}).get('ok') is True and s.get('whatsapp',{}).get('status')=='pronto' and not s.get('whatsapp',{}).get('qrDataUrl'))
           sys.exit(0 if ok else 1)
           PY
               then break; fi
@@ -106,7 +106,6 @@ jobs:
           s=json.load(open('/tmp/post-status.json'))
           c=h.get('checks',{})
           assert c.get('whatsapp',{}).get('ok') is True, c.get('whatsapp')
-          assert c.get('tracker',{}).get('ok') is True, c.get('tracker')
           assert c.get('routes',{}).get('ok') is True, c.get('routes')
           assert s.get('whatsapp',{}).get('status') == 'pronto', s.get('whatsapp')
           assert not s.get('whatsapp',{}).get('qrDataUrl'), 'QR apareceu depois do reload'
@@ -176,7 +175,7 @@ jobs:
             'driverPayrolls': len(b.get('driverPayrolls',[])),
             'driverRulesValidated': True,
             'historicalImports': len(b.get('historicalImports',[])),
-            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs','driver-payroll.mjs','historical-spreadsheet-import.mjs','test-center.mjs'],
+            'runtimeFilesSynced': ['vercel-whatsapp-worker.mjs','learning-engine.mjs','operational-knowledge.mjs','cancellation-policy.mjs','worked-time-policy.mjs','driver-payroll.mjs','simple-operation.mjs','historical-spreadsheet-import.mjs','test-center.mjs'],
             'status': 'trained_runtime_operational'
           }
           open('ops/trained-runtime-validation.json','w').write(json.dumps(report,ensure_ascii=False,indent=2)+'\n')

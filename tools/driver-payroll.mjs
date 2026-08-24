@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { isTestCall } from './test-center.mjs';
+import { isConfirmedCall } from './simple-operation.mjs';
 
 export const DRIVER_CLOSING_DAY = 20;
 export const DRIVER_BASE_KM_LIMIT = 50;
@@ -13,7 +14,7 @@ function atClosingDay(year, monthIndex) { return new Date(Date.UTC(year, monthIn
 
 function billableCall(call = {}) {
   if (isTestCall(call)) return false;
-  return call.status === 'concluido' || (call.status === 'cancelado' && call.cancellationChargeRequired === true);
+  return isConfirmedCall(call) || (call.status === 'cancelado' && call.cancellationChargeRequired === true);
 }
 
 export function driverPayForCall(call = {}) {

@@ -315,7 +315,7 @@ export function buildInsurerSummaries({ profiles = [], batches = [], finance = [
   };
   for (const profile of profiles) Object.assign(ensure(profile.groupId, profile.groupName), { profileStatus: profile.status, paymentMode: profile.paymentMode });
   for (const call of calls) {
-    if (!(call.status === 'concluido' || call.cancellationChargeRequired === true)) continue;
+    if (!(['autorizado','a_caminho','em_atendimento','concluido'].includes(call.status) || call.cancellationChargeRequired === true)) continue;
     const item = ensure(call.sourceGroupId, call.insurer || call.client || 'Seguradora');
     item.callCount += 1; item.totalBilled = money(item.totalBilled + Number(call.value || 0));
   }

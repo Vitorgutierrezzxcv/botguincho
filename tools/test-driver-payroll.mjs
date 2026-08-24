@@ -6,6 +6,9 @@ assert.deepEqual(driverPayrollPeriodFor('2026-08-20T23:00:00Z'), { periodStart: 
 assert.deepEqual(driverPayrollPeriodFor('2026-08-21T00:00:00Z'), { periodStart: '2026-08-20', periodEnd: '2026-09-20', paymentDue: '2026-09-20' });
 
 const short = driverPayForCall({ status: 'concluido', billableKm: 50 });
+const confirmed = driverPayForCall({ status: 'autorizado', billableKm: 80 });
+assert.equal(confirmed.routeAmount, 61);
+assert.equal(confirmed.totalAmount, 61);
 assert.equal(driverPayForCall({ status: 'concluido', billableKm: 50, testMode: true }), null);
 assert.equal(driverPayForCall({ status: 'concluido', billableKm: 50, insurer: 'Tests guincho' }), null);
 assert.equal(short.routeAmount, 40);
@@ -46,5 +49,14 @@ assert.equal(summaries.length, 1);
 assert.equal(summaries[0].callCount, 2);
 assert.equal(summaries[0].receivable, 500);
 assert.equal(summaries[0].nextStatementDue, '2026-08-20');
+
+const confirmedSummary = buildInsurerSummaries({
+  profiles: [{ groupId: 'g2', groupName: 'Transportadora B', status: 'needs_review', paymentMode: 'manual' }],
+  batches: [],
+  finance: [{ type: 'receita', groupId: 'g2', insurer: 'Transportadora B', status: 'pendente', amount: 320 }],
+  calls: [{ id: 'c3', status: 'autorizado', value: 320, insurer: 'Transportadora B', sourceGroupId: 'g2' }],
+});
+assert.equal(confirmedSummary[0].callCount, 1);
+assert.equal(confirmedSummary[0].receivable, 320);
 
 console.log('DRIVER_PAYROLL_OK');

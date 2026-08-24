@@ -17,6 +17,7 @@ const RUNTIME_FILES = [
   'tools/cancellation-policy.mjs',
   'tools/worked-time-policy.mjs',
   'tools/driver-payroll.mjs',
+  'tools/simple-operation.mjs',
   'tools/historical-spreadsheet-import.mjs',
   'tools/test-center.mjs',
 ];
