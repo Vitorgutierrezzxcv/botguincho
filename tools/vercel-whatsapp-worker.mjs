@@ -95,10 +95,10 @@ REGRAS PRIORITÁRIAS DO BOT GUINCHO:
 const DEFAULT_SETTINGS = {
   companyName: 'Bot Guincho',
   simpleMode: true,
-  aiEnabled: true,
+  aiEnabled: false,
   aiModel: process.env.OPENAI_MODEL ?? 'openai/gpt-5.4-mini',
   aiInstructions: 'Atenda somente mensagens operacionais relacionadas a guincho, reboque e assistência. Seja curto, direto e não faça perguntas de triagem.',
-  replyEveryMessage: true,
+  replyEveryMessage: false,
   humanTakeover: false,
   serviceState: 'MG',
   priorityCities: [],
