@@ -26,7 +26,6 @@ RUN if [ -f package-lock.json ]; then \
     fi
 
 COPY tools ./tools
-RUN patch --batch --forward -p1 < tools/patches/wwebjs-201850.diff
 
 EXPOSE 3001
 
