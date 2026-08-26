@@ -1,11 +1,6 @@
 name: Production Watchdog
 
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/production-watchdog.yml']
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:

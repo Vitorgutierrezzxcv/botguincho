@@ -1,17 +1,7 @@
 name: WhatsApp Worker Keeper
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/worker-keeper.yml'
-      - 'api/worker/maintain.js'
-      - 'api/worker/reload.js'
-      - 'lib/sandbox-runtime.js'
-      - 'tools/vercel-whatsapp-worker.mjs'
 
 permissions:
   contents: read
