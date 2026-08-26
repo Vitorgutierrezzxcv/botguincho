@@ -65,6 +65,16 @@ app.use('/api', (req, res, next) => {
 });
 
 let aiCredential = process.env.OPENAI_API_KEY ?? '';
+// Numa VPS o Chromium e o do sistema e roda com processos separados. Os argumentos
+// do @sparticuz/chromium sao para AWS Lambda e trazem --single-process/--no-zygote:
+// o renderizador passa a morar no mesmo processo do navegador, e qualquer travada
+// do WhatsApp Web derruba tudo com "Target closed".
+const SERVERLESS_ONLY_ARGS = new Set(['--single-process', '--no-zygote', '--in-process-gpu']);
+function browserBaseArgs() {
+  if (!process.env.PUPPETEER_EXECUTABLE_PATH) return chromium.args;
+  return chromium.args.filter((arg) => !SERVERLESS_ONLY_ARGS.has(arg));
+}
+
 let waClient = null;
 let waStatus = 'iniciando';
 let qrDataUrl = null;
@@ -885,7 +895,47 @@ async function registerGroup(id, name = '') {
   await writeJson(registryFile, registry);
 }
 
+const GROUPS_SYNC_TIMEOUT_MS = 9000;
+let liveDiscoveryInFlight = null;
+
+async function savedGroupsList() {
+  const previousRegistry = await getRegistry();
+  const allowed = await getAllowedGroupIds();
+  return Object.values(previousRegistry)
+    .map((group) => ({ ...group, selected: allowed.has(group.id) }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
+}
+
 async function discoverGroups() {
+  if (!liveDiscoveryInFlight) {
+    const started = discoverGroupsLive();
+    started
+      .catch(() => undefined)
+      .finally(() => {
+        if (liveDiscoveryInFlight === started) liveDiscoveryInFlight = null;
+      });
+    liveDiscoveryInFlight = started;
+  }
+  const running = liveDiscoveryInFlight;
+
+  let timer = null;
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('__timeout__'), GROUPS_SYNC_TIMEOUT_MS);
+  });
+
+  try {
+    const result = await Promise.race([running.catch(() => '__failed__'), guard]);
+    if (result === '__timeout__' || result === '__failed__') {
+      logEvent('warning', 'Sincronizacao ao vivo dos grupos nao respondeu; devolvendo a lista salva no servidor.');
+      return await savedGroupsList();
+    }
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function discoverGroupsLive() {
   const previousRegistry = await getRegistry();
   const allowed = await getAllowedGroupIds();
 
@@ -3735,10 +3785,31 @@ async function startWhatsApp() {
   if (waClient) return;
   waStatus = 'iniciando';
   lastError = null;
+
+  // LIMPA_TRAVA: o Chromium grava SingletonLock/Cookie/Socket dentro do perfil,
+  // marcados com o hostname do container. Como o hostname muda a cada recriacao,
+  // ele acha que "outro computador" esta usando o perfil e se recusa a abrir.
+  // Nenhum processo esta realmente usando: sao arquivos orfaos. Removemos antes de subir.
+  try {
+    const perfil = path.join(sessionDir, 'session-' + clientId);
+    let removidos = 0;
+    for (const nome of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+      const arquivo = path.join(perfil, nome);
+      try {
+        await fs.lstat(arquivo);
+        await fs.rm(arquivo, { force: true, recursive: true });
+        removidos += 1;
+      } catch {}
+    }
+    if (removidos) logEvent('system', removidos + ' trava(s) orfa(s) do Chromium removida(s) antes de iniciar.');
+  } catch (error) {
+    logEvent('warning', 'Nao consegui limpar as travas do Chromium.', { error: String(error) });
+  }
+
   chromium.setGraphicsMode = false;
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath();
   const browserArgs = [...new Set([
-    ...chromium.args,
+    ...browserBaseArgs(),
     '--disable-dev-shm-usage',
     '--disable-background-networking',
     '--disable-default-apps',
@@ -3751,6 +3822,8 @@ async function startWhatsApp() {
     // O WhatsApp Web pode levar mais de 2 minutos para injetar a sessão em Chromium
     // serverless. Mantemos um timeout finito, porém mais tolerante, sem apagar LocalAuth.
     authTimeoutMs: 300000,
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 5000,
     puppeteer: {
       executablePath,
       headless: true,
@@ -3894,7 +3967,7 @@ async function startTestSimulator({ force = false } = {}) {
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath();
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: `${clientId}-simulator`, dataPath: simulatorSessionDir }), authTimeoutMs: 300000,
-    puppeteer: { executablePath, headless: true, args: [...new Set([...chromium.args, '--disable-dev-shm-usage', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'])], protocolTimeout: 300000 },
+    puppeteer: { executablePath, headless: true, args: [...new Set([...browserBaseArgs(), '--disable-dev-shm-usage', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'])], protocolTimeout: 300000 },
   });
   simulatorClient = client;
   client.on('qr', async (qr) => { if (simulatorClient !== client) return; simulatorStatus = 'qr'; simulatorQrDataUrl = await QRCode.toDataURL(qr, { width: 420, margin: 1 }); });
@@ -4206,6 +4279,66 @@ app.post('/api/group-knowledge', async (req, res) => {
     const action = String(req.body?.action || 'refresh');
     const allowed = await getAllowedGroupIds();
     if (!allowed.has(groupId)) return res.status(403).json({ ok: false, error: 'group_not_authorized' });
+    if (action === 'set-commercial') {
+      const entrada = req.body?.rules || {};
+      const num = (v) => {
+        if (v === null || v === undefined || v === '') return null;
+        let n;
+        if (typeof v === 'number') n = v;
+        else {
+          const t = String(v).trim().replace(/[^0-9.,-]/g, '');
+          if (!t) return null;
+          n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+        }
+        return Number.isFinite(n) && n >= 0 ? n : null;
+      };
+      const services = {};
+      for (const chave of ['leve', 'moto', 'utilitario', 'pesado']) {
+        const s = entrada.services?.[chave];
+        if (!s) continue;
+        const basePrice = num(s.basePrice);
+        if (!(basePrice > 0)) continue;
+        services[chave] = {
+          basePrice,
+          includedKm: num(s.includedKm) ?? 0,
+          pricePerKm: num(s.pricePerKm) ?? 0,
+          dirtRoadPricePerKm: num(s.dirtRoadPricePerKm),
+        };
+      }
+      if (!Object.keys(services).length) {
+        return res.status(400).json({ ok: false, error: 'Informe ao menos um tipo de veiculo com valor de saida maior que zero.' });
+      }
+      const regras = {
+        raw: 'Tabela configurada no painel.',
+        source: 'panel',
+        services,
+        workedHour: num(entrada.workedHour),
+        stoppedHour: num(entrada.stoppedHour),
+        invoiceFee: num(entrada.invoiceFee),
+        tollAllowed: entrada.tollAllowed === true,
+        noSkates: entrada.noSkates === true,
+        detected: true,
+      };
+      const agora = new Date().toISOString();
+      const todos = await readJson(groupKnowledgeFile, {});
+      const anterior = todos[groupId] || {};
+      const versoes = Array.isArray(anterior.commercialVersions) ? anterior.commercialVersions.slice(-29) : [];
+      versoes.push({ descriptionHash: 'painel-' + agora, rules: regras, status: 'approved', observedAt: agora, approvedAt: agora });
+      todos[groupId] = {
+        ...anterior,
+        groupId,
+        name: anterior.name || '',
+        approvedCommercialRules: regras,
+        draftCommercialRules: anterior.draftCommercialRules?.detected ? anterior.draftCommercialRules : regras,
+        commercialVersions: versoes,
+        commercialStatus: 'approved',
+        commercialApprovedAt: agora,
+        updatedAt: agora,
+      };
+      await writeJson(groupKnowledgeFile, todos);
+      logEvent('learning', 'Tabela comercial configurada pelo painel.', { groupId, servicos: Object.keys(services) });
+      return res.json({ ok: true, group: todos[groupId] });
+    }
     if (action === 'approve-commercial') return res.json({ ok: true, group: await learningStore.approveCommercial(groupId) });
     const chat = await waClient?.getChatById(groupId).catch(() => null);
     const group = await learningStore.syncGroup({ groupId, name: chat?.name || '', description: chat?.description || chat?.groupMetadata?.desc || '' });
