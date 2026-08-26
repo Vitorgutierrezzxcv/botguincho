@@ -2578,6 +2578,26 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '', 
   });
 }
 
+// Le um endereco escrito em texto livre, mesmo quando a mensagem tambem pergunta
+// outra coisa ("Disponivel?", "Qual a previa?"). Escolhe a primeira linha que comeca
+// com um logradouro, para nao levar a pergunta junto e sujar a geocodificacao.
+function enderecoEmTextoLivre(text = '') {
+  const bruto = String(text || '').replace(/\r/g, ' ').trim();
+  if (!bruto) return null;
+  const mapa = extractMapsUrl(bruto);
+  if (mapa) return mapa;
+  const coordenadas = coordinatesFromText(bruto);
+  if (coordenadas) return `${coordenadas.latitude},${coordenadas.longitude}`;
+  const linhas = bruto.split('\n').map((linha) => linha.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  for (const linha of [...linhas, bruto.replace(/\s+/g, ' ').trim()]) {
+    if (linha.length < 10) continue;
+    const normalizada = normalizeForIntent(linha);
+    if (!/^(?:rua|r\.?|avenida|av\.?|alameda|travessa|estrada|rodovia|rod\.?|praca|largo|via|marginal|fazenda|sitio|condominio|loteamento)\b/i.test(normalizada)) continue;
+    return normalizeAddressForLookup(linha);
+  }
+  return null;
+}
+
 function extractStandaloneAddressTarget(text = '') {
   const raw = String(text || '').replace(/\r/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!raw || raw.length < 5) return null;
@@ -2791,7 +2811,7 @@ async function findConfiguredExcludedArea({ groupId, readableText, facts = {}, i
   const areas = sanitizeExcludedAreas(settings?.excludedAreas || []);
   if (!areas.length) return null;
 
-  const originAddress = extractLabeledField(readableText, 'Origem') || facts.origin || null;
+  const originAddress = extractLabeledField(readableText, 'Origem') || facts.origin || enderecoEmTextoLivre(readableText) || null;
   const destinationAddress = extractLabeledField(readableText, 'Destino') || facts.destination || null;
 
   if (originAddress) {
@@ -2842,7 +2862,7 @@ async function currentOperationalContext(groupId, groupName, text) {
 }
 
 async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null) {
-  const originAddress = extractLabeledField(text, 'Origem') || facts.origin || null;
+  const originAddress = extractLabeledField(text, 'Origem') || facts.origin || enderecoEmTextoLivre(text) || null;
   const destinationAddress = extractLabeledField(text, 'Destino') || facts.destination || null;
   const shared = await getRecentSharedLocation(groupId);
   const originCoordinates = incomingLocation || (!originAddress ? shared?.coordinates || null : null);
@@ -2870,7 +2890,7 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   }
 
   const facts = context.facts;
-  const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem'));
+  const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
   let route = null;
   if (hasOpportunityData) {
     route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
@@ -2992,6 +3012,20 @@ async function handleIncompleteDispatchRuntime(msg, groupName, readableText, con
     vehicle: context.facts.vehicle || call?.vehicle || '',
   };
   const missing = missingDispatchData(combinedFacts);
+
+  // NAO_PEDE_O_QUE_JA_TEM: a classificacao de intencao as vezes manda uma ficha
+  // completa para este caminho. Se origem, destino e veiculo estao todos presentes,
+  // nao faz sentido pedi-los de novo: segue o fluxo normal de acionamento.
+  // A marca evita ida e volta infinita entre os dois tratadores.
+  if (!missing.length && !context.jaRedirecionadoDeIncompleto) {
+    await handleDispatchDetailsRuntime(msg, groupName, readableText, null, {
+      ...context,
+      facts: combinedFacts,
+      jaRedirecionadoDeIncompleto: true,
+    });
+    return;
+  }
+
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: combinedFacts.origin || null, destinationAddress: combinedFacts.destination || null,
@@ -3041,9 +3075,12 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
   const nextOrigin = context.facts.origin || call?.origin || null;
   const nextOriginCoordinates = context.facts.origin ? null : (call?.originCoordinates || null);
   const nextDestination = context.facts.destination || call?.destination || null;
-  const nextEta = flowActive && nextOrigin
-    ? await computeEtaWithRetry({ targetAddress: nextOrigin, targetCoordinates: nextOriginCoordinates }).catch(() => null)
-    : (call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null);
+  // PREVISAO_NO_PROTOCOLO: calcula a previsao sempre que houver origem, e nao so
+  // quando ja existe atendimento em andamento. Ficha nova tambem merece previsao.
+  const etaAnterior = call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null;
+  const nextEta = nextOrigin
+    ? (await computeEtaWithRetry({ targetAddress: nextOrigin, targetCoordinates: nextOriginCoordinates }).catch(() => null)) || etaAnterior
+    : etaAnterior;
   const nextRouteSnapshot = flowActive && nextOrigin && nextDestination
     ? await computeFullServiceRoute({
         originAddress: nextOrigin, originCoordinates: nextOriginCoordinates,
@@ -3071,7 +3108,7 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
     ? `Protocolo vinculado ao atendimento em andamento ✅${calculation}`
     : call?.status === 'concluido'
       ? 'Protocolo vinculado ao atendimento concluído ✅'
-      : 'Protocolo recebido e registrado ✅ Aguardando autorização expressa para seguir.';
+      : `Protocolo recebido e registrado ✅${nextEta?.minutes ? ` Previsão até a origem: ${nextEta.minutes} min.` : ''} Aguardando autorização expressa para seguir.`;
   if (saved && flowActive && saved.protocol) await notifyDriverOfConfirmedCall(saved, { force: saved.protocol !== call?.protocol });
   await replyAndRemember(msg, groupName, readableText, reply, { intent: context.intent, authorizationRequired: !call || (!flowActive && call?.status !== 'concluido'), callId: saved?.id || call?.id || null, billableKm: saved?.billableKm ?? null, calculatedValue: saved?.calculatedValue ?? null });
 }

@@ -1,3 +1,9 @@
+const STREET_WORDS = new Set([
+  'rua', 'r', 'avenida', 'av', 'alameda', 'al', 'travessa', 'tv', 'praca', 'largo',
+  'beco', 'via', 'rodovia', 'rod', 'estrada', 'est', 'viaduto', 'ladeira', 'quadra',
+  'servidao', 'marginal', 'fazenda', 'sitio', 'condominio', 'loteamento',
+]);
+
 function norm(value = '') {
   return String(value || '')
     .normalize('NFD')
@@ -44,6 +50,25 @@ function exactSegmentMatches(address, expected) {
   return segments.some((segment) => segment === key || segment === `bairro ${key}` || segment === `cidade ${key}`);
 }
 
+function phraseMatches(address, expected) {
+  const key = norm(expected);
+  if (!key) return false;
+  const haystack = norm(address);
+  if (!haystack) return false;
+  // Casa o nome como sequencia inteira de palavras: "icaivera betim" casa
+  // "icaivera"; "icaiverapolis" nao casa.
+  // Um nome logo depois de um tipo de logradouro e nome de rua, nao de local:
+  // "Rua Juatuba, Centro, Betim" nao pode bloquear a cidade de Juatuba.
+  const words = haystack.split(' ');
+  const target = key.split(' ');
+  for (let i = 0; i + target.length <= words.length; i += 1) {
+    if (target.some((word, offset) => words[i + offset] !== word)) continue;
+    if (i > 0 && STREET_WORDS.has(words[i - 1])) continue;
+    return true;
+  }
+  return false;
+}
+
 function labeledValue(address, label) {
   const raw = String(address || '').replace(/\r/g, ' ');
   const re = new RegExp(`(?:^|[,;|\\n])\\s*${label}\\s*[:=\\-]?\\s*([^,;|\\n]+)`, 'i');
@@ -77,23 +102,24 @@ export function matchExcludedArea({ address = '', parsedAddress = null, region =
     if (area.scope !== 'both' && area.scope !== scope) continue;
 
     if (area.type === 'city') {
-      const matched = cityKey
-        ? cityKey === norm(area.name)
-        : exactSegmentMatches(address, area.name);
+      // SEMPRE_TENTA_FRASE: nao depende do parser acertar cidade/bairro.
+      const matched = (cityKey && cityKey === norm(area.name))
+        || exactSegmentMatches(address, area.name)
+        || phraseMatches(address, area.name);
       if (matched) return { ...area, matchedBy: cityKey ? 'city' : 'address-segment', scope };
       continue;
     }
 
-    const neighborhoodMatched = districtKey
-      ? districtKey === norm(area.name)
-      : exactSegmentMatches(address, area.name);
+    const neighborhoodMatched = (districtKey && districtKey === norm(area.name))
+      || exactSegmentMatches(address, area.name)
+      || phraseMatches(address, area.name);
     if (!neighborhoodMatched) continue;
 
     if (area.city) {
       const requiredCity = norm(area.city);
-      const cityMatched = cityKey
-        ? cityKey === requiredCity
-        : exactSegmentMatches(address, area.city);
+      const cityMatched = (cityKey && cityKey === requiredCity)
+        || exactSegmentMatches(address, area.city)
+        || phraseMatches(address, area.city);
       if (!cityMatched) continue;
     }
 
