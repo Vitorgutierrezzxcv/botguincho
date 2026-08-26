@@ -1064,6 +1064,8 @@ function looksLikeDispatch(text = '') {
 
 function asksAvailability(text = '') {
   const value = normalizeForIntent(text);
+  if (/^consegue\s*\?+$/.test(value)) return true;
+  if (/\bconsegue\s+(?:fazer|atender|pegar|buscar|ir|assumir|realizar)\b/.test(value)) return true;
   return /\b(disponivel|disponibilidade|tem guincho|tem reboque|consegue atender|pode atender|tem como atender|esta livre|ta livre|disponivel para remocao|disponivel para o reboque)\b/.test(value);
 }
 
@@ -1078,11 +1080,21 @@ function greetingReply(text = '') {
 
 function asksEta(text = '') {
   const value = normalizeForIntent(text);
+  // ATALHOS_FALLBACK: "60?", "chegando?", "proximo?" tambem sao perguntas de tempo.
+  const shortMinutes = value.match(/^(\d{2,3})\s*\?+$/);
+  if (shortMinutes) {
+    const minutes = Number(shortMinutes[1]);
+    if (minutes >= 10 && minutes <= 180 && minutes % 5 === 0) return true;
+  }
+  if (/^(?:ja\s+)?(?:chegou|chegando|chegaram)\s*\?+$/.test(value)
+    || /^(?:achou|localizou|encontrou)\s*\?+$/.test(value)
+    || /^proximos?\s*\?+$/.test(value)) return true;
   return /\b(quanto tempo|qual (?:o )?tempo|qual (?:a )?previa|previa|tempo de distancia|previsao de chegada|previsao|quanto demora|demora|eta|chega em|chegada|tempo (?:ate|para|pra) chegar|temp(?:o)? (?:ate|para|pra) chegar)\b/.test(value);
 }
 
 function asksDistance(text = '') {
   const value = normalizeForIntent(text);
+  if (/^kms?\s*\?+$/.test(value)) return true;
   return /\b(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente)|km totais?|quilometragem(?: total)?)\b/.test(value);
 }
 

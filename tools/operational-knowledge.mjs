@@ -115,6 +115,48 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const evidenceContext = activeService || recentCall?.status === 'concluido';
   if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';
 
+  // RECONHECE_ATALHOS — formas curtas que as centrais usam o tempo todo e que
+  // antes caiam em "other", ou seja, silencio. Extraidas de 4.828 pares reais.
+  const administrativeContext = /\b(nota fiscal|nfe?|pagamento|faturamento|cadastro|email|tabela)\b/.test(value);
+
+  // "60?" logo depois de uma oportunidade e "consegue chegar em 60 minutos?".
+  // Os valores comerciais praticados nao sao multiplos de 5 nessa faixa, entao
+  // o multiplo de 5 separa a pergunta de tempo de uma proposta de preco.
+  const shortMinutes = value.match(/^(\d{2,3})\s*\?+$/);
+  if (shortMinutes) {
+    const minutes = Number(shortMinutes[1]);
+    if (minutes >= 10 && minutes <= 180 && minutes % 5 === 0) return 'eta';
+  }
+  // "chegando?", "chegou?", "achou?", "proximo?" sao perguntas de status, nunca
+  // o relato de chegada do proprio motorista.
+  if (/^(?:ja\s+)?(?:chegou|chegando|chegaram)\s*\?+$/.test(value)
+    || /^(?:achou|localizou|encontrou)\s*\?+$/.test(value)
+    || /^proximos?\s*\?+$/.test(value)
+    || /^\S{4,10}\s+chegando\s*\?*$/.test(value)) return 'eta';
+
+  const baseFareQuestion = /^(?:qual\s+)?(?:[ao]\s+)?saida\s*(?:amigo|pessoal|ai|ae)?\s*\?+$/.test(value)
+    || /\bvalor\s+d[ae]\s+saida\b/.test(value)
+    || /\b(?:fica|fecha|fechou)\s+n?[ao]?\s*saida\s*\?+/.test(value);
+  const kmQuestion = /^kms?\s*\?+$/.test(value)
+    || /\b(?:fechou|deu|ficou|deram)\s+(?:em\s+)?quantos?\s+kms?\b/.test(value);
+  if (kmQuestion || baseFareQuestion) return activeService ? 'value_summary' : 'quote';
+
+  // "consegue?" isolado e oferta de servico. Verbos de contato (chamar, ligar,
+  // falar) ficam de fora de proposito: nao sao pergunta de disponibilidade.
+  const serviceOfferQuestion = /^consegue\s*\?+$/.test(value)
+    || /\bconsegue\s+(?:fazer|atender|pegar|buscar|ir|assumir|realizar)\b/.test(value)
+    || /\b(?:pode|tem como|da pra)\s+(?:fazer|atender|pegar|assumir)\b/.test(value);
+  // Um pedido vago ("consegue buscar?") continua sendo acionamento incompleto:
+  // pedir origem/destino/veiculo e mais util do que responder "disponivel".
+  if (serviceOfferQuestion && !activeService && !hasIncompleteDispatch(value)) return 'availability';
+
+  const dropSignal = /\bcancel(?:a|ar|ei|ou|ada|ado|amos|e|em|amento)\b/.test(value)
+    || /\bnao\s+(?:vai|ira|sera)\s+(?:mais\s+)?(?:precisa\w*|necessari\w*)\b/.test(value)
+    || /\b(?:vai|ira)\s+precisar\s+mais\s+nao\b/.test(value)
+    || /\bnao\s+(?:e|sera)\s+mais\s+necessari\w*\b/.test(value)
+    || /\bnao\s+precisa\s+(?:mais|nao)\b/.test(value);
+  if (dropSignal && !administrativeContext) return 'cancellation';
+
   const dirtRoadEndSignal = /\b(saiu|saimos|saindo|fim|terminou|acabou)\b.{0,28}\b(estrada|rua|trecho)\s+de\s+terra\b|\bvoltou\s+(o\s+)?asfalto\b/.test(value);
   const dirtRoadSignal = /\b(estrada|rua|trecho)\s+de\s+terra\b|\bcomeca\s+(aqui\s+)?(a\s+)?terra\b|\bacabou\s+o\s+asfalto\b/.test(value);
   if (activeService && dirtRoadEndSignal) return 'dirt_road_end';
