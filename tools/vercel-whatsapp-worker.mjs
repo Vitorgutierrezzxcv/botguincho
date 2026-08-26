@@ -28,6 +28,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const port = Number(process.env.BOTGUINCHO_PLATFORM_PORT ?? 3001);
 const clientId = process.env.WHATSAPP_CLIENT_ID ?? 'cliente-teste';
+const adminToken = String(process.env.BOTGUINCHO_ADMIN_TOKEN ?? '').trim();
 const dataDir = process.env.BOTGUINCHO_DATA_DIR ?? path.join(os.homedir(), '.botguincho-data');
 const clientDir = path.join(dataDir, clientId);
 const sessionDir = path.join(clientDir, 'whatsapp-session');
@@ -47,6 +48,21 @@ const auditFile = path.join(clientDir, 'audit.jsonl');
 const groupKnowledgeFile = path.join(clientDir, 'group-knowledge.json');
 const learningHistoryFile = path.join(clientDir, 'learning-history.jsonl');
 const learningIndexFile = path.join(clientDir, 'learning-index.json');
+
+function validAdminToken(value) {
+  if (!adminToken) return true;
+  const supplied = Buffer.from(String(Array.isArray(value) ? value[0] : value || ''));
+  const expected = Buffer.from(adminToken);
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
+
+app.use('/api', (req, res, next) => {
+  // O rastreador do motorista usa um código de pareamento próprio e não recebe
+  // o segredo administrativo compartilhado entre Vercel e VPS.
+  if (req.path === '/tracker-bridge') return next();
+  if (validAdminToken(req.headers['x-botguincho-token'])) return next();
+  return res.status(401).json({ ok: false, error: 'unauthorized' });
+});
 
 let aiCredential = process.env.OPENAI_API_KEY ?? '';
 let waClient = null;
@@ -4491,6 +4507,6 @@ process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 await ensureDir();
 await getPairCode();
 await refreshServiceArea();
-await startWhatsApp();
 
 app.listen(port, '0.0.0.0', () => console.log(`[worker:${clientId}] listening on ${port}`));
+await startWhatsApp();

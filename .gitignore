@@ -3,6 +3,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.vps.example
 playwright/.auth/
 .wwebjs_auth/
 .wwebjs_config/
