@@ -1636,10 +1636,36 @@ function stripRouteQuestionFragments(value = '') {
     .trim();
 }
 
+// LOGRADOURO_NAO_E_ESTADO: nomes de estado aparecem o tempo todo como nome de
+// rua ("Avenida Mato Grosso", "Rua Sao Paulo", "Rua Goias"). Tratar isso como
+// estado recusava atendimento valido em Contagem, Betim e Juatuba.
+const ADDRESS_STREET_WORDS = new Set([
+  'rua', 'r', 'avenida', 'av', 'alameda', 'al', 'travessa', 'tv', 'praca', 'largo',
+  'beco', 'via', 'rodovia', 'rod', 'estrada', 'est', 'viaduto', 'ladeira', 'quadra',
+  'servidao', 'marginal',
+]);
+// "Para" tambem e preposicao e comeco de "Para de Minas" (cidade de MG). So vale
+// como estado quando encerra o endereco.
+const STATE_NAMES_ONLY_AT_END = new Set(['para']);
+// Nomes compostos primeiro: senao "Mato Grosso do Sul" e lido como Mato Grosso.
+const BRAZIL_STATE_ENTRIES = Object.entries(BRAZIL_STATE_BY_NAME)
+  .sort((a, b) => b[0].split(' ').length - a[0].split(' ').length);
+
 function detectBrazilState(value = '') {
-  const normalized = normalizeForIntent(value);
-  for (const [name, uf] of Object.entries(BRAZIL_STATE_BY_NAME)) {
-    if (normalized === name || normalized.includes(` ${name} `) || normalized.endsWith(` ${name}`) || normalized.startsWith(`${name} `)) return uf;
+  const words = normalizeForIntent(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  for (const [name, uf] of BRAZIL_STATE_ENTRIES) {
+    const target = name.split(' ');
+    for (let i = 0; i + target.length <= words.length; i += 1) {
+      if (target.some((word, offset) => words[i + offset] !== word)) continue;
+      if (i > 0 && ADDRESS_STREET_WORDS.has(words[i - 1])) continue;
+      if (STATE_NAMES_ONLY_AT_END.has(name) && i + target.length !== words.length) continue;
+      return uf;
+    }
   }
   const ufMatch = String(value || '').toUpperCase().match(/(?:^|[^A-Z])([A-Z]{2})(?:[^A-Z]|$)/);
   return ufMatch && BRAZIL_UFS.has(ufMatch[1]) ? ufMatch[1] : '';
