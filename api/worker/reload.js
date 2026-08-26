@@ -1,9 +1,6 @@
-import { Sandbox } from '@vercel/sandbox';
-import { applyWwebjsPatch, requestCredential } from '../../lib/sandbox-runtime.js';
+import { applyWwebjsPatch, ensureWorkerSandbox, requestCredential, requestTenant } from '../../lib/sandbox-runtime.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
-const SANDBOX_NAME = 'botguincho-wa-vercel-v12';
-const REPO_URL = 'https://github.com/Vitorgutierrezzxcv/botguincho.git';
 const RAW_ROOT = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho';
 const PORT = 3001;
 const RUNTIME_FILES = [
@@ -158,19 +155,7 @@ export default async function handler(req, res) {
     const requestedRef = String(req.headers['x-botguincho-source-ref'] || '').trim();
     const sourceRef = /^[0-9a-f]{40}$/i.test(requestedRef) ? requestedRef : 'main';
 
-    const sandbox = await Sandbox.getOrCreate({
-      name: SANDBOX_NAME,
-      source: { type: 'git', url: REPO_URL, depth: 1 },
-      runtime: 'node22',
-      resources: { vcpus: 2 },
-      timeout: 40 * 60 * 1000,
-      persistent: true,
-      snapshotExpiration: 7 * 24 * 60 * 60 * 1000,
-      keepLastSnapshots: { count: 1 },
-      ports: [PORT],
-      networkPolicy: 'allow-all',
-      resume: true,
-    });
+    const sandbox = await ensureWorkerSandbox(requestTenant(req));
 
     const sourceState = await syncFiles(sandbox, sourceRef);
     const patchState = await applyWwebjsPatch(sandbox);
