@@ -36,4 +36,10 @@ assert.ok(
 assert.equal((fonte.match(/estimateQuoteRoute\(msg\.from, readableText, [^)]*?, incomingLocation, pendingRouteContext\(context\.recentCall\)\)/g) || []).length, 3,
   'disponibilidade, cotacao e dados do atendimento precisam passar a ficha pendente');
 
+// Mesmo quando o classificador principal nao extrai os campos, o caminho de
+// dados incompletos precisa ler os rotulos presentes na ficha recebida.
+const incompleto = fonte.slice(fonte.indexOf('async function handleIncompleteDispatchRuntime('), fonte.indexOf('async function handleDispatchDetailsRuntime('));
+assert.match(incompleto, /context\.facts\.origin \|\| extractLabeledField\(readableText, 'Origem'\)/);
+assert.match(incompleto, /context\.facts\.destination \|\| extractLabeledField\(readableText, 'Destino'\)/);
+
 console.log('OK: ficha picada herda o que ja foi recebido.');

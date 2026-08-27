@@ -3048,8 +3048,8 @@ async function handleIncompleteDispatchRuntime(msg, groupName, readableText, con
   const call = pendingOpportunityCall(context.recentCall);
   const combinedFacts = {
     ...context.facts,
-    origin: context.facts.origin || call?.origin || '',
-    destination: context.facts.destination || call?.destination || '',
+    origin: context.facts.origin || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText) || call?.origin || '',
+    destination: context.facts.destination || extractLabeledField(readableText, 'Destino') || call?.destination || '',
     vehicle: context.facts.vehicle || call?.vehicle || '',
   };
   const missing = missingDispatchData(combinedFacts);
