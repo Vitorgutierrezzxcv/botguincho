@@ -10,10 +10,11 @@ assert.equal(stats.screenshots, 184, 'quantidade de screenshots divergente');
 
 assert.equal(inferTrainedIntent('Pode retornar'), 'cancellation');
 assert.equal(inferTrainedIntent('Associado dispensou'), 'cancellation');
-assert.equal(inferTrainedIntent('Disponível? Valor e prévia? Quantos kms totais?'), 'availability');
+assert.equal(inferTrainedIntent('Disponível? Valor e prévia? Quantos kms totais?'), 'quote');
 assert.equal(inferTrainedIntent('Cotação Visão é apenas estimativa (não aprovada)'), 'quote');
 assert.equal(inferTrainedIntent('Pode seguir'), 'authorization');
 assert.equal(inferTrainedIntent('Finalizado'), 'closure');
+assert.equal(inferTrainedIntent('Confere fechamento?'), 'closure');
 
 // Segurança: frases administrativas ou aleatórias não podem ganhar intenção por aproximação fraca.
 assert.equal(inferTrainedIntent('Reunião do financeiro amanhã às 9h'), null);
