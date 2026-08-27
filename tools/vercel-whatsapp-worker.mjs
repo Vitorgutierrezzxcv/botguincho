@@ -2887,16 +2887,11 @@ async function currentOperationalContext(groupId, groupName, text) {
   return { management, recentCall, knowledge, approvedRules, commercialRuleSource: commercialResolution.source, billingProfile, facts, intent, profile: resolveGroupProfile(groupName) };
 }
 
-// FICHA_PICADA: 12,6% das mensagens das centrais chegam em pedaco - o destino
-// vem numa mensagem, o veiculo em outra. O pedaco que chega sozinho precisa
-// herdar o que ja foi recebido, senao a previsao cai numa localizacao antiga
-// do grupo e sai um numero diferente do que ja tinha sido informado.
-async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null, pending = null) {
-  const originAddress = extractLabeledField(text, 'Origem') || facts.origin || enderecoEmTextoLivre(text) || pending?.origin || null;
-  const destinationAddress = extractLabeledField(text, 'Destino') || facts.destination || pending?.destination || null;
+async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null) {
+  const originAddress = extractLabeledField(text, 'Origem') || facts.origin || enderecoEmTextoLivre(text) || null;
+  const destinationAddress = extractLabeledField(text, 'Destino') || facts.destination || null;
   const shared = await getRecentSharedLocation(groupId);
-  const originCoordinates = incomingLocation
-    || (!originAddress ? (pending?.originCoordinates || shared?.coordinates || null) : null);
+  const originCoordinates = incomingLocation || (!originAddress ? shared?.coordinates || null : null);
   let eta = null;
   if (originAddress || originCoordinates) eta = await computeEtaWithRetry({ targetAddress: originAddress, targetCoordinates: originCoordinates });
   let secondLeg = null;
@@ -2924,7 +2919,7 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
   let route = null;
   if (hasOpportunityData) {
-    route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation, pendingRouteContext(context.recentCall)).catch(() => ({ eta: null }));
+    route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation).catch(() => ({ eta: null }));
     if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
       const queued = await estimateSecondCallArrival({
         management: context.management,
@@ -2968,7 +2963,7 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     return;
   }
 
-  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation, pendingRouteContext(context.recentCall)).catch((error) => {
+  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation).catch((error) => {
     logEvent('warning', 'Falha ao estimar rota da cotação.', { error: String(error), groupId: msg.from });
     return { eta: null, secondLeg: null, estimatedTotalKm: null, originAddress: context.facts.origin || null, destinationAddress: context.facts.destination || null };
   });
@@ -3030,16 +3025,6 @@ function missingDispatchData(facts = {}) {
   return missing;
 }
 
-function pendingRouteContext(call = null) {
-  const pending = pendingOpportunityCall(call);
-  if (!pending) return null;
-  return {
-    origin: pending.origin || null,
-    destination: pending.destination || null,
-    originCoordinates: pending.originCoordinates || null,
-  };
-}
-
 function pendingOpportunityCall(call = null) {
   return call && ['cotacao','aguardando_dados','aguardando_aprovacao','agendado'].includes(call.status) ? call : null;
 }
@@ -3048,8 +3033,8 @@ async function handleIncompleteDispatchRuntime(msg, groupName, readableText, con
   const call = pendingOpportunityCall(context.recentCall);
   const combinedFacts = {
     ...context.facts,
-    origin: context.facts.origin || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText) || call?.origin || '',
-    destination: context.facts.destination || extractLabeledField(readableText, 'Destino') || call?.destination || '',
+    origin: context.facts.origin || call?.origin || '',
+    destination: context.facts.destination || call?.destination || '',
     vehicle: context.facts.vehicle || call?.vehicle || '',
   };
   const missing = missingDispatchData(combinedFacts);
@@ -3078,7 +3063,7 @@ async function handleIncompleteDispatchRuntime(msg, groupName, readableText, con
 
 async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomingLocation, context) {
   const call = pendingOpportunityCall(context.recentCall);
-  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation, pendingRouteContext(context.recentCall)).catch(() => ({
+  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation).catch(() => ({
     eta: null, estimatedTotalKm: null, originAddress: context.facts.origin || call?.origin || null,
     destinationAddress: context.facts.destination || call?.destination || null, originCoordinates: incomingLocation || call?.originCoordinates || null,
   }));
