@@ -74,6 +74,7 @@ function looksLikeDirectUtterance(value = '') {
 
 const learnedPatterns = [];
 const patternKeys = new Set();
+const phraseOwners = new Map();
 const sourceGroups = new Set();
 let sourceMessages = 0;
 let sourceScreenshots = 0;
@@ -83,8 +84,15 @@ function register(intent, phrase, source) {
   if (!intent || !normalized || normalized.length < 2) return;
   const meaningful = tokens(normalized);
   if (!meaningful.length && !/^\d{2,3}\?$/.test(normalized)) return;
+
+  // As fixtures consolidadas são carregadas primeiro e resolvem divergências entre grupos.
+  // Se a mesma frase apareceu com outra intenção em um export, preservamos a classificação revisada.
+  const existingIntent = phraseOwners.get(normalized);
+  if (existingIntent && existingIntent !== intent) return;
+
   const key = `${intent}|${normalized}`;
   if (patternKeys.has(key)) return;
+  phraseOwners.set(normalized, intent);
   patternKeys.add(key);
   learnedPatterns.push({
     intent,
@@ -118,7 +126,7 @@ function loadTraining() {
     if (!data) continue;
     if (data.group) sourceGroups.add(String(data.group));
     const count = Number(data.messageCount || data.parsedMessageCount || 0);
-    // O total consolidado e preferido; esta soma serve de fallback para bases futuras.
+    // O total consolidado é preferido; esta soma serve de fallback para bases futuras.
     if (!sourceMessages && Number.isFinite(count)) sourceMessages += count;
 
     for (const [patternKey, rawExamples] of Object.entries(data.conversationPatterns || {})) {
