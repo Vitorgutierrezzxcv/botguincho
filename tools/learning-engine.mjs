@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { inferTrainedIntent } from './trained-intent-engine.mjs';
 
 function normalize(value = '') {
   return String(value)
@@ -74,6 +75,11 @@ export function inferLearningIntent(text = '') {
   if (/\b(disponivel|disponibilidade|consegue esse|consegue uma remocao|tem reboque|tem guincho)\b/.test(value)) return 'availability';
   if (/\b(quanto tempo|previsao|eta|chega em|demora)\b/.test(value)) return 'eta';
   if (/\b(origem|destino|reboque|guincho|veiculo|pane|colisao|remocao|protocolo)\b/.test(value)) return 'dispatch';
+
+  // Só consulta o corpus histórico quando as regras atuais não reconheceram a mensagem.
+  // Isso mantém as regras críticas como fonte da verdade e usa o treinamento sem IA/token.
+  const trainedIntent = inferTrainedIntent(text);
+  if (trainedIntent) return trainedIntent;
   return 'other';
 }
 
