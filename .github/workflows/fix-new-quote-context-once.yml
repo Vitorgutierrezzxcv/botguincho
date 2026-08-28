@@ -34,15 +34,7 @@ jobs:
           s = s.replace(old, new, 1)
 
           anchor = "function hasOperationalContext(value = '') {"
-          helper = r'''function hasStructuredServiceRequest(text = '') {
-  const value = norm(text);
-  const hasOrigin = /\borigem\s*[:=\-]/.test(value);
-  const hasDestination = /\bdestino\s*[:=\-]/.test(value);
-  const hasServiceOrVehicle = /\bservico(?:\s+selecionado)?\b|\breboque\b|\bguincho\b|\butilitario\b|\bveiculo\b|\bmodelo\b|\bplaca\b|\bmotivo\b/.test(value);
-  return hasOrigin && hasDestination && hasServiceOrVehicle;
-}
-
-'''
+          helper = "function hasStructuredServiceRequest(text = '') {\n  const value = norm(text);\n  const hasOrigin = /\\borigem\\s*[:=\\-]/.test(value);\n  const hasDestination = /\\bdestino\\s*[:=\\-]/.test(value);\n  const hasServiceOrVehicle = /\\bservico(?:\\s+selecionado)?\\b|\\breboque\\b|\\bguincho\\b|\\butilitario\\b|\\bveiculo\\b|\\bmodelo\\b|\\bplaca\\b|\\bmotivo\\b/.test(value);\n  return hasOrigin && hasDestination && hasServiceOrVehicle;\n}\n\n"
           if s.count(anchor) != 1:
               raise SystemExit(f'helper anchor: {s.count(anchor)} ocorrencias')
           s = s.replace(anchor, helper + anchor, 1)
@@ -54,7 +46,7 @@ jobs:
           s = s.replace(old_protocol, new_protocol, 1)
 
           anchor2 = "if (base === 'eta') return 'eta';\n\n  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha"
-          replacement2 = "if (base === 'eta') return 'eta';\n\n  // Uma ficha completa de um novo servico e uma nova oportunidade, mesmo que exista\n  // outra corrida ativa no mesmo grupo. Isso evita que a segunda cotacao seja\n  // anexada ao protocolo da primeira corrida. Horizonte preserva a excecao de\n  // protocolo formal que pode autorizar.\n  if (hasStructuredServiceRequest(text) && !(profile.formalProtocolCanAuthorize && hasFormalProtocol(text))) return 'quote';\n\n  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha"
+          replacement2 = "if (base === 'eta') return 'eta';\n\n  // Ficha completa com origem, destino e servico/veiculo abre nova cotacao, mesmo\n  // que outra corrida esteja ativa no mesmo grupo. Horizonte preserva a excecao\n  // de protocolo formal que pode autorizar.\n  if (hasStructuredServiceRequest(text) && !(profile.formalProtocolCanAuthorize && hasFormalProtocol(text))) return 'quote';\n\n  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha"
           if s.count(anchor2) != 1:
               raise SystemExit(f'structured request anchor: {s.count(anchor2)} ocorrencias')
           s = s.replace(anchor2, replacement2, 1)
@@ -63,21 +55,8 @@ jobs:
           t = Path('tools/test-operational-knowledge.mjs')
           ts = t.read_text()
           marker = "console.log('OPERATIONAL_KNOWLEDGE_REGRESSION_OK');"
-          regression = r'''const screenshotQuote = `Bmw / X1 Sdrive 20i X-line 2.0 Tb Ac ... Motivo PANE MECANICA Obs. p/ prestador:
-É expressamente proibido que os prestadores autorizem que alguém venha dentro do veículo, em cima da prancha.
-
-APM BRASIL
-
-Serviço selecionado REBOQUE UTILITARIO
-Origem: AVENIDA PROFESSOR CLOVIS SALGADO, nº 1578, VALE, IGARAPE - MG
-ref. GARIMPA OUTLET
-Destino: AVENIDA BARAO HOMEM DE MELO, nº 3490, ESTORIL, BELO HORIZONTE - MG
-ref. OFICINA / MARLON RECEBE 3136589880 * MG POWER`;
-assert.equal(classifyRuntimeIntent(screenshotQuote, 'Tests guincho', { status: 'autorizado', origin: 'Rua antiga', destination: 'Oficina antiga' }), 'quote', 'Ficha completa nova nao pode ser anexada a corrida ativa');
-assert.equal(classifyRuntimeIntent('Protocolo definitivo: 8821', 'Tests guincho', { status: 'autorizado' }), 'protocol_update', 'Protocolo isolado continua atualizando a corrida ativa');
-assert.equal(classifyRuntimeIntent('PROTOCOLO: HZ-22\nSERVIÇO: REBOQUE LEVE\nORIGEM: Rua A, 10\nDESTINO: Rua B, 20', 'Horizonte', { status: 'cotacao' }), 'formal_dispatch', 'Excecao formal da Horizonte deve continuar autorizando');
-
-'''
+          screenshot = "Bmw / X1 Sdrive 20i X-line 2.0 Tb Ac ... Motivo PANE MECANICA Obs. p/ prestador:\\nÉ expressamente proibido que os prestadores autorizem que alguém venha dentro do veículo, em cima da prancha.\\n\\nAPM BRASIL\\n\\nServiço selecionado REBOQUE UTILITARIO\\nOrigem: AVENIDA PROFESSOR CLOVIS SALGADO, nº 1578, VALE, IGARAPE - MG\\nref. GARIMPA OUTLET\\nDestino: AVENIDA BARAO HOMEM DE MELO, nº 3490, ESTORIL, BELO HORIZONTE - MG\\nref. OFICINA / MARLON RECEBE 3136589880 * MG POWER"
+          regression = "const screenshotQuote = " + repr(screenshot) + ";\nassert.equal(classifyRuntimeIntent(screenshotQuote, 'Tests guincho', { status: 'autorizado', origin: 'Rua antiga', destination: 'Oficina antiga' }), 'quote', 'Ficha completa nova nao pode ser anexada a corrida ativa');\nassert.equal(classifyRuntimeIntent('Protocolo definitivo: 8821', 'Tests guincho', { status: 'autorizado' }), 'protocol_update', 'Protocolo isolado continua atualizando a corrida ativa');\nassert.equal(classifyRuntimeIntent('PROTOCOLO: HZ-22\\nSERVIÇO: REBOQUE LEVE\\nORIGEM: Rua A, 10\\nDESTINO: Rua B, 20', 'Horizonte', { status: 'cotacao' }), 'formal_dispatch', 'Excecao formal da Horizonte deve continuar autorizando');\n\n"
           if ts.count(marker) != 1:
               raise SystemExit(f'test marker: {ts.count(marker)} ocorrencias')
           t.write_text(ts.replace(marker, regression + marker, 1))
