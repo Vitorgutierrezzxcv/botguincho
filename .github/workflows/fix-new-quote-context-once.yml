@@ -39,17 +39,12 @@ jobs:
               raise SystemExit(f'helper anchor: {s.count(anchor)} ocorrencias')
           s = s.replace(anchor, helper + anchor, 1)
 
-          old_protocol = "if (evidenceContext && /\\bprotocolo\\b/.test(value)) return 'protocol_update';"
-          new_protocol = "if (evidenceContext && /\\bprotocolo\\b/.test(value) && !hasStructuredServiceRequest(text)) return 'protocol_update';"
-          if s.count(old_protocol) != 1:
-              raise SystemExit(f'protocol update guard: {s.count(old_protocol)} ocorrencias')
-          s = s.replace(old_protocol, new_protocol, 1)
-
-          anchor2 = "if (base === 'eta') return 'eta';\n\n  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha"
-          replacement2 = "if (base === 'eta') return 'eta';\n\n  // Ficha completa com origem, destino e servico/veiculo abre nova cotacao, mesmo\n  // que outra corrida esteja ativa no mesmo grupo. Horizonte preserva a excecao\n  // de protocolo formal que pode autorizar.\n  if (hasStructuredServiceRequest(text) && !(profile.formalProtocolCanAuthorize && hasFormalProtocol(text))) return 'quote';\n\n  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha"
-          if s.count(anchor2) != 1:
-              raise SystemExit(f'structured request anchor: {s.count(anchor2)} ocorrencias')
-          s = s.replace(anchor2, replacement2, 1)
+          # A ficha completa precisa vencer incomplete_dispatch antes dos atalhos.
+          early_anchor = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // RECONHECE_ATALHOS"
+          early_replacement = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // Uma ficha completa sem protocolo formal e uma nova cotacao, mesmo quando ja\n  // existe outra corrida ativa no grupo. O aceite explicito continua tendo prioridade.\n  if (hasStructuredServiceRequest(text) && !hasFormalProtocol(text) && base !== 'authorization' && base !== 'scheduled_dispatch' && base !== 'cancellation' && base !== 'pending_approval' && base !== 'closure') return 'quote';\n\n  // RECONHECE_ATALHOS"
+          if s.count(early_anchor) != 1:
+              raise SystemExit(f'early structured anchor: {s.count(early_anchor)} ocorrencias')
+          s = s.replace(early_anchor, early_replacement, 1)
           p.write_text(s)
 
           t = Path('tools/test-operational-knowledge.mjs')
@@ -60,6 +55,15 @@ jobs:
           if ts.count(marker) != 1:
               raise SystemExit(f'test marker: {ts.count(marker)} ocorrencias')
           t.write_text(ts.replace(marker, regression + marker, 1))
+
+          # Alinha o teste antigo ao requisito atual: ficha completa sem autorizacao e cotacao.
+          f = Path('tools/test-complete-operational-flows.mjs')
+          fs = f.read_text()
+          old_case = "['Origem: Rua A, 10. Destino: Rua B, 20. Veículo: Fiat Uno.', 'Solução Assistência', null, 'dispatch_details'],"
+          new_case = "['Origem: Rua A, 10. Destino: Rua B, 20. Veículo: Fiat Uno.', 'Solução Assistência', null, 'quote'],"
+          if fs.count(old_case) != 1:
+              raise SystemExit(f'complete flow quote case: {fs.count(old_case)} ocorrencias')
+          f.write_text(fs.replace(old_case, new_case, 1))
           PY
 
       - name: Rodar regressões
@@ -78,6 +82,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tools/operational-knowledge.mjs tools/test-operational-knowledge.mjs
+          git add tools/operational-knowledge.mjs tools/test-operational-knowledge.mjs tools/test-complete-operational-flows.mjs
           git commit -m "fix: separa nova cotacao de protocolo ativo"
           git push origin main
