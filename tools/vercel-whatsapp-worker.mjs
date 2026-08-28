@@ -20,7 +20,7 @@ import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
 import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 import { driverDispatchMessage, isConfirmedCall, publicEtaMinutes, primaryTruck, truckAvailability, whatsappChatId } from './simple-operation.mjs';
 import { trackerAgeSeconds } from './tracker-freshness.mjs';
-import { ensureInsurerForGroup, sanitizeInsurer, upsertInsurer, buildQuoteFunnel, quoteTrackingPatch, isOwnerFinalizedCall, releaseNextQueuedCall } from './business-orchestration.mjs';
+import { ensureInsurerForGroup, sanitizeInsurer, upsertInsurer, buildQuoteFunnel, quoteTrackingPatch, isOwnerFinalizedCall, releaseNextQueuedCall, pendingAuthorizationCallForGroup } from './business-orchestration.mjs';
 import { buildPeriodReport, buildPeriodWorkbook } from './reporting-engine.mjs';
 import { historicalTrainingStats } from './training-runtime-index.mjs';
 
@@ -3576,7 +3576,11 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
 }
 
 async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
-  const call = context.recentCall;
+  // AUTORIZACAO_DA_COTACAO_PENDENTE: leituras do rastreador atualizam `updatedAt`
+  // de corridas antigas. Isso nao pode fazer um novo "pode seguir" cair na corrida
+  // antiga. Uma oportunidade ainda aguardando decisao sempre tem prioridade.
+  const pendingCall = pendingAuthorizationCallForGroup(context.management?.calls || [], msg.from);
+  const call = pendingCall || context.recentCall;
   if (call && isFlowActiveCall(call)) {
     const repeated = await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,

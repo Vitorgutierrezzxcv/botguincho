@@ -105,6 +105,20 @@ const QUOTE_TIMELINE_TYPES = new Set([
   'dados_incompletos','dados_do_atendimento','aguardando_autorizacao',
 ]);
 const WON_STATUSES = new Set(['autorizado','a_caminho','em_atendimento','aguardando_fechamento','concluido']);
+const PENDING_AUTHORIZATION_STATUSES = new Set(['cotacao','aguardando_dados','aguardando_aprovacao','agendado']);
+
+export function pendingAuthorizationCallForGroup(calls = [], groupId = '') {
+  const id = String(groupId || '');
+  return (Array.isArray(calls) ? calls : [])
+    .filter((call) => call?.sourceGroupId === id && PENDING_AUTHORIZATION_STATUSES.has(String(call?.status || '')))
+    .sort((a, b) => {
+      // quoteRequestedAt/createdAt representam a oportunidade. updatedAt pode mudar
+      // por telemetria e nao deve definir qual cotacao recebeu a autorizacao humana.
+      const aTime = new Date(a?.quoteRequestedAt || a?.createdAt || a?.updatedAt || 0).getTime();
+      const bTime = new Date(b?.quoteRequestedAt || b?.createdAt || b?.updatedAt || 0).getTime();
+      return bTime - aTime;
+    })[0] || null;
+}
 
 export function isTrackedQuote(call = {}) {
   if (call.quoteTracked === true || call.manualQuote === true) return true;

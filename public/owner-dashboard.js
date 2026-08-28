@@ -45,10 +45,12 @@
   }
 
   function isQuote(call) {
+    const quoteTimelineTypes = ['consulta_registrada','consulta_disponibilidade','cotacao','solicitacao_recebida','dados_incompletos','dados_do_atendimento','aguardando_autorizacao'];
     return call.manualQuote === true
+      || call.quoteTracked === true
       || call.quoteOutcome === 'open' || call.quoteOutcome === 'won' || call.quoteOutcome === 'lost'
-      || ['cotacao', 'aguardando_aprovacao'].includes(call.status)
-      || timelineHas(call, 'consulta_registrada');
+      || ['cotacao', 'aguardando_dados', 'aguardando_aprovacao', 'agendado'].includes(call.status)
+      || quoteTimelineTypes.some((type) => timelineHas(call, type));
   }
 
   function quoteOutcome(call) {
