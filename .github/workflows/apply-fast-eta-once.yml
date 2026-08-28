@@ -46,3 +46,5 @@ jobs:
           git add tools/vercel-whatsapp-worker.mjs tools/simple-operation.mjs tools/test-fast-eta.mjs
           git commit -m "fix: acelera ETA e garante previsão nas cotações"
           git push origin main
+
+# retry: validação escopada ao fluxo de disponibilidade
