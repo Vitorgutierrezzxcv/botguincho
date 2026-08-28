@@ -22,7 +22,7 @@ const intentCases = [
   ['Qual a prévia?', 'Tests guincho', { status: 'cotacao', origin: 'Rua das Rosas, 310, Betim - MG' }, 'eta'],
   ['Disponível? Valor e prévia? Quantos kms totais?', 'Company Truck', null, 'quote'],
   ['SOLICITAÇÃO DE COTAÇÃO - REBOQUE Tipo: Visão', 'Company Truck', null, 'quote'],
-  ['Origem: Rua A, 10. Destino: Rua B, 20. Veículo: Fiat Uno.', 'Solução Assistência', null, 'dispatch_details'],
+  ['Origem: Rua A, 10. Destino: Rua B, 20. Veículo: Fiat Uno.', 'Solução Assistência', null, 'quote'],
   ['O carro está parado no centro, consegue buscar?', 'Solução Assistência', null, 'incomplete_dispatch'],
 
   // Autorizações e protocolos dependem do estado e do grupo.

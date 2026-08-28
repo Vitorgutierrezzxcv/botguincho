@@ -74,4 +74,9 @@ const divergence = reconcileCommercial({ approvedRules: rules, facts: { vehicleT
 assert.equal(divergence.status, 'divergence');
 assert.equal(divergence.reviewRequired, true);
 
+const screenshotQuote = "Bmw / X1 Sdrive 20i X-line 2.0 Tb Ac ... Motivo PANE MECANICA Obs. p/ prestador:\nÉ expressamente proibido que os prestadores autorizem que alguém venha dentro do veículo, em cima da prancha.\n\nAPM BRASIL\n\nServiço selecionado REBOQUE UTILITARIO\nOrigem: AVENIDA PROFESSOR CLOVIS SALGADO, nº 1578, VALE, IGARAPE - MG\nref. GARIMPA OUTLET\nDestino: AVENIDA BARAO HOMEM DE MELO, nº 3490, ESTORIL, BELO HORIZONTE - MG\nref. OFICINA / MARLON RECEBE 3136589880 * MG POWER";
+assert.equal(classifyRuntimeIntent(screenshotQuote, 'Tests guincho', { status: 'autorizado', origin: 'Rua antiga', destination: 'Oficina antiga' }), 'quote', 'Ficha completa nova nao pode ser anexada a corrida ativa');
+assert.equal(classifyRuntimeIntent('Protocolo definitivo: 8821', 'Tests guincho', { status: 'autorizado' }), 'protocol_update', 'Protocolo isolado continua atualizando a corrida ativa');
+assert.equal(classifyRuntimeIntent('PROTOCOLO: HZ-22\nSERVIÇO: REBOQUE LEVE\nORIGEM: Rua A, 10\nDESTINO: Rua B, 20', 'Horizonte', { status: 'cotacao' }), 'formal_dispatch', 'Excecao formal da Horizonte deve continuar autorizando');
+
 console.log('OPERATIONAL_KNOWLEDGE_REGRESSION_OK');

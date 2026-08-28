@@ -79,7 +79,7 @@ export function resolveGroupProfile(groupName = '') {
 
 function hasFormalProtocol(text = '') {
   const value = norm(text);
-  if (!/\b(protocolo|acionamento|webprestador|prestador)\b/.test(value)) return false;
+  if (!/\b(protocolo|acionamento|webprestador)\b/.test(value)) return false;
   const operationalFields = ['origem', 'destino', 'veiculo', 'placa', 'servico', 'cliente', 'associado', 'solicitante']
     .filter((field) => value.includes(field)).length;
   return operationalFields >= 2 || /https?:\/\//.test(text);
@@ -89,6 +89,14 @@ function hasQuoteSignals(text = '') {
   const value = norm(text);
   return /\b(cotacao|valor e previa|valor,?\s*km|valor total\?|qual valor|quanto fica|preco|km totais|quilometragem total)\b/.test(value)
     || (/\bdisponivel/.test(value) && /\b(valor|previa|km)\b/.test(value));
+}
+
+function hasStructuredServiceRequest(text = '') {
+  const value = norm(text);
+  const hasOrigin = /\borigem\s*[:=\-]/.test(value);
+  const hasDestination = /\bdestino\s*[:=\-]/.test(value);
+  const hasServiceOrVehicle = /\bservico(?:\s+selecionado)?\b|\breboque\b|\bguincho\b|\butilitario\b|\bveiculo\b|\bmodelo\b|\bplaca\b|\bmotivo\b/.test(value);
+  return hasOrigin && hasDestination && hasServiceOrVehicle;
 }
 
 function hasOperationalContext(value = '') {
@@ -115,6 +123,11 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const activeService = ['autorizado','a_caminho','em_atendimento','aguardando_fechamento'].includes(recentCall?.status);
   const evidenceContext = activeService || recentCall?.status === 'concluido';
   if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';
+
+  // Uma ficha completa sem protocolo formal e uma nova cotacao, mesmo quando ja
+  // existe outra corrida ativa no grupo. Perguntas explicitas de disponibilidade
+  // continuam no fluxo availability, que tambem registra a cotacao no painel.
+  if (hasStructuredServiceRequest(text) && !hasFormalProtocol(text) && base !== 'availability' && base !== 'authorization' && base !== 'scheduled_dispatch' && base !== 'cancellation' && base !== 'pending_approval' && base !== 'closure') return 'quote';
 
   // RECONHECE_ATALHOS — formas curtas que as centrais usam o tempo todo e que
   // antes caiam em "other", ou seja, silencio. Extraidas de 4.828 pares reais.
