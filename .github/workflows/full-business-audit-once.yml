@@ -1,0 +1,61 @@
+name: Full business audit once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/full-business-audit-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar dependências
+        run: npm ci --no-audit --no-fund
+
+      - name: Aplicar correções encontradas na auditoria
+        run: node tools/apply-full-audit-fixes-once.mjs
+
+      - name: Validar sintaxe do runtime
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/business-orchestration.mjs
+          node --check tools/reporting-engine.mjs
+          node --check tools/driver-payroll.mjs
+          node --check tools/dispatch-capacity.mjs
+          node --check tools/test-center.mjs
+          node --check owner-dashboard.js
+          node --check public/owner-dashboard.js
+          node --check api/worker/[...path].js
+
+      - name: Executar build e toda a regressão
+        run: npm run test:all
+
+      - name: Verificar modo sem IA e limite Vercel por código
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const worker = fs.readFileSync('tools/vercel-whatsapp-worker.mjs','utf8');
+          const proxy = fs.readFileSync('api/worker/[...path].js','utf8');
+          if (!/simpleMode:\s*true/.test(worker) || !/aiEnabled:\s*false/.test(worker)) throw new Error('Modo simples/IA desligada não garantido');
+          if (!/aiEnabled:\s*false/.test(proxy)) throw new Error('Proxy não força IA desligada');
+          console.log('NO_AI_RUNTIME_OK');
+          NODE
+
+      - name: Commitar correções validadas e limpar aplicador
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/workflows/full-business-audit-once.yml tools/apply-full-audit-fixes-once.mjs
+          git add -A
+          git commit -m 'fix: fecha auditoria completa da operação'
+          git push origin HEAD:main
