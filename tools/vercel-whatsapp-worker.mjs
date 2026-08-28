@@ -8,7 +8,7 @@ import OpenAI from 'openai';
 import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
-import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, buildEvidenceChecklist, markEvidenceChecklist, appendOperationalTimeline, calculateApprovedCommercial, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
+import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, inferVehicleType, buildEvidenceChecklist, markEvidenceChecklist, appendOperationalTimeline, calculateApprovedCommercial, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
 import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, selectedGroupBillingView, closureReply } from './financial-engine.mjs';
@@ -3270,11 +3270,15 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   }
 
   const facts = context.facts;
-  const pending = pendingOpportunityCall(context.recentCall);
-  const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
+  const pending = pendingForIncomingFacts(context.recentCall, facts);
+  const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.vehicleType || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
+  const preliminaryFacts = mergedOpportunityFacts(facts, pending, null, readableText);
+  const completeOpportunity = missingDispatchData(preliminaryFacts).length === 0;
   let route = null;
   if (hasOpportunityData) {
-    route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation, pendingRouteContext(context.recentCall), { fast: true }).catch(() => ({ eta: null }));
+    // Com dados completos calcula a rota inteira: ETA + distancia + KM total + valor.
+    // Em consulta ainda incompleta continua no caminho rapido para nao atrasar o grupo.
+    route = await estimateQuoteRoute(msg.from, readableText, preliminaryFacts, incomingLocation, pendingRouteContext(pending), { fast: !completeOpportunity }).catch(() => ({ eta: null }));
     if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
       const queued = await estimateSecondCallArrival({ management: context.management, targetAddress: route.originAddress, targetCoordinates: route.originCoordinates });
       if (queued.eta) route.eta = queued.eta;
@@ -3285,12 +3289,23 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
       lastEta: route.eta || null, lastEtaAt: route.eta ? new Date().toISOString() : null,
     });
   }
+  const combinedFacts = mergedOpportunityFacts(facts, pending, route, readableText);
+  const completePreview = missingDispatchData(combinedFacts).length === 0;
+  const pricingKm = context.billingProfile?.routeBasis === 'origin_destination'
+    ? (route?.secondLeg?.distanceKm ?? null)
+    : context.billingProfile?.routeBasis === 'insurer_reported'
+      ? (combinedFacts.totalKm ?? null)
+      : context.billingProfile?.routeBasis === 'manual' ? null : route?.estimatedTotalKm;
+  const commercial = completePreview
+    ? reconcileCommercial({ approvedRules: context.approvedRules, facts: { ...combinedFacts, totalKm: pricingKm ?? combinedFacts.totalKm }, estimatedTotalKm: pricingKm })
+    : { status: 'incomplete_preview', calculatedAmount: null };
+
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: route?.originAddress || pending?.origin || null,
     originCoordinates: route?.originCoordinates || pending?.originCoordinates || null,
     destinationAddress: route?.destinationAddress || pending?.destination || null,
-    eta: route?.eta || null, status: 'cotacao', facts,
+    eta: route?.eta || null, status: 'cotacao', facts: combinedFacts, commercial,
     estimatedTotalKm: route?.estimatedTotalKm ?? pending?.estimatedTotalKm ?? null,
     evidenceChecklist: hasOpportunityData ? buildEvidenceChecklist(groupName, readableText) : [],
     existingCallId: hasOpportunityData ? (pending?.id || null) : null,
@@ -3300,10 +3315,19 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   const etaReply = route?.eta ? formatEtaReply(route.eta, false) : null;
   if (etaReply) lines.push(etaReply);
   else if (hasOpportunityData) lines.push('Previsão temporariamente indisponível. A cotação foi registrada e o sistema continuará tentando atualizar a rota.');
+  if (!route?.eta?.queued && route?.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
+  if (route?.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
+  if (completePreview && commercial.status === 'ok' && commercial.calculatedAmount != null) {
+    lines.push(`Valor estimado: ${formatCurrency(commercial.calculatedAmount)}.`);
+    lines.push('O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.');
+  } else if (completePreview) {
+    lines.push('Valor aguardando tabela comercial aprovada no aplicativo.');
+  }
   await replyAndRemember(msg, groupName, readableText, lines.join('\n'), {
     intent: 'availability', activeCount: capacity.activeCount,
     slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1),
     etaMinutes: route?.eta?.minutes ?? null, estimatedTotalKm: route?.estimatedTotalKm ?? null,
+    commercialStatus: commercial.status,
   });
 }
 
@@ -3314,7 +3338,8 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     return;
   }
 
-  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation, pendingRouteContext(context.recentCall)).catch((error) => {
+  const pending = pendingForIncomingFacts(context.recentCall, context.facts);
+  const route = await estimateQuoteRoute(msg.from, readableText, context.facts, incomingLocation, pendingRouteContext(pending)).catch((error) => {
     logEvent('warning', 'Falha ao estimar rota da cotação.', { error: String(error), groupId: msg.from });
     return { eta: null, secondLeg: null, estimatedTotalKm: null, originAddress: context.facts.origin || null, destinationAddress: context.facts.destination || null };
   });
@@ -3341,7 +3366,7 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     eta: route.eta, status: 'cotacao', facts: context.facts, commercial,
     estimatedTotalKm: route.estimatedTotalKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
-    existingCallId: pendingOpportunityCall(context.recentCall)?.id || null,
+    existingCallId: pending?.id || null,
     eventType: 'cotacao', phase: 'cotacao',
   });
 
@@ -3393,14 +3418,50 @@ function pendingOpportunityCall(call = null) {
   return call && ['cotacao','aguardando_dados','aguardando_aprovacao','agendado'].includes(call.status) ? call : null;
 }
 
+function normalizedOpportunityRoute(value = '') {
+  return normalizeForIntent(value).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function pendingForIncomingFacts(call = null, facts = {}) {
+  const pending = pendingOpportunityCall(call);
+  if (!pending) return null;
+  const incomingOrigin = normalizedOpportunityRoute(facts?.origin || '');
+  const incomingDestination = normalizedOpportunityRoute(facts?.destination || '');
+  const pendingOrigin = normalizedOpportunityRoute(pending?.origin || '');
+  const pendingDestination = normalizedOpportunityRoute(pending?.destination || '');
+  // Uma nova rota completa no mesmo grupo e uma nova cotacao. Nao reaproveita
+  // KM/valor da oportunidade anterior, evitando contaminar a previa seguinte.
+  if (incomingOrigin && incomingDestination && pendingOrigin && pendingDestination) {
+    if (incomingOrigin != pendingOrigin || incomingDestination != pendingDestination) return null;
+  }
+  return pending;
+}
+
+function usefulVehicleName(value = '') {
+  const text = String(value || '').trim();
+  return /^ve[ií]culo n[aã]o informado$/i.test(text) ? '' : text;
+}
+
+function mergedOpportunityFacts(facts = {}, call = null, route = null, readableText = '') {
+  const vehicle = usefulVehicleName(facts?.vehicle) || usefulVehicleName(call?.vehicle) || '';
+  const service = facts?.service || call?.service || '';
+  return {
+    ...facts,
+    origin: route?.originAddress || facts?.origin || call?.origin || '',
+    destination: route?.destinationAddress || facts?.destination || call?.destination || '',
+    vehicle,
+    vehicleType: facts?.vehicleType || call?.vehicleType || inferVehicleType(`${vehicle} ${service} ${readableText}`) || '',
+    service,
+  };
+}
+
 async function handleIncompleteDispatchRuntime(msg, groupName, readableText, context) {
   const call = pendingOpportunityCall(context.recentCall);
-  const combinedFacts = {
+  const combinedFacts = mergedOpportunityFacts({
     ...context.facts,
     origin: context.facts.origin || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText) || call?.origin || '',
     destination: context.facts.destination || extractLabeledField(readableText, 'Destino') || call?.destination || '',
-    vehicle: context.facts.vehicle || call?.vehicle || '',
-  };
+  }, call, null, readableText);
   const missing = missingDispatchData(combinedFacts);
 
   // NAO_PEDE_O_QUE_JA_TEM: a classificacao de intencao as vezes manda uma ficha
@@ -3435,11 +3496,7 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
     const queued = await estimateSecondCallArrival({ management: context.management, targetAddress: route.originAddress, targetCoordinates: route.originCoordinates });
     if (queued.eta) route.eta = queued.eta;
   }
-  const combinedFacts = {
-    ...context.facts,
-    origin: route.originAddress || call?.origin || '', destination: route.destinationAddress || call?.destination || '',
-    vehicle: context.facts.vehicle || call?.vehicle || '',
-  };
+  const combinedFacts = mergedOpportunityFacts(context.facts, call, route, readableText);
   const missing = missingDispatchData(combinedFacts);
   if (missing.length) {
     await handleIncompleteDispatchRuntime(msg, groupName, readableText, { ...context, facts: combinedFacts });
@@ -3462,6 +3519,7 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
   });
   const lines = ['Dados do atendimento recebidos ✅'];
   if (route.eta && publicEtaMinutes(route.eta.rawMinutes ?? route.eta.minutes)) lines.push(`Previsão até a origem: ${publicEtaMinutes(route.eta.rawMinutes ?? route.eta.minutes)} min.`);
+  if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
   if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
   if (commercial.status === 'ok' && commercial.calculatedAmount != null) {
     lines.push(`Valor estimado: ${formatCurrency(commercial.calculatedAmount)}.`);

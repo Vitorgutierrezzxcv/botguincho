@@ -14,7 +14,7 @@ assert.equal(publicEtaMinutes(90), 60);
 
 const worker = fs.readFileSync(new URL('./vercel-whatsapp-worker.mjs', import.meta.url), 'utf8');
 assert.match(worker, /retryDelayMs \?\? 250/);
-assert.match(worker, /\{ fast: true \}/);
+assert.match(worker, /fast:\s*!completeOpportunity/);
 assert.match(worker, /likelySameOperationalAddress/);
 assert.match(worker, /Promise\.all\(\[\s*routeBetween\(start, origin\)/);
 
