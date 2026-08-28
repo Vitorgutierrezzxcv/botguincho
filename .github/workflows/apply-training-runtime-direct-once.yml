@@ -1,0 +1,50 @@
+name: Apply training runtime direct once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-training-runtime-direct-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Aplicar patch
+        run: |
+          set -euo pipefail
+          node --check tools/apply-training-runtime-patch.mjs
+          node --check tools/training-runtime-index.mjs
+          node tools/apply-training-runtime-patch.mjs
+
+      - name: Validar runtime
+        run: |
+          set -euo pipefail
+          node --check tools/operational-knowledge.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check api/worker/reload.js
+          node tools/test-training-runtime-index.mjs
+          node tools/test-learning-patterns.mjs
+          node tools/test-operational-knowledge.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+          node tools/test-simple-operation.mjs
+          git diff --check
+
+      - name: Commitar runtime treinado
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/operational-knowledge.mjs tools/vercel-whatsapp-worker.mjs api/worker/reload.js
+          git commit -m "fix: conecta treinamento histórico ao runtime"
+          git push origin main
