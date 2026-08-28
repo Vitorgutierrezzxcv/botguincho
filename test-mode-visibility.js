@@ -1,44 +1,4 @@
-from pathlib import Path
-
-worker = Path('tools/vercel-whatsapp-worker.mjs')
-s = worker.read_text()
-old = """app.get('/api/management', async (req, res) => {
-  try {
-    const data = await getManagement();
-    const calls = (data.calls || []).filter((item) => !isTestCall(item));
-    const filters = { from: String(req.query.from || ''), to: String(req.query.to || ''), groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || '') };
-    return res.json({ ok: true, data: { ...data, calls }, quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters), periodReport: buildPeriodReport({ ...data, calls }, filters) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});"""
-new = """app.get('/api/management', async (req, res) => {
-  try {
-    const data = await getManagement();
-    const allCalls = data.calls || [];
-    const calls = allCalls.filter((item) => !isTestCall(item));
-    const testCalls = allCalls.filter((item) => isTestCall(item));
-    const filters = { from: String(req.query.from || ''), to: String(req.query.to || ''), groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || '') };
-    return res.json({
-      ok: true,
-      data: { ...data, calls, testCalls },
-      quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),
-      periodReport: buildPeriodReport({ ...data, calls }, filters),
-      testSummary: {
-        total: testCalls.length,
-        quotes: testCalls.filter((item) => item.quoteTracked === true || ['cotacao','aguardando_dados','aguardando_aprovacao'].includes(item.status)).length,
-        accepted: testCalls.filter((item) => Boolean(item.authorizedAt) || ['autorizado','a_caminho','em_atendimento','aguardando_fechamento','concluido'].includes(item.status)).length,
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});"""
-if s.count(old) != 1:
-    raise SystemExit(f'rota management: esperado 1 trecho, encontrado {s.count(old)}')
-worker.write_text(s.replace(old, new, 1))
-
-js = r'''(() => {
+(() => {
   'use strict';
   const statusLabel = { cotacao:'Cotação aberta', aguardando_dados:'Aguardando dados', aguardando_aprovacao:'Aguardando aprovação', autorizado:'Aceita', agendado:'Agendada', a_caminho:'A caminho', em_atendimento:'Em atendimento', aguardando_fechamento:'Aguardando fechamento', concluido:'Concluída', cancelado:'Cancelada' };
   const accepted = new Set(['autorizado','a_caminho','em_atendimento','aguardando_fechamento','concluido']);
@@ -90,15 +50,3 @@ js = r'''(() => {
   renderManagement = function(){ previousRenderManagement(); renderTestMode(); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderTestMode); else renderTestMode();
 })();
-'''
-Path('test-mode-visibility.js').write_text(js)
-Path('public/test-mode-visibility.js').write_text(js)
-
-for name in ['index.html','public/index.html']:
-    p = Path(name)
-    html = p.read_text()
-    old_script = '<script src="/app.js" defer></script><script src="/owner-dashboard.js" defer></script>'
-    new_script = '<script src="/app.js" defer></script><script src="/owner-dashboard.js" defer></script><script src="/test-mode-visibility.js" defer></script>'
-    if html.count(old_script) != 1:
-        raise SystemExit(f'{name}: scripts esperados {html.count(old_script)}')
-    p.write_text(html.replace(old_script,new_script,1))

@@ -4600,9 +4600,21 @@ app.get('/api/audit', async (req, res) => {
 app.get('/api/management', async (req, res) => {
   try {
     const data = await getManagement();
-    const calls = (data.calls || []).filter((item) => !isTestCall(item));
+    const allCalls = data.calls || [];
+    const calls = allCalls.filter((item) => !isTestCall(item));
+    const testCalls = allCalls.filter((item) => isTestCall(item));
     const filters = { from: String(req.query.from || ''), to: String(req.query.to || ''), groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || '') };
-    return res.json({ ok: true, data: { ...data, calls }, quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters), periodReport: buildPeriodReport({ ...data, calls }, filters) });
+    return res.json({
+      ok: true,
+      data: { ...data, calls, testCalls },
+      quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),
+      periodReport: buildPeriodReport({ ...data, calls }, filters),
+      testSummary: {
+        total: testCalls.length,
+        quotes: testCalls.filter((item) => item.quoteTracked === true || ['cotacao','aguardando_dados','aguardando_aprovacao'].includes(item.status)).length,
+        accepted: testCalls.filter((item) => Boolean(item.authorizedAt) || ['autorizado','a_caminho','em_atendimento','aguardando_fechamento','concluido'].includes(item.status)).length,
+      },
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
