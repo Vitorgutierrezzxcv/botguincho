@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
 
       - name: Instalar dependências
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Aplicar orquestração operacional
         run: node tools/apply-business-orchestration-once.mjs
