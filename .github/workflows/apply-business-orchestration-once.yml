@@ -1,0 +1,56 @@
+name: Apply business orchestration once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-business-orchestration-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar dependências
+        run: npm ci --no-audit --no-fund
+
+      - name: Aplicar orquestração operacional
+        run: node tools/apply-business-orchestration-once.mjs
+
+      - name: Validar sintaxe
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/business-orchestration.mjs
+          node --check tools/reporting-engine.mjs
+          node --check tools/driver-payroll.mjs
+          node --check tools/simple-operation.mjs
+          node --check tools/operational-knowledge.mjs
+          node --check owner-dashboard.js
+          node --check public/owner-dashboard.js
+
+      - name: Testar regras de negócio
+        run: |
+          npm run test:business
+          npm run test:cancellation
+          npm run test:operational
+
+      - name: Commitar implementação e remover aplicador temporário
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/workflows/apply-business-orchestration-once.yml tools/apply-business-orchestration-once.mjs
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Nada para commitar.'
+            exit 0
+          fi
+          git commit -m 'feat: integra cotações corridas financeiro e seguradoras'
+          git push origin HEAD:main
