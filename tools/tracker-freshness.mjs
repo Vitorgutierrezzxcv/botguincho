@@ -24,12 +24,32 @@ export function trackerSourceTimestamp(reading) {
     const brazilian = parseBrazilianDate(raw);
     if (brazilian !== null) return brazilian;
   }
-  return finiteTimestamp(reading?.receivedAt);
+  return null;
 }
 
-export function trackerAgeSeconds(reading, nowMs = Date.now()) {
-  const timestamp = trackerSourceTimestamp(reading);
+export function trackerTransportTimestamp(reading) {
+  // receivedAt/capturedAt dizem quando NOSSO agente acabou de consultar o GConnect.
+  // lastUpdateText/sourceUpdatedAt dizem quando o veículo gerou o último evento.
+  // Um caminhão parado pode ficar horas/dias sem novo evento, mesmo com o agente
+  // consultando o GConnect normalmente. Para liberar ETA, o que precisa estar
+  // fresco é a comunicação do agente, não o último movimento do veículo.
+  const received = finiteTimestamp(reading?.receivedAt);
+  if (received !== null) return received;
+  const captured = finiteTimestamp(reading?.capturedAt);
+  if (captured !== null) return captured;
+  return trackerSourceTimestamp(reading);
+}
+
+function ageFromTimestamp(timestamp, nowMs) {
   if (timestamp === null) return null;
   const ms = Number(nowMs) - timestamp;
   return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : null;
+}
+
+export function trackerSourceAgeSeconds(reading, nowMs = Date.now()) {
+  return ageFromTimestamp(trackerSourceTimestamp(reading), nowMs);
+}
+
+export function trackerAgeSeconds(reading, nowMs = Date.now()) {
+  return ageFromTimestamp(trackerTransportTimestamp(reading), nowMs);
 }
