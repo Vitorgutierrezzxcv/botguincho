@@ -20,6 +20,7 @@ import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
 import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 import { driverDispatchMessage, isConfirmedCall, publicEtaMinutes, primaryTruck, truckAvailability, whatsappChatId } from './simple-operation.mjs';
 import { trackerAgeSeconds } from './tracker-freshness.mjs';
+import { historicalTrainingStats } from './training-runtime-index.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -250,12 +251,45 @@ function normalizeManagement(data = {}) {
 
 async function getManagement() {
   const state = normalizeManagement(await readJson(managementFile, DEFAULT_MANAGEMENT));
+  const allowed = await getAllowedGroupIds().catch(() => new Set());
+  const operationalGroup = (groupId = '', groupName = '') => {
+    if (!groupId) return true;
+    if (allowed.has(groupId)) return true;
+    return resolveGroupProfile(groupName).key !== 'generic';
+  };
+  let dirty = false;
+
+  const beforeCalls = state.calls.length;
+  state.calls = state.calls.filter((call) => operationalGroup(call?.sourceGroupId || '', call?.insurer || call?.client || ''));
+  if (state.calls.length !== beforeCalls) dirty = true;
+
+  for (const call of state.calls) {
+    if ((call?.driverFleetId === 'fleet-gsw0h17' || call?.driverId === 'fleet-gsw0h17')
+      && (!call?.driverName || call.driverName === 'Motorista principal')) {
+      call.driverName = 'Mauro';
+      dirty = true;
+    }
+  }
+
+  const beforeProfiles = state.billingProfiles.length;
+  state.billingProfiles = state.billingProfiles.filter((profile) => operationalGroup(profile?.groupId || '', profile?.groupName || ''));
+  if (state.billingProfiles.length !== beforeProfiles) dirty = true;
+
+  const beforeFinance = state.finance.length;
+  state.finance = state.finance.filter((entry) => operationalGroup(entry?.groupId || '', entry?.insurer || entry?.client || ''));
+  if (state.finance.length !== beforeFinance) dirty = true;
+
+  const beforeBatches = state.billingBatches.length;
+  state.billingBatches = state.billingBatches.filter((batch) => operationalGroup(batch?.groupId || '', batch?.groupName || batch?.insurer || ''));
+  if (state.billingBatches.length !== beforeBatches) dirty = true;
+
   const mainTruck = (state.fleet || []).find((item) => item?.id === 'fleet-gsw0h17' || String(item?.plate || '').toUpperCase() === 'GSW0H17');
   if (mainTruck && !String(mainTruck.driver || '').trim()) {
     mainTruck.driver = 'Mauro';
-    return saveManagement(state);
+    dirty = true;
   }
-  return state;
+
+  return dirty ? saveManagement(state) : state;
 }
 
 async function saveManagement(next) {
@@ -899,10 +933,19 @@ async function registerGroup(id, name = '') {
 const GROUPS_SYNC_TIMEOUT_MS = 9000;
 let liveDiscoveryInFlight = null;
 
+function isOperationalGroupCandidate(group = {}, allowed = new Set()) {
+  if (allowed.has(group?.id)) return true;
+  const name = String(group?.name || '');
+  if (isTestGroupName(name) || resolveGroupProfile(name).key !== 'generic') return true;
+  const value = normalizeForIntent(`${name} ${group?.description || ''}`);
+  return /\b(guincho|reboque|assistencia|socorro|prestador|prancha|transportes? de veiculos?)\b/.test(value);
+}
+
 async function savedGroupsList() {
   const previousRegistry = await getRegistry();
   const allowed = await getAllowedGroupIds();
   return Object.values(previousRegistry)
+    .filter((group) => isOperationalGroupCandidate(group, allowed))
     .map((group) => ({ ...group, selected: allowed.has(group.id) }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
 }
@@ -1003,7 +1046,9 @@ async function discoverGroupsLive() {
       // Remove grupos antigos do registry e também permissões que não existem na conta atual.
       const nextRegistry = Object.fromEntries([...discovered.entries()]);
       await writeJson(registryFile, nextRegistry);
-      for (const group of discovered.values()) await learningStore.syncGroup({ groupId: group.id, name: group.name, description: group.description || '' });
+      for (const group of discovered.values()) {
+        if (isOperationalGroupCandidate(group, allowed)) await learningStore.syncGroup({ groupId: group.id, name: group.name, description: group.description || '' });
+      }
 
       const validAllowed = [...allowed].filter((id) => discovered.has(id));
       if (validAllowed.length !== allowed.size) {
@@ -1012,8 +1057,10 @@ async function discoverGroupsLive() {
       }
 
       logEvent('system', `${discovered.size} grupo(s) sincronizado(s) da conta atual do WhatsApp.`);
+      const effectiveAllowed = new Set(validAllowed);
       return [...discovered.values()]
-        .map((group) => ({ ...group, selected: validAllowed.includes(group.id) }))
+        .filter((group) => isOperationalGroupCandidate(group, effectiveAllowed))
+        .map((group) => ({ ...group, selected: effectiveAllowed.has(group.id) }))
         .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
     }
   }
@@ -1021,6 +1068,7 @@ async function discoverGroupsLive() {
   // Se o WhatsApp ainda não terminou de carregar, não destrói o registry salvo.
   // Porém esta lista só é fallback temporário até uma sincronização bem-sucedida.
   return Object.values(previousRegistry)
+    .filter((group) => isOperationalGroupCandidate(group, allowed))
     .map((group) => ({ ...group, selected: allowed.has(group.id) }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
 }
@@ -4450,7 +4498,7 @@ app.get('/api/learning/summary', async (_req, res) => {
     const allowed = await getAllowedGroupIds();
     const all = await learningStore.getAll();
     const groups = Object.values(all).filter((group) => allowed.has(group?.groupId)).map((group) => ({ groupId: group.groupId, groupName: group.name || 'Grupo do WhatsApp', examples: Array.isArray(group.examples) ? group.examples.length : 0, commercialStatus: group.commercialStatus || 'none', updatedAt: group.updatedAt || null }));
-    return res.json({ ok: true, groupCount: groups.length, exampleCount: groups.reduce((sum, group) => sum + group.examples, 0), groups });
+    return res.json({ ok: true, groupCount: groups.length, exampleCount: groups.reduce((sum, group) => sum + group.examples, 0), historicalTraining: historicalTrainingStats(), groups });
   } catch (error) { return res.status(500).json({ ok: false, error: String(error?.message || error) }); }
 });
 

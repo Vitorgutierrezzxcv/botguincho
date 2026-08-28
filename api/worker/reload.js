@@ -16,6 +16,7 @@ const RUNTIME_FILES = [
   'tools/driver-payroll.mjs',
   'tools/simple-operation.mjs',
   'tools/tracker-freshness.mjs',
+  'tools/training-runtime-index.mjs',
   'tools/historical-spreadsheet-import.mjs',
   'tools/test-center.mjs',
 ];

@@ -1,4 +1,5 @@
 import { inferLearningIntent } from './learning-engine.mjs';
+import { matchHistoricalTrainingIntent } from './training-runtime-index.mjs';
 
 function norm(value = '') {
   return String(value || '')
@@ -214,6 +215,17 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
 
   if (base === 'dispatch') return hasIncompleteDispatch(value) ? 'incomplete_dispatch' : 'dispatch_details';
   if (hasIncompleteDispatch(value)) return 'incomplete_dispatch';
+
+  // Recupera linguagem observada nos 10 históricos somente quando o classificador
+  // determinístico normal ficou sem resposta. O índice não contém preço/ETA e
+  // exige correspondência forte para autorização, cancelamento e fechamento.
+  if (!base || base === 'other') {
+    const trained = matchHistoricalTrainingIntent(text, groupName);
+    if (trained?.intent) {
+      const requiresActiveCall = new Set(['closure']);
+      if (!requiresActiveCall.has(trained.intent) || activeService) return trained.intent;
+    }
+  }
   return base;
 }
 
