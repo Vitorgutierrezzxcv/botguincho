@@ -249,7 +249,13 @@ function normalizeManagement(data = {}) {
 }
 
 async function getManagement() {
-  return normalizeManagement(await readJson(managementFile, DEFAULT_MANAGEMENT));
+  const state = normalizeManagement(await readJson(managementFile, DEFAULT_MANAGEMENT));
+  const mainTruck = (state.fleet || []).find((item) => item?.id === 'fleet-gsw0h17' || String(item?.plate || '').toUpperCase() === 'GSW0H17');
+  if (mainTruck && !String(mainTruck.driver || '').trim()) {
+    mainTruck.driver = 'Mauro';
+    return saveManagement(state);
+  }
+  return state;
 }
 
 async function saveManagement(next) {
