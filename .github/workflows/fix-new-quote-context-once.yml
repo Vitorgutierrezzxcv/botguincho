@@ -41,7 +41,7 @@ jobs:
           s = s.replace(anchor, helper + anchor, 1)
 
           early_anchor = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // RECONHECE_ATALHOS"
-          early_replacement = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // Uma ficha completa sem protocolo formal e uma nova cotacao, mesmo quando ja\n  // existe outra corrida ativa no grupo. O aceite explicito continua tendo prioridade.\n  if (hasStructuredServiceRequest(text) && !hasFormalProtocol(text) && base !== 'authorization' && base !== 'scheduled_dispatch' && base !== 'cancellation' && base !== 'pending_approval' && base !== 'closure') return 'quote';\n\n  // RECONHECE_ATALHOS"
+          early_replacement = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // Uma ficha completa sem protocolo formal e uma nova cotacao, mesmo quando ja\n  // existe outra corrida ativa no grupo. Perguntas explicitas de disponibilidade\n  // continuam no fluxo availability, que tambem registra a cotacao no financeiro.\n  if (hasStructuredServiceRequest(text) && !hasFormalProtocol(text) && base !== 'availability' && base !== 'authorization' && base !== 'scheduled_dispatch' && base !== 'cancellation' && base !== 'pending_approval' && base !== 'closure') return 'quote';\n\n  // RECONHECE_ATALHOS"
           if s.count(early_anchor) != 1:
               raise SystemExit(f'early structured anchor: {s.count(early_anchor)} ocorrencias')
           s = s.replace(early_anchor, early_replacement, 1)
