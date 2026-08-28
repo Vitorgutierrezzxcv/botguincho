@@ -27,17 +27,101 @@ jobs:
           from pathlib import Path
           p = Path('tools/apply-business-orchestration-once.mjs')
           s = p.read_text()
-          needle = "'authorization queue comment');"
-          end = s.index(needle) + len(needle)
-          start = s.rfind('  s = replaceOnce(s,', 0, end)
-          if start < 0:
-              raise SystemExit('bloco de comentário da fila não encontrado')
-          p.write_text(s[:start] + s[end:])
-          print('Aplicador preparado sem o bloco cosmético da fila.')
+          for label in [
+              'authorization queue comment',
+              'queued authorization reply',
+              'authorization value caveat',
+          ]:
+              needle = f"'{label}');"
+              end = s.index(needle) + len(needle)
+              start = s.rfind('  s = replaceOnce(s,', 0, end)
+              if start < 0:
+                  raise SystemExit(f'bloco {label} não encontrado')
+              s = s[:start] + s[end:]
+          p.write_text(s)
+          print('Aplicador preparado para a estrutura atual da autorização.')
           PY
 
       - name: Aplicar orquestração operacional
         run: node tools/apply-business-orchestration-once.mjs
+
+      - name: Ajustar autorização e fila na estrutura atual
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+          start = s.index('async function handleAuthorizationRuntime(')
+          end = s.index('async function handleScheduledRuntime(', start)
+          replacement = r'''async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
+            const call = context.recentCall;
+
+            // Uma autorização repetida do mesmo chamado não consome uma nova vaga.
+            if (call && isFlowActiveCall(call)) {
+              const repeated = await recordDispatchInManagement({
+                groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
+                destinationAddress: call.destination || null, eta: null, status: call.status, facts: context.facts,
+                existingCallId: call.id, eventType: 'autorizacao_repetida', phase: call.operationalPhase || 'autorizado',
+              });
+              if (repeated) await notifyDriverOfConfirmedCall(repeated);
+              await replyAndRemember(msg, groupName, readableText, 'Autorização já registrada neste atendimento ✅', { intent: 'authorization-repeat', callId: call.id });
+              return;
+            }
+
+            if (!call) {
+              await replyAndRemember(msg, groupName, readableText, 'Recebi a autorização, mas ainda faltam os dados do atendimento. Envie origem, destino e veículo para vincular corretamente.', { intent: 'authorization-without-call' });
+              return;
+            }
+
+            const capacity = capacitySnapshot(context.management);
+            if (!capacity.canAccept) {
+              await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+              return;
+            }
+
+            const targetAddress = call?.origin || context.facts.origin || null;
+            const targetCoordinates = call?.originCoordinates || incomingLocation || null;
+            const arrival = await estimateSecondCallArrival({ management: context.management, targetAddress, targetCoordinates });
+            if (!arrival.available) {
+              await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+              return;
+            }
+            const eta = arrival.eta;
+            const saved = await recordDispatchInManagement({
+              groupId: msg.from, groupName, text: readableText,
+              originAddress: targetAddress, originCoordinates: targetCoordinates,
+              destinationAddress: call?.destination || context.facts.destination || null,
+              eta, status: 'autorizado', facts: context.facts,
+              evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
+              eventType: 'autorizacao', phase: eta?.queued ? 'autorizado_em_fila' : 'autorizado',
+            });
+            const driverNotification = saved ? await notifyDriverOfConfirmedCall(saved) : { sent: false, reason: 'call_not_saved' };
+            const km = formatKm(saved?.billableKm ?? saved?.routeBreakdown?.totalKm ?? saved?.estimatedTotalKm);
+            const amount = formatCurrency(saved?.calculatedValue);
+            const calculationLines = [
+              km ? `Quilometragem total calculada: ${km} km.` : null,
+              amount ? `Valor estimado: ${amount}.` : null,
+              amount ? 'O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.' : null,
+            ].filter(Boolean);
+            const confirmation = eta?.queued
+              ? `Confirmado ✅\nCorrida em fila após o atendimento atual.\nPrevisão informada: ${eta.minutes || 60} min.`
+              : (eta ? formatEtaReply(eta, true) : 'Confirmado ✅\nGuincho em deslocamento.');
+            await replyAndRemember(msg, groupName, readableText, [confirmation, ...calculationLines].join('\n'), {
+              intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true,
+              rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null,
+              callId: saved?.id || null, billableKm: saved?.billableKm ?? null,
+              calculatedValue: saved?.calculatedValue ?? null,
+              driverNotification: driverNotification.sent ? 'sent' : driverNotification.reason,
+            });
+          }
+
+          '''
+          # Remove indentação extra do heredoc Python mantendo o JS legível.
+          import textwrap
+          replacement = textwrap.dedent(replacement)
+          p.write_text(s[:start] + replacement + s[end:])
+          print('Autorização/fila atualizada para até duas corridas.')
+          PY
 
       - name: Validar sintaxe
         run: |
