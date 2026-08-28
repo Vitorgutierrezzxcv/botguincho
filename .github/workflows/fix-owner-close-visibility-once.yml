@@ -1,0 +1,47 @@
+name: Fix owner close visibility once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-owner-close-visibility-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Corrigir visibilidade do fechamento
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ['owner-dashboard.js', 'public/owner-dashboard.js']:
+              p = Path(name)
+              s = p.read_text()
+              old = "const acceptedStatuses = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'concluido']);"
+              new = "const acceptedStatuses = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'aguardando_fechamento', 'concluido']);"
+              if old not in s:
+                  raise SystemExit(f'{name}: acceptedStatuses não encontrado')
+              s = s.replace(old, new, 1)
+              old_status = "autorizado: 'Aceita', agendado: 'Agendada', a_caminho: 'A caminho', em_atendimento: 'Em atendimento', concluido: 'Concluída', cancelado: 'Cancelada'"
+              new_status = "autorizado: 'Aceita', agendado: 'Agendada', a_caminho: 'A caminho', em_atendimento: 'Em atendimento', aguardando_fechamento: 'Aguardando fechamento', concluido: 'Concluída', cancelado: 'Cancelada'"
+              if old_status not in s:
+                  raise SystemExit(f'{name}: statusText não encontrado')
+              p.write_text(s.replace(old_status, new_status, 1))
+          PY
+          node --check owner-dashboard.js
+          node --check public/owner-dashboard.js
+      - name: Commitar e remover workflow temporário
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/workflows/fix-owner-close-visibility-once.yml
+          git add owner-dashboard.js public/owner-dashboard.js
+          git commit -m 'fix: exibe corridas aguardando fechamento no painel'
+          git push origin HEAD:main
