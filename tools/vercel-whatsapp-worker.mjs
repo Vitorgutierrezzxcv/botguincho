@@ -851,7 +851,7 @@ function trackerSummary(reading, pairCode) {
   return {
     provider: 'gconnect-emulator',
     mode: 'android-ui-automation',
-    configured: connected,
+    configured: Boolean(pairCode),
     connected,
     pairingConfigured: Boolean(pairCode),
     ageSeconds,
