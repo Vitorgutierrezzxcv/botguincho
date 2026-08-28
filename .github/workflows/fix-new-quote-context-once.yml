@@ -23,6 +23,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import json
 
           p = Path('tools/operational-knowledge.mjs')
           s = p.read_text()
@@ -39,7 +40,6 @@ jobs:
               raise SystemExit(f'helper anchor: {s.count(anchor)} ocorrencias')
           s = s.replace(anchor, helper + anchor, 1)
 
-          # A ficha completa precisa vencer incomplete_dispatch antes dos atalhos.
           early_anchor = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // RECONHECE_ATALHOS"
           early_replacement = "if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';\n\n  // Uma ficha completa sem protocolo formal e uma nova cotacao, mesmo quando ja\n  // existe outra corrida ativa no grupo. O aceite explicito continua tendo prioridade.\n  if (hasStructuredServiceRequest(text) && !hasFormalProtocol(text) && base !== 'authorization' && base !== 'scheduled_dispatch' && base !== 'cancellation' && base !== 'pending_approval' && base !== 'closure') return 'quote';\n\n  // RECONHECE_ATALHOS"
           if s.count(early_anchor) != 1:
@@ -50,13 +50,23 @@ jobs:
           t = Path('tools/test-operational-knowledge.mjs')
           ts = t.read_text()
           marker = "console.log('OPERATIONAL_KNOWLEDGE_REGRESSION_OK');"
-          screenshot = "Bmw / X1 Sdrive 20i X-line 2.0 Tb Ac ... Motivo PANE MECANICA Obs. p/ prestador:\\nÉ expressamente proibido que os prestadores autorizem que alguém venha dentro do veículo, em cima da prancha.\\n\\nAPM BRASIL\\n\\nServiço selecionado REBOQUE UTILITARIO\\nOrigem: AVENIDA PROFESSOR CLOVIS SALGADO, nº 1578, VALE, IGARAPE - MG\\nref. GARIMPA OUTLET\\nDestino: AVENIDA BARAO HOMEM DE MELO, nº 3490, ESTORIL, BELO HORIZONTE - MG\\nref. OFICINA / MARLON RECEBE 3136589880 * MG POWER"
-          regression = "const screenshotQuote = " + repr(screenshot) + ";\nassert.equal(classifyRuntimeIntent(screenshotQuote, 'Tests guincho', { status: 'autorizado', origin: 'Rua antiga', destination: 'Oficina antiga' }), 'quote', 'Ficha completa nova nao pode ser anexada a corrida ativa');\nassert.equal(classifyRuntimeIntent('Protocolo definitivo: 8821', 'Tests guincho', { status: 'autorizado' }), 'protocol_update', 'Protocolo isolado continua atualizando a corrida ativa');\nassert.equal(classifyRuntimeIntent('PROTOCOLO: HZ-22\\nSERVIÇO: REBOQUE LEVE\\nORIGEM: Rua A, 10\\nDESTINO: Rua B, 20', 'Horizonte', { status: 'cotacao' }), 'formal_dispatch', 'Excecao formal da Horizonte deve continuar autorizando');\n\n"
+          screenshot = "\n".join([
+              "Bmw / X1 Sdrive 20i X-line 2.0 Tb Ac ... Motivo PANE MECANICA Obs. p/ prestador:",
+              "É expressamente proibido que os prestadores autorizem que alguém venha dentro do veículo, em cima da prancha.",
+              "",
+              "APM BRASIL",
+              "",
+              "Serviço selecionado REBOQUE UTILITARIO",
+              "Origem: AVENIDA PROFESSOR CLOVIS SALGADO, nº 1578, VALE, IGARAPE - MG",
+              "ref. GARIMPA OUTLET",
+              "Destino: AVENIDA BARAO HOMEM DE MELO, nº 3490, ESTORIL, BELO HORIZONTE - MG",
+              "ref. OFICINA / MARLON RECEBE 3136589880 * MG POWER",
+          ])
+          regression = "const screenshotQuote = " + json.dumps(screenshot, ensure_ascii=False) + ";\nassert.equal(classifyRuntimeIntent(screenshotQuote, 'Tests guincho', { status: 'autorizado', origin: 'Rua antiga', destination: 'Oficina antiga' }), 'quote', 'Ficha completa nova nao pode ser anexada a corrida ativa');\nassert.equal(classifyRuntimeIntent('Protocolo definitivo: 8821', 'Tests guincho', { status: 'autorizado' }), 'protocol_update', 'Protocolo isolado continua atualizando a corrida ativa');\nassert.equal(classifyRuntimeIntent('PROTOCOLO: HZ-22\\nSERVIÇO: REBOQUE LEVE\\nORIGEM: Rua A, 10\\nDESTINO: Rua B, 20', 'Horizonte', { status: 'cotacao' }), 'formal_dispatch', 'Excecao formal da Horizonte deve continuar autorizando');\n\n"
           if ts.count(marker) != 1:
               raise SystemExit(f'test marker: {ts.count(marker)} ocorrencias')
           t.write_text(ts.replace(marker, regression + marker, 1))
 
-          # Alinha o teste antigo ao requisito atual: ficha completa sem autorizacao e cotacao.
           f = Path('tools/test-complete-operational-flows.mjs')
           fs = f.read_text()
           old_case = "['Origem: Rua A, 10. Destino: Rua B, 20. Veículo: Fiat Uno.', 'Solução Assistência', null, 'dispatch_details'],"
