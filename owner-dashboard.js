@@ -52,9 +52,9 @@
   }
 
   function quoteOutcome(call) {
-    if (call.quoteOutcome === 'lost') return 'lost';
     if (call.quoteOutcome === 'won') return 'won';
     if (acceptedStatuses.has(call.status) || call.authorizedAt) return 'won';
+    if (call.quoteOutcome === 'lost') return 'lost';
     if (isQuote(call) && call.status === 'cancelado' && !call.authorizedAt && call.cancellationChargeRequired !== true) return 'lost';
     return 'open';
   }
@@ -116,8 +116,7 @@
     const finance = (mgmt.finance || []).filter((entry) => entry.type === 'receita' && entry.isFinal === true && inPeriod(entry));
     const received = finance.filter((entry) => entry.status === 'pago').reduce((sum, entry) => sum + n(entry.amount), 0);
     const receivable = finance.filter((entry) => entry.status !== 'pago').reduce((sum, entry) => sum + n(entry.amount), 0);
-    const conversionBase = won.length + lost.length;
-    const conversion = conversionBase ? (won.length / conversionBase) * 100 : 0;
+    const conversion = quotes.length ? (won.length / quotes.length) * 100 : 0;
     const payroll = currentPayroll();
     return { calls, quotes, won, lost, open, accepted, finalized, projected, billed, projectedValue, received, receivable, conversion, payroll };
   }
@@ -308,7 +307,7 @@
       if (!map.has(key)) map.set(key, { name, requested: 0, won: 0, lost: 0, open: 0 });
       const row = map.get(key); row.requested += 1; row[quoteOutcome(call)] += 1;
     }
-    return [...map.values()].map((row) => ({ ...row, conversion: row.won + row.lost ? row.won / (row.won + row.lost) * 100 : 0 })).sort((a,b)=>b.requested-a.requested);
+    return [...map.values()].map((row) => ({ ...row, conversion: row.requested ? row.won / row.requested * 100 : 0 })).sort((a,b)=>b.requested-a.requested);
   }
 
   function funnelTable(rows) {
@@ -336,7 +335,7 @@
     const quotes = (mgmt.calls || []).filter((call) => inPeriod(call) && isQuote(call) && (call.insurerId === insurer.id || groups.has(call.sourceGroupId)));
     const won = quotes.filter((call) => quoteOutcome(call) === 'won').length;
     const lost = quotes.filter((call) => quoteOutcome(call) === 'lost').length;
-    return { requested: quotes.length, won, conversion: won + lost ? won / (won + lost) * 100 : 0 };
+    return { requested: quotes.length, won, conversion: quotes.length ? won / quotes.length * 100 : 0 };
   }
 
   function renderInsurers() {

@@ -14,7 +14,9 @@
     "test:operational": "node tools/test-simple-operation.mjs && node tools/test-learning-patterns.mjs && node tools/test-operational-knowledge.mjs && node tools/test-complete-operational-flows.mjs && node tools/test-business-orchestration.mjs",
     "wa:admin": "node tools/wa-admin-v2.mjs",
     "platform": "node tools/admin-platform.mjs",
-    "test:business": "node tools/test-business-orchestration.mjs"
+    "test:business": "node tools/test-business-orchestration.mjs",
+    "test:full": "node tools/test-full-business-flow.mjs",
+    "test:all": "npm run build && npm run test:operational && npm run test:cancellation && npm run test:business && npm run test:full"
   },
   "dependencies": {
     "@sparticuz/chromium": "147.0.2",

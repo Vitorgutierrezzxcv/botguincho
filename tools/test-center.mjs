@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 export const TEST_GROUP_NAME = 'Tests guincho';
 export const TEST_MESSAGE_INTERVAL_MS = 3500;
 export const TEST_RESPONSE_TIMEOUT_MS = 45000;
-export const TEST_SUITE_VERSION = 'operational-v5.2-auto-pricing-tracker';
+export const TEST_SUITE_VERSION = 'operational-v5.3-full-business-audit';
 
 export const TEST_SCENARIOS = [
   {
@@ -16,7 +16,7 @@ export const TEST_SCENARIOS = [
       { send: 'Tem disponibilidade para um veículo de passeio agora?', expect: ['disponível', 'sim', 'atender'], forbid: ['indisponível', 'fora de rota'] },
       { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.\n\nDisponível?', expect: ['disponível', 'previsão'], expectAll: true, forbid: ['confirmado', 'pode seguir'] },
       { send: 'Qual a prévia?', expect: ['previsão de chegada'], expectAll: true, forbid: ['cotação recebida', 'confirmado'] },
-      { send: 'Confirmado, pode seguir com o atendimento.', expect: ['confirmado', 'cancelamento', '15'] },
+      { send: 'Confirmado, pode seguir com o atendimento.', expect: ['confirmado', 'cancelamento', '15'], expectAll: true },
     ],
   },
   {
@@ -32,7 +32,7 @@ export const TEST_SCENARIOS = [
     steps: [
       { send: 'Origem: Rua das Rosas, 310, Betim - MG. Destino: Avenida Amazonas, 1200, Betim - MG. Veículo: Fiat Uno.', expect: ['previs', 'confirm', 'dispon'] },
       { send: 'Confirmado, pode seguir.', expect: ['confirmado', '15'] },
-      { send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'] },
+      { send: 'O guincho chegou no local do cliente.', expect: ['chegada', '15', '80'], expectAll: true },
     ],
   },
   {
@@ -121,6 +121,15 @@ export const TEST_SCENARIOS = [
   { id: 'driver_excess', category: 'Motorista', name: 'Pagamento por km excedente', mode: 'engine' },
   { id: 'driver_worked_hour', category: 'Motorista', name: 'Hora trabalhada integral do motorista', mode: 'engine' },
   { id: 'driver_period', category: 'Motorista', name: 'Fechamento do dia 20 ao dia 20', mode: 'engine' },
+  { id: 'capacity_two_calls', category: 'Capacidade', name: 'Máximo de duas corridas simultâneas', mode: 'engine' },
+  { id: 'capacity_eta_cap', category: 'Capacidade', name: 'Prévia da segunda corrida limitada a 60 min', mode: 'engine' },
+  { id: 'quote_funnel', category: 'Gestão', name: 'Funil solicitado, ganho, perdido e aberto', mode: 'engine' },
+  { id: 'owner_close_required', category: 'Gestão', name: 'Fechamento definitivo somente pelo dono', mode: 'engine' },
+  { id: 'driver_projection', category: 'Motorista', name: 'Repasse previsto vira definitivo no fechamento', mode: 'engine' },
+  { id: 'report_final_only', category: 'Financeiro', name: 'Relatório não soma receita prevista', mode: 'engine' },
+  { id: 'insurer_multi_group', category: 'Seguradoras', name: 'Uma seguradora vinculada a vários grupos', mode: 'engine' },
+  { id: 'billing_calendar', category: 'Financeiro', name: 'Calendário de envio e pagamento', mode: 'engine' },
+  { id: 'workbook_export', category: 'Relatórios', name: 'Planilha XLSX completa do período', mode: 'engine' },
 ];
 
 export function normalizeTestText(value = '') {

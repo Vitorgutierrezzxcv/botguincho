@@ -114,9 +114,12 @@ export function isTrackedQuote(call = {}) {
 
 export function quoteOutcome(call = {}) {
   if (!isTrackedQuote(call)) return null;
-  if (call.quoteOutcome === 'won' || call.quoteOutcome === 'lost' || call.quoteOutcome === 'open') return call.quoteOutcome;
+  if (call.quoteOutcome === 'won') return 'won';
+  // O estado operacional real tem prioridade sobre um quoteOutcome antigo/stale.
   if (call.authorizedAt || WON_STATUSES.has(String(call.status || ''))) return 'won';
+  if (call.quoteOutcome === 'lost') return 'lost';
   if (call.status === 'cancelado' && call.cancellationChargeRequired !== true) return 'lost';
+  if (call.quoteOutcome === 'open') return 'open';
   return 'open';
 }
 
@@ -146,6 +149,26 @@ export function isOwnerFinalizedCall(call = {}) {
   return call.status === 'concluido' && call.ownerCloseRequired !== true;
 }
 
+export function releaseNextQueuedCall(state = {}, completedCallId = '', at = new Date()) {
+  if (!Array.isArray(state.calls) || !completedCallId) return null;
+  const releasedAt = new Date(at);
+  const iso = Number.isFinite(releasedAt.getTime()) ? releasedAt.toISOString() : new Date().toISOString();
+  const candidates = state.calls
+    .filter((call) => call?.queued === true
+      && (call?.queuedBehindCallId === completedCallId || call?.precedingCallId === completedCallId)
+      && String(call?.status || '') === 'autorizado')
+    .sort((a, b) => new Date(a.authorizedAt || a.createdAt || 0) - new Date(b.authorizedAt || b.createdAt || 0));
+  const next = candidates[0] || null;
+  if (!next) return null;
+  next.queued = false;
+  next.queuedBehindCallId = null;
+  next.precedingCallId = null;
+  next.queueReleasedAt = iso;
+  next.operationalPhase = 'autorizado';
+  next.updatedAt = iso;
+  return next;
+}
+
 function inPeriod(call = {}, { from = '', to = '' } = {}) {
   const raw = call.quoteRequestedAt || call.createdAt || call.updatedAt;
   const time = new Date(raw || 0).getTime();
@@ -167,7 +190,7 @@ function finalizeBucket(bucket) {
     ...bucket,
     quotedAmount: money(bucket.quotedAmount),
     finalAmount: money(bucket.finalAmount),
-    conversionRate: decided ? Math.round((bucket.won / decided) * 10000) / 100 : 0,
+    conversionRate: bucket.requested ? Math.round((bucket.won / bucket.requested) * 10000) / 100 : 0,
   };
 }
 

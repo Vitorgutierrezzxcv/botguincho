@@ -36,11 +36,20 @@ function quoteCalls(state = {}, filters = {}) {
 }
 function financialEntries(state = {}, filters = {}) {
   const callById = new Map((state.calls || []).map((call) => [call.id, call]));
-  return (state.finance || []).filter((entry) => {
-    const call = callById.get(entry.sourceCallId);
-    const decorated = call ? { ...entry, insurerId: call.insurerId, sourceGroupId: call.sourceGroupId } : entry;
-    return applyFilters(decorated, filters);
-  });
+  return (state.finance || [])
+    .map((entry) => {
+      const call = callById.get(entry.sourceCallId);
+      return call ? {
+        ...entry,
+        insurerId: call.insurerId,
+        sourceGroupId: call.sourceGroupId,
+        groupName: entry.groupName || call.groupName || '',
+        ownerClosedAt: call.ownerClosedAt || null,
+        completedAt: call.completedAt || null,
+        authorizedAt: call.authorizedAt || null,
+      } : entry;
+    })
+    .filter((entry) => applyFilters(entry, filters));
 }
 function groupTotals(calls = [], keyFn, nameFn) {
   const map = new Map();
@@ -69,7 +78,7 @@ export function buildPeriodReport(state = {}, filters = {}) {
   const funnel = buildQuoteFunnel(state.calls || [], state.insurers || [], filters);
   const finance = financialEntries(state, filters);
   const revenue = finance.filter((entry) => entry.type === 'receita' && entry.isFinal === true).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-  const received = finance.filter((entry) => entry.type === 'receita' && entry.status === 'pago').reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const received = finance.filter((entry) => entry.type === 'receita' && entry.isFinal === true && entry.status === 'pago').reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   const driver = calls.reduce((sum, call) => sum + Number(driverPayForCall(call)?.totalAmount || 0), 0);
   return {
     filters,
@@ -156,7 +165,7 @@ export function buildPeriodWorkbook(state = {}, filters = {}) {
   addSheet(workbook, 'Por seguradora', report.byInsurer);
   addSheet(workbook, 'Por grupo', report.byGroup);
   addSheet(workbook, 'Financeiro', finance.map((entry) => ({
-    Data: dateOnly(entry.createdAt),
+    Data: dateOnly(entry.ownerClosedAt || entry.updatedAt || entry.createdAt),
     Vencimento: entry.dueDate || entry.paymentDue || '',
     Descrição: entry.description || '',
     Categoria: entry.category || '',
