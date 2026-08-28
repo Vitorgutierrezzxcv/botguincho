@@ -1368,7 +1368,10 @@ function extractLabeledField(text = '', label = '') {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const normalized = normalizeForIntent(line);
+    // As centrais usam negrito do WhatsApp nos rotulos, ex. *ENDEREÇO ORIGEM:*.
+    // O markdown nao faz parte do endereco e nao pode impedir o reconhecimento do campo.
+    const lineWithoutWhatsAppMarkup = line.replace(/[*_~`]/g, '');
+    const normalized = normalizeForIntent(lineWithoutWhatsAppMarkup);
     const normalizedMatch = normalized.match(pattern);
     if (!normalizedMatch) continue;
 
@@ -1378,7 +1381,7 @@ function extractLabeledField(text = '', label = '') {
       const labelRegex = target === 'origem'
         ? /^\s*(?:endere[cç]o\s+(?:de\s+)?)?origem\s*(?:[:\-]\s*)?/i
         : /^\s*(?:endere[cç]o\s+(?:de\s+)?)?destino\s*(?:[:\-]\s*)?/i;
-      const inlineValue = line.replace(labelRegex, '').trim();
+      const inlineValue = lineWithoutWhatsAppMarkup.replace(labelRegex, '').trim();
       if (inlineValue) return inlineValue;
     }
 
@@ -1393,6 +1396,9 @@ function extractLabeledField(text = '', label = '') {
 
 function cleanAddressQuery(value = '') {
   return String(value)
+    // Remove apenas formatacao/rótulos administrativos da ficha; preserva o endereco.
+    .replace(/[*_~`]/g, '')
+    .replace(/\b(?:BAIRRO|CIDADE|ESTADO|PA[IÍ]S|PAS)\s*:\s*/gi, '')
     .replace(/\bref\.?\s*:.*$/i, '')
     .replace(/\bn[º°]\s*/gi, '')
     .replace(/[?]+$/g, '')

@@ -253,7 +253,9 @@ function firstNumber(text, patterns = []) {
 }
 
 function labeled(text, labels = []) {
-  const raw = String(text || '').replace(/\r/g, '');
+  // O WhatsApp envia rotulos em negrito como *MODELO:* e *ENDEREÇO ORIGEM:*.
+  // A formatacao nao deve fazer parte do valor nem quebrar o parser.
+  const raw = String(text || '').replace(/\r/g, '').replace(/[*_~`]/g, '');
   const boundaries = 'ORIGEM|DESTINO|VE[IÍ]CULO|MODELO|PLACA|SERVI[CÇ]O|TIPO\\s*DE\\s*SERVI[CÇ]O|PROTOCOLO|N[º°]?\\s*PROTOCOLO|ASSOCIA[CÇ][AÃ]O|ASSIST[EÊ]NCIA|SEGURADORA|CLIENTE|ASSOCIADO|SEGURADO|TELEFONE|CONTATO|MOTIVO|ACOMPANHANTES?';
   for (const label of labels) {
     const re = new RegExp(`(?:^|\\n)\\s*${label}\\s*[:=\\-]\\s*([^\\n]+)`, 'im');
@@ -280,6 +282,17 @@ export function inferVehicleType(text = '') {
   return null;
 }
 
+function cleanStructuredAddressValue(value = '') {
+  return String(value || '')
+    .replace(/[*_~`]/g, '')
+    .replace(/\bref\.?\s*:.*$/i, '')
+    .replace(/\b(?:BAIRRO|CIDADE|ESTADO|PA[IÍ]S|PAS)\s*:\s*/gi, '')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s+/g, ' ')
+    .replace(/(?:,\s*)+$/g, '')
+    .trim();
+}
+
 export function extractOperationalFacts(text = '') {
   const raw = String(text || '');
   const value = norm(raw);
@@ -297,8 +310,8 @@ export function extractOperationalFacts(text = '') {
   const onSiteMinutes = firstNumber(raw, [/(?:tempo\s*(?:no|em)\s*local|ficou|demorou|aguardou|esperou)\D{0,20}(\d+(?:[.,]\d+)?)\s*(?:min|minutos?)/i]);
   const association = labeled(raw, ['ASSOCIA[CÇ][AÃ]O', 'ASSIST[EÊ]NCIA', 'SEGURADORA', 'CLIENTE']);
   const protocol = labeled(raw, ['PROTOCOLO', 'N[º°]?\\s*PROTOCOLO']);
-  const origin = labeled(raw, ['ORIGEM', 'ENDERE[CÇ]O\\s*ORIGEM']);
-  const destination = labeled(raw, ['DESTINO', 'ENDERE[CÇ]O\\s*DESTINO']);
+  const origin = cleanStructuredAddressValue(labeled(raw, ['ORIGEM', 'ENDERE[CÇ]O\\s*ORIGEM']));
+  const destination = cleanStructuredAddressValue(labeled(raw, ['DESTINO', 'ENDERE[CÇ]O\\s*DESTINO']));
   const vehicle = labeled(raw, ['VE[IÍ]CULO', 'MODELO']);
   const plate = labeled(raw, ['PLACA']);
   const service = labeled(raw, ['SERVI[CÇ]O', 'TIPO\\s*DE\\s*SERVI[CÇ]O']);
