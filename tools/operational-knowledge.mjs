@@ -112,7 +112,7 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   const profile = resolveGroupProfile(groupName);
   const base = inferLearningIntent(text);
 
-  const activeService = ['autorizado','a_caminho','em_atendimento'].includes(recentCall?.status);
+  const activeService = ['autorizado','a_caminho','em_atendimento','aguardando_fechamento'].includes(recentCall?.status);
   const evidenceContext = activeService || recentCall?.status === 'concluido';
   if ((base === 'administrative_notice' || hasAdministrativeSignals(value)) && !hasOperationalContext(value)) return 'administrative_notice';
 
@@ -479,7 +479,7 @@ export function callStatusForIntent(intent = '') {
     destination_arrival: 'em_atendimento',
     scheduled_dispatch: 'agendado',
     cancellation: 'cancelado',
-    closure: 'concluido',
+    closure: 'aguardando_fechamento',
   })[intent] || null;
 }
 

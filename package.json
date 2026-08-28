@@ -11,9 +11,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test:cancellation": "node tools/test-cancellation-policy.mjs",
-    "test:operational": "node tools/test-simple-operation.mjs && node tools/test-learning-patterns.mjs && node tools/test-operational-knowledge.mjs && node tools/test-complete-operational-flows.mjs",
+    "test:operational": "node tools/test-simple-operation.mjs && node tools/test-learning-patterns.mjs && node tools/test-operational-knowledge.mjs && node tools/test-complete-operational-flows.mjs && node tools/test-business-orchestration.mjs",
     "wa:admin": "node tools/wa-admin-v2.mjs",
-    "platform": "node tools/admin-platform.mjs"
+    "platform": "node tools/admin-platform.mjs",
+    "test:business": "node tools/test-business-orchestration.mjs"
   },
   "dependencies": {
     "@sparticuz/chromium": "147.0.2",

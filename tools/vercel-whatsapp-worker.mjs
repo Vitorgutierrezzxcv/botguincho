@@ -20,6 +20,8 @@ import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
 import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 import { driverDispatchMessage, isConfirmedCall, publicEtaMinutes, primaryTruck, truckAvailability, whatsappChatId } from './simple-operation.mjs';
 import { trackerAgeSeconds } from './tracker-freshness.mjs';
+import { ensureInsurerForGroup, sanitizeInsurer, upsertInsurer, buildQuoteFunnel, quoteTrackingPatch, isOwnerFinalizedCall } from './business-orchestration.mjs';
+import { buildPeriodReport, buildPeriodWorkbook } from './reporting-engine.mjs';
 import { historicalTrainingStats } from './training-runtime-index.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
@@ -161,9 +163,8 @@ function commercialRulesForGroup(knowledge = null, groupName = '') {
   if (knowledge?.commercialStatus === 'approved' && knowledge?.approvedCommercialRules) {
     return { rules: knowledge.approvedCommercialRules, source: 'approved' };
   }
-  if (knowledge?.draftCommercialRules?.detected) {
-    return { rules: knowledge.draftCommercialRules, source: 'group_description' };
-  }
+  // Regra observada/histórica nunca vira preço automaticamente. Para produção,
+  // somente tabela explicitamente aprovada no app pode precificar.
   if (isTestGroupName(groupName)) {
     return { rules: DEFAULT_TEST_COMMERCIAL_RULES, source: 'test_default' };
   }
@@ -219,6 +220,7 @@ const DEFAULT_MANAGEMENT = {
   company: { name: 'Central Guincho', document: '', phone: '', email: '' },
   calls: [],
   clients: [],
+  insurers: [],
   finance: [],
   billingProfiles: [],
   billingBatches: [],
@@ -238,6 +240,7 @@ function normalizeManagement(data = {}) {
     company: { ...DEFAULT_MANAGEMENT.company, ...(data.company || {}) },
     calls: Array.isArray(data.calls) ? data.calls : [],
     clients: Array.isArray(data.clients) ? data.clients : [],
+    insurers: Array.isArray(data.insurers) ? data.insurers.map(sanitizeInsurer) : [],
     finance: Array.isArray(data.finance) ? data.finance : [],
     billingProfiles: Array.isArray(data.billingProfiles) ? data.billingProfiles.map(sanitizeBillingProfile) : [],
     billingBatches: updateBatchTemporalStatuses(Array.isArray(data.billingBatches) ? data.billingBatches : []),
@@ -428,6 +431,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
     const state = await getManagement();
     const parsed = facts || extractOperationalFacts(text);
     const billingProfile = ensureBillingProfile(state, groupId, groupName);
+    const insurerRecord = ensureInsurerForGroup(state, { groupId, groupName, profileKey: resolveGroupProfile(groupName).key });
     const routeOrigin = originAddress || parsed.origin || '';
     const routeDestination = destinationAddress || parsed.destination || '';
     let routeSnapshot = routeSnapshotOverride;
@@ -542,6 +546,11 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       a_caminho: 'saida', em_atendimento: 'atendimento_no_local', agendado: 'agendamento',
       cancelado: 'cancelamento', concluido: 'fechamento', aguardando_dados: 'dados_incompletos',
     })[status] || 'atualizacao';
+    const quoteFields = quoteTrackingPatch(existing || {}, {
+      status, eventType: derivedEventType, at: transitionAt,
+      calculatedValue: commercial?.calculatedAmount ?? existing?.calculatedValue ?? null,
+      estimatedKm: autoBillableKm ?? estimatedTotalKm ?? routeSnapshot?.totalKm ?? existing?.estimatedTotalKm ?? null,
+    });
     const operationalTimeline = appendOperationalTimeline(existing?.operationalTimeline || [], {
       at: transitionAt,
       type: derivedEventType,
@@ -564,8 +573,11 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       vehicleType: parsed.vehicleType || existing?.vehicleType || '',
       plate: parsed.plate || existing?.plate || '',
       service: service || existing?.service || 'Reboque',
-      client: groupName || existing?.client || 'Seguradora',
-      insurer: groupName || existing?.insurer || '',
+      client: insurerRecord.name || existing?.client || 'Seguradora',
+      insurer: insurerRecord.name || existing?.insurer || '',
+      insurerId: insurerRecord.id,
+      insurerName: insurerRecord.name,
+      groupName: groupName || existing?.groupName || '',
       driverId: existing?.driverId || assignedFleet?.driverId || assignedFleet?.id || 'driver-primary',
       driverName: existing?.driverName || assignedFleet?.driver || 'Mauro',
       driverFleetId: existing?.driverFleetId || assignedFleet?.id || null,
@@ -600,6 +612,14 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       evidenceChecklist: mergedChecklist,
       evidenceComplete: mergedChecklist.length === 0 || mergedChecklist.every((item) => item?.done === true),
       operationalTimeline,
+      ...quoteFields,
+      ownerCloseRequired: existing?.ownerCloseRequired ?? !(existing?.status === 'concluido' && existing?.completedAt),
+      ownerReviewRequired: status === 'aguardando_fechamento' ? true : (status === 'concluido' ? false : existing?.ownerReviewRequired === true),
+      ownerClosedAt: existing?.ownerClosedAt || null,
+      ownerClosedBy: existing?.ownerClosedBy || null,
+      queued: eta?.queued === true ? true : (status === 'concluido' || status === 'cancelado' ? false : existing?.queued === true),
+      queuedBehindCallId: eta?.precedingCallId || existing?.queuedBehindCallId || null,
+      rawEtaMinutes: eta?.rawMinutes ?? existing?.rawEtaMinutes ?? eta?.minutes ?? null,
       operationalPhase: phase || existing?.operationalPhase || null,
       scheduledAt: parsed.scheduledAt || existing?.scheduledAt || null,
       lastOperationalText: String(text || '').slice(0, 4000),
@@ -661,10 +681,9 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
 
     if (existing) state.calls = state.calls.map((x) => x.id === existing.id ? { ...x, ...patch } : x);
     else state.calls.unshift(patch);
-    if (isConfirmedCall(patch)) ensureConfirmedFinanceTracking(state, patch, { finalized: status === 'concluido' });
-    if (isBillableCancellation) maybeCreateFinanceFromBillableCall(state, patch);
+    if (isConfirmedCall(patch) || isBillableCancellation) ensureConfirmedFinanceTracking(state, patch, { finalized: isOwnerFinalizedCall(patch) });
     if (status === 'cancelado' && !isBillableCancellation) removeUnbilledConfirmedTracking(state, patch.id);
-    if (isConfirmedCall(patch) || status === 'cancelado') syncDriverPayrolls(state);
+    if (isConfirmedCall(patch) || isBillableCancellation || status === 'cancelado') syncDriverPayrolls(state);
     await saveManagement(state);
     logEvent('management', `${groupName}: chamado ${existing ? 'atualizado' : 'criado'} → ${status}.`, { callId: patch.id, commercialStatus: patch.commercialRuleStatus, financeReviewRequired: patch.financeReviewRequired, cancellationChargeRequired: patch.cancellationChargeRequired, cancellationBillableKm: patch.cancellationBillableKm });
     return patch;
@@ -684,32 +703,41 @@ function confirmedFinanceAmount(item = {}) {
 function ensureConfirmedFinanceTracking(state, item, { finalized = false } = {}) {
   if (!item || item?.historicalImport === true || isTestCall(item) || !managementAutomationEnabled(state, 'auto-finance')) return null;
   const amount = confirmedFinanceAmount(item);
-  const profile = ensureBillingProfile(state, item.sourceGroupId || '', item.insurer || item.client || '');
-  const settlementAt = item.authorizedAt || item.completedAt || item.updatedAt || item.createdAt || new Date();
-  const settlement = settlementForCall(profile, item, settlementAt);
-  const batch = settlement.status === 'ok' ? upsertBillingBatch(state, { ...item, value: amount }, profile, settlement) : null;
+  const profile = ensureBillingProfile(state, item.sourceGroupId || '', item.groupName || item.insurer || item.client || '');
   const now = new Date().toISOString();
   let entry = (state.finance || []).find((candidate) => candidate.sourceCallId === item.id && candidate.type === 'receita');
+  const effectiveFinal = finalized === true || isOwnerFinalizedCall(item) || entry?.isFinal === true;
+  let settlement = { status: 'pending_owner_close', dueDate: null, batch: null };
+  let batch = null;
+  if (effectiveFinal) {
+    const settlementAt = item.ownerClosedAt || item.completedAt || item.cancelledAt || item.updatedAt || item.createdAt || new Date();
+    settlement = settlementForCall(profile, item, settlementAt);
+    batch = settlement.status === 'ok' ? upsertBillingBatch(state, { ...item, value: amount }, profile, settlement) : null;
+  }
   const patch = {
-    description: `Corrida ${finalized ? 'concluída' : 'confirmada'} · ${item.insurer || item.client || 'Transportadora'} · ${item.vehicle || 'Veículo'}`,
-    category: finalized ? 'Serviço de guincho' : 'Corrida confirmada',
+    description: `Corrida ${effectiveFinal ? 'fechada' : 'aberta'} · ${item.insurerName || item.insurer || item.client || 'Seguradora'} · ${item.vehicle || 'Veículo'}`,
+    category: effectiveFinal ? 'Serviço de guincho' : 'Corrida aberta',
     amount,
     type: 'receita',
     status: entry?.status === 'pago' ? 'pago' : 'pendente',
-    financialStage: finalized ? 'faturado' : 'a_faturar',
+    financialStage: effectiveFinal ? 'faturado' : 'previsto',
+    isFinal: effectiveFinal,
     needsValueReview: !(amount > 0),
-    dueDate: settlement.dueDate || entry?.dueDate || null,
-    client: item.client || item.insurer || '',
-    insurer: item.insurer || item.client || '',
+    dueDate: effectiveFinal ? (settlement.dueDate || entry?.dueDate || null) : null,
+    client: item.insurerName || item.client || item.insurer || '',
+    insurer: item.insurerName || item.insurer || item.client || '',
+    insurerId: item.insurerId || '',
     groupId: item.sourceGroupId || '',
+    groupName: item.groupName || '',
+    protocol: item.protocol || '',
     sourceCallId: item.id,
-    billingBatchId: batch?.id || entry?.billingBatchId || null,
+    billingBatchId: effectiveFinal ? (batch?.id || entry?.billingBatchId || null) : null,
     billableKm: Number(item.billableKm ?? item.totalKm ?? item.estimatedTotalKm ?? 0),
-    billingPeriodStart: settlement.batch?.periodStart || entry?.billingPeriodStart || null,
-    billingPeriodEnd: settlement.batch?.periodEnd || entry?.billingPeriodEnd || null,
-    statementDue: settlement.batch?.statementDue || entry?.statementDue || null,
-    invoiceDue: settlement.batch?.invoiceDue || entry?.invoiceDue || null,
-    paymentDue: settlement.batch?.paymentDue || settlement.dueDate || entry?.paymentDue || null,
+    billingPeriodStart: effectiveFinal ? (settlement.batch?.periodStart || entry?.billingPeriodStart || null) : null,
+    billingPeriodEnd: effectiveFinal ? (settlement.batch?.periodEnd || entry?.billingPeriodEnd || null) : null,
+    statementDue: effectiveFinal ? (settlement.batch?.statementDue || entry?.statementDue || null) : null,
+    invoiceDue: effectiveFinal ? (settlement.batch?.invoiceDue || entry?.invoiceDue || null) : null,
+    paymentDue: effectiveFinal ? (settlement.batch?.paymentDue || settlement.dueDate || entry?.paymentDue || null) : null,
     source: 'confirmation_automation',
     updatedAt: now,
   };
@@ -722,12 +750,12 @@ function ensureConfirmedFinanceTracking(state, item, { finalized = false } = {})
   const call = (state.calls || []).find((candidate) => candidate.id === item.id);
   if (call) {
     call.billingProfileId = profile.id;
-    call.billingBatchId = batch?.id || call.billingBatchId || null;
-    call.paymentRuleStatus = settlement.status;
-    call.paymentDue = settlement.dueDate || null;
-    call.billingPeriodStart = settlement.batch?.periodStart || null;
-    call.billingPeriodEnd = settlement.batch?.periodEnd || null;
-    call.driverPayStatus = 'previsto';
+    call.billingBatchId = effectiveFinal ? (batch?.id || call.billingBatchId || null) : null;
+    call.paymentRuleStatus = effectiveFinal ? settlement.status : 'pending_owner_close';
+    call.paymentDue = effectiveFinal ? (settlement.dueDate || null) : null;
+    call.billingPeriodStart = effectiveFinal ? (settlement.batch?.periodStart || null) : null;
+    call.billingPeriodEnd = effectiveFinal ? (settlement.batch?.periodEnd || null) : null;
+    call.driverPayStatus = effectiveFinal ? 'definitivo' : 'previsto';
   }
   return entry;
 }
@@ -746,41 +774,155 @@ function removeUnbilledConfirmedTracking(state, callId) {
 }
 
 function maybeCreateFinanceFromBillableCall(state, item) {
-  if (item?.historicalImport === true || isTestCall(item)) return;
-  const billableCancellation = item?.status === 'cancelado' && item?.cancellationChargeRequired === true;
-  if (!item || (item.status !== 'concluido' && !billableCancellation) || !managementAutomationEnabled(state, 'auto-finance')) return;
-  const confirmedEntry = (state.finance || []).find((entry) => entry.sourceCallId === item.id && entry.type === 'receita');
-  if (confirmedEntry) {
-    ensureConfirmedFinanceTracking(state, item, { finalized: true });
-    return;
-  }
-  if (item.financeReviewRequired === true || !(Number(item.value) > 0)) return;
+  if (!item || item?.historicalImport === true || isTestCall(item)) return null;
+  if (!(isConfirmedCall(item) || item.cancellationChargeRequired === true)) return null;
+  return ensureConfirmedFinanceTracking(state, item, { finalized: isOwnerFinalizedCall(item) });
+}
 
-  const profile = ensureBillingProfile(state, item.sourceGroupId || '', item.insurer || item.client || '');
-  const settlementAt = billableCancellation ? item.cancelledAt : item.completedAt;
-  const settlement = settlementForCall(profile, item, settlementAt || item.updatedAt || new Date());
-  if (settlement.status !== 'ok') {
-    const call = (state.calls || []).find((x) => x.id === item.id);
-    if (call) {
-      call.paymentRuleStatus = settlement.status;
-      call.paymentDue = settlement.dueDate || null;
+function insurerBillingCycles(insurer = {}, existing = {}) {
+  const hasConfiguredCycle = insurer.statementDay || insurer.submitWindowStartDay || insurer.submitWindowEndDay || insurer.invoiceDeadlineDay || insurer.paymentDay;
+  if (!hasConfiguredCycle) return existing.cycles || [];
+  return [{
+    id: 'owner-configured',
+    statementDay: insurer.statementDay || insurer.submitWindowEndDay || null,
+    lookbackDays: insurer.statementDay ? 30 : null,
+    submitWindowStartDay: insurer.submitWindowStartDay || null,
+    submitWindowEndDay: insurer.submitWindowEndDay || null,
+    invoiceDeadlineDay: insurer.invoiceDeadlineDay || null,
+    paymentDay: insurer.paymentDay || null,
+    paymentMonthOffset: insurer.paymentMonthOffset || 0,
+  }];
+}
+
+async function saveInsurerConfiguration(state, raw = {}) {
+  const insurer = upsertInsurer(state, raw);
+  const registry = await getRegistry();
+  for (const groupId of insurer.groupIds || []) {
+    const groupName = registry[groupId]?.name || insurer.groupNames?.find(Boolean) || insurer.name;
+    const current = ensureBillingProfile(state, groupId, groupName);
+    const next = sanitizeBillingProfile({
+      ...current,
+      groupId, groupName,
+      status: insurer.paymentMode === 'manual' || !insurer.paymentDay ? current.status : 'approved',
+      paymentMode: insurer.paymentMode || current.paymentMode,
+      baseAddress: insurer.baseAddress || current.baseAddress,
+      cycles: insurerBillingCycles(insurer, current),
+      sourceNote: `Calendário configurado no cadastro da seguradora ${insurer.name}.`,
+    });
+    const index = state.billingProfiles.findIndex((item) => item.groupId === groupId);
+    if (index >= 0) state.billingProfiles[index] = next; else state.billingProfiles.push(next);
+  }
+  return insurer;
+}
+
+function closingNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function finalGroupMessage(call = {}) {
+  const lines = ['Corrida finalizada ✅'];
+  if (call.protocol) lines.push(`Protocolo: ${call.protocol}`);
+  if (Number.isFinite(Number(call.billableKm))) lines.push(`Quilometragem total: ${Number(call.billableKm).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km.`);
+  if (Number(call.value) > 0) lines.push(`Valor final: ${formatCurrency(call.value)}.`);
+  const extras = [];
+  if (Number(call.workedTimeAmount) > 0) extras.push(`hora trabalhada ${formatCurrency(call.workedTimeAmount)}`);
+  if (Number(call.dirtRoadChargeAmount) > 0) extras.push(`estrada de terra ${formatCurrency(call.dirtRoadChargeAmount)}`);
+  if (Number(call.finalTollAmount) > 0) extras.push(`pedágio ${formatCurrency(call.finalTollAmount)}`);
+  if (Number(call.finalOtherExtras) > 0) extras.push(`outros adicionais ${formatCurrency(call.finalOtherExtras)}`);
+  if (extras.length) lines.push(`Adicionais confirmados: ${extras.join(' · ')}.`);
+  return lines.join('\n');
+}
+
+async function closeCallFromOwner(state, body = {}) {
+  const callId = String(body.callId || body.id || body.item?.id || '');
+  const index = state.calls.findIndex((item) => item.id === callId);
+  if (index < 0) throw new Error('call_not_found');
+  const call = state.calls[index];
+  if (isTestCall(call)) throw new Error('test_call_cannot_be_closed');
+  if (!(call.authorizedAt || isConfirmedCall(call) || call.cancellationChargeRequired === true)) throw new Error('call_not_authorized');
+  const final = body.final || body.item || {};
+  const billableKm = closingNumber(final.billableKm, closingNumber(call.billableKm, closingNumber(call.totalKm, call.estimatedTotalKm)));
+  const workedHours = closingNumber(final.workedTimeChargedHours, call.workedTimeChargedHours || 0);
+  const workedAmount = closingNumber(final.workedTimeAmount, workedHours > 0 ? workedHours * WORKED_HOUR_RATE : (call.workedTimeAmount || 0));
+  const dirtRoadKm = closingNumber(final.dirtRoadBillableKm, call.dirtRoadBillableKm || 0);
+  const dirtRoadAmount = closingNumber(final.dirtRoadChargeAmount, dirtRoadKm > 0 ? dirtRoadKm * 3.8 : (call.dirtRoadChargeAmount || 0));
+  const toll = closingNumber(final.toll, call.finalTollAmount || 0);
+  const invoiceExtra = closingNumber(final.invoiceExtra, 0);
+  const otherExtras = closingNumber(final.otherExtras, call.finalOtherExtras || 0);
+  const knowledge = await getGroupKnowledgeEntry(call.sourceGroupId);
+  const resolution = commercialRulesForGroup(knowledge, call.groupName || call.insurer || call.client || '');
+  let commercial = reconcileCommercial({
+    approvedRules: resolution.rules,
+    facts: {
+      vehicleType: final.vehicleType || call.vehicleType || null,
+      totalKm: billableKm,
+      extras: { dirtRoadKm, toll, invoiceExtra },
+      centralReportedValue: null,
+    },
+    estimatedTotalKm: billableKm,
+  });
+  if (workedAmount > 0) commercial = addWorkedTimeToCommercial(commercial, {
+    chargeRequired: true, chargedHours: workedHours || Math.max(1, Math.ceil(workedAmount / WORKED_HOUR_RATE)), hourlyRate: WORKED_HOUR_RATE, amount: workedAmount,
+  });
+  const manualValue = closingNumber(final.value, null);
+  const calculated = Number(commercial.calculatedAmount || 0) + otherExtras;
+  const finalValue = manualValue !== null && manualValue > 0 ? manualValue : (calculated > 0 ? Math.round(calculated * 100) / 100 : 0);
+  if (!(finalValue > 0)) throw new Error('final_value_required');
+  if (!(Number(billableKm) >= 0)) throw new Error('final_km_required');
+  const now = new Date().toISOString();
+  const next = {
+    ...call,
+    status: call.status === 'cancelado' ? 'cancelado' : 'concluido',
+    operationalPhase: 'concluido',
+    ownerCloseRequired: true,
+    ownerReviewRequired: false,
+    ownerClosedAt: now,
+    ownerClosedBy: String(body.ownerName || final.ownerName || 'Thiago').trim().slice(0, 120) || 'Thiago',
+    ownerClosingNotes: String(final.notes || '').trim().slice(0, 1200),
+    completedAt: call.status === 'cancelado' ? (call.completedAt || null) : now,
+    billableKm: Number(billableKm), totalKm: Number(billableKm),
+    value: finalValue,
+    calculatedValue: Number(commercial.calculatedAmount || call.calculatedValue || 0) || null,
+    finalTollAmount: toll,
+    finalOtherExtras: otherExtras,
+    dirtRoadBillableKm: dirtRoadKm,
+    dirtRoadChargeAmount: Math.round(dirtRoadAmount * 100) / 100,
+    workedTimeChargedHours: workedHours,
+    workedTimeAmount: Math.round(workedAmount * 100) / 100,
+    workedTimeChargeRequired: workedAmount > 0,
+    financeReviewRequired: false,
+    financeReviewReason: '',
+    commercialReviewRequired: false,
+    commercialReviewReason: '',
+    driverPayStatus: 'definitivo',
+    quoteOutcome: call.quoteTracked ? 'won' : call.quoteOutcome,
+    queued: false,
+    updatedAt: now,
+    operationalTimeline: appendOperationalTimeline(call.operationalTimeline || [], {
+      at: now, type: 'fechamento_dono', fromStatus: call.status, toStatus: call.status === 'cancelado' ? 'cancelado' : 'concluido',
+      text: `Fechamento conferido por ${String(body.ownerName || final.ownerName || 'Thiago')} no aplicativo.`,
+      meta: { billableKm, finalValue, workedAmount, dirtRoadKm, toll, otherExtras },
+    }),
+  };
+  state.calls[index] = next;
+  ensureConfirmedFinanceTracking(state, next, { finalized: true });
+  syncDriverPayrolls(state);
+  await saveManagement(state);
+  let noticeSent = false;
+  if (waClient && waStatus === 'pronto' && next.sourceGroupId && !isTestCall(next)) {
+    try {
+      const message = finalGroupMessage(next);
+      botReplyFingerprints.set(`${next.sourceGroupId}|${normalizeForIntent(message)}`, Date.now());
+      await waClient.sendMessage(next.sourceGroupId, message);
+      noticeSent = true;
+      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm });
+    } catch (error) {
+      logEvent('warning', 'Corrida fechada, mas não foi possível enviar o resumo final ao grupo.', { callId: next.id, error: String(error) });
     }
-    return;
   }
-
-  const batch = upsertBillingBatch(state, item, profile, settlement);
-  const entry = financeEntryFromCall(item, settlement, batch);
-  if (!entry) return;
-  state.finance.unshift(entry);
-  const call = (state.calls || []).find((x) => x.id === item.id);
-  if (call) {
-    call.billingProfileId = profile.id;
-    call.billingBatchId = batch?.id || null;
-    call.paymentRuleStatus = 'ok';
-    call.paymentDue = settlement.dueDate || null;
-    call.billingPeriodStart = settlement.batch?.periodStart || null;
-    call.billingPeriodEnd = settlement.batch?.periodEnd || null;
-  }
+  return { call: next, noticeSent, driverPay: driverPayForCall(next) };
 }
 
 async function applyManagementAction(body = {}) {
@@ -788,6 +930,15 @@ async function applyManagementAction(body = {}) {
   const action = String(body.action || 'get');
   const collection = String(body.collection || '');
   const allowed = new Set(['calls','clients','finance','fleet','automations']);
+
+  if (action === 'upsert_insurer') {
+    await saveInsurerConfiguration(state, body.insurer || body.item || {});
+    return saveManagement(state);
+  }
+  if (action === 'close_call') {
+    const result = await closeCallFromOwner(state, body);
+    return { ...state, closeResult: result };
+  }
 
   if (action === 'replace_company') {
     state.company = { ...state.company, ...cleanManagementItem(body.item || {}) };
@@ -2970,43 +3121,39 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   }
 
   const facts = context.facts;
+  const pending = pendingOpportunityCall(context.recentCall);
   const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
   let route = null;
   if (hasOpportunityData) {
     route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation, pendingRouteContext(context.recentCall)).catch(() => ({ eta: null }));
     if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
-      const queued = await estimateSecondCallArrival({
-        management: context.management,
-        targetAddress: route.originAddress,
-        targetCoordinates: route.originCoordinates,
-      });
+      const queued = await estimateSecondCallArrival({ management: context.management, targetAddress: route.originAddress, targetCoordinates: route.originCoordinates });
       if (queued.eta) route.eta = queued.eta;
     }
     await setDispatchState(msg.from, {
-      originAddress: route.originAddress || null,
-      originCoordinates: route.originCoordinates || null,
-      destinationAddress: route.destinationAddress || null,
-      originUpdatedAt: new Date().toISOString(),
-      lastEta: route.eta || null,
-      lastEtaAt: route.eta ? new Date().toISOString() : null,
-    });
-    await recordDispatchInManagement({
-      groupId: msg.from, groupName, text: readableText,
-      originAddress: route.originAddress, originCoordinates: route.originCoordinates, destinationAddress: route.destinationAddress,
-      eta: route.eta, status: 'cotacao', facts,
-      estimatedTotalKm: route.estimatedTotalKm,
-      evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
-      eventType: 'consulta_disponibilidade', phase: 'aguardando_autorizacao',
+      originAddress: route.originAddress || null, originCoordinates: route.originCoordinates || null,
+      destinationAddress: route.destinationAddress || null, originUpdatedAt: new Date().toISOString(),
+      lastEta: route.eta || null, lastEtaAt: route.eta ? new Date().toISOString() : null,
     });
   }
+  await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: route?.originAddress || pending?.origin || null,
+    originCoordinates: route?.originCoordinates || pending?.originCoordinates || null,
+    destinationAddress: route?.destinationAddress || pending?.destination || null,
+    eta: route?.eta || null, status: 'cotacao', facts,
+    estimatedTotalKm: route?.estimatedTotalKm ?? pending?.estimatedTotalKm ?? null,
+    evidenceChecklist: hasOpportunityData ? buildEvidenceChecklist(groupName, readableText) : [],
+    existingCallId: hasOpportunityData ? (pending?.id || null) : null,
+    eventType: 'consulta_disponibilidade', phase: 'cotacao',
+  });
   const lines = ['Disponível ✅'];
   if (route?.eta?.minutes) lines.push(formatEtaReply(route.eta, false));
   else if (hasOpportunityData) lines.push('Estou atualizando a localização para calcular a previsão.');
   await replyAndRemember(msg, groupName, readableText, lines.join('\n'), {
     intent: 'availability', activeCount: capacity.activeCount,
     slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1),
-    etaMinutes: route?.eta?.minutes ?? null,
-    estimatedTotalKm: route?.estimatedTotalKm ?? null,
+    etaMinutes: route?.eta?.minutes ?? null, estimatedTotalKm: route?.estimatedTotalKm ?? null,
   });
 }
 
@@ -3044,6 +3191,7 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     eta: route.eta, status: 'cotacao', facts: context.facts, commercial,
     estimatedTotalKm: route.estimatedTotalKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
+    existingCallId: pendingOpportunityCall(context.recentCall)?.id || null,
     eventType: 'cotacao', phase: 'cotacao',
   });
 
@@ -3052,8 +3200,10 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
   if (route.eta?.minutes) lines.push(formatEtaReply(route.eta, false));
   if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
   if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
-  if (commercial.status === 'ok' && commercial.calculatedAmount != null) lines.push(`Valor estimado: R$ ${Number(commercial.calculatedAmount).toFixed(2).replace('.', ',')}.`);
-  else if (/\b(valor|pre[cç]o|quanto fica)\b/i.test(readableText)) lines.push('Valor: em conferência pela tabela comercial.');
+  if (commercial.status === 'ok' && commercial.calculatedAmount != null) {
+    lines.push(`Valor estimado: R$ ${Number(commercial.calculatedAmount).toFixed(2).replace('.', ',')}.`);
+    lines.push('O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.');
+  } else if (/\b(valor|pre[cç]o|quanto fica)\b/i.test(readableText)) lines.push('Valor: aguardando tabela comercial aprovada no aplicativo.');
   if (!lines.length) lines.push('Cotação recebida ✅');
   await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'quote', etaMinutes: route.eta?.minutes ?? null, queued: route.eta?.queued === true, rawEtaMinutes: route.eta?.rawMinutes ?? route.eta?.minutes ?? null, estimatedTotalKm: route.estimatedTotalKm, commercialStatus: commercial.status });
 }
@@ -3131,10 +3281,13 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
     eta: null, estimatedTotalKm: null, originAddress: context.facts.origin || call?.origin || null,
     destinationAddress: context.facts.destination || call?.destination || null, originCoordinates: incomingLocation || call?.originCoordinates || null,
   }));
+  if (capacitySnapshot(context.management).activeCount === 1 && (route.originAddress || route.originCoordinates)) {
+    const queued = await estimateSecondCallArrival({ management: context.management, targetAddress: route.originAddress, targetCoordinates: route.originCoordinates });
+    if (queued.eta) route.eta = queued.eta;
+  }
   const combinedFacts = {
     ...context.facts,
-    origin: route.originAddress || call?.origin || '',
-    destination: route.destinationAddress || call?.destination || '',
+    origin: route.originAddress || call?.origin || '', destination: route.destinationAddress || call?.destination || '',
     vehicle: context.facts.vehicle || call?.vehicle || '',
   };
   const missing = missingDispatchData(combinedFacts);
@@ -3143,19 +3296,30 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
     return;
   }
   const associationMissing = context.profile.associationRequired === true && !(combinedFacts.association || call?.association);
+  const pricingKm = context.billingProfile?.routeBasis === 'origin_destination'
+    ? (route.secondLeg?.distanceKm ?? null)
+    : context.billingProfile?.routeBasis === 'insurer_reported'
+      ? (combinedFacts.totalKm ?? null)
+      : context.billingProfile?.routeBasis === 'manual' ? null : route.estimatedTotalKm;
+  const commercial = reconcileCommercial({ approvedRules: context.approvedRules, facts: { ...combinedFacts, totalKm: pricingKm ?? combinedFacts.totalKm }, estimatedTotalKm: pricingKm });
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: route.originAddress || call?.origin || null, originCoordinates: route.originCoordinates || call?.originCoordinates || null,
     destinationAddress: route.destinationAddress || call?.destination || null,
-    eta: route.eta, status: 'aguardando_aprovacao', facts: combinedFacts,
+    eta: route.eta, status: 'aguardando_aprovacao', facts: combinedFacts, commercial,
     estimatedTotalKm: route.estimatedTotalKm, evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
     existingCallId: call?.id || null, eventType: 'dados_do_atendimento', phase: 'aguardando_autorizacao',
   });
-  const details = route.eta?.minutes ? ` Previsão até a origem: ${route.eta.minutes} min.` : '';
-  const association = associationMissing ? ' Informe também a associação responsável.' : '';
-  await replyAndRemember(msg, groupName, readableText, `Dados do atendimento recebidos ✅${details}${association} Aguardando autorização expressa para seguir.`, {
-    intent: 'dispatch_details', authorizationRequired: true, associationMissing,
-  });
+  const lines = ['Dados do atendimento recebidos ✅'];
+  if (route.eta?.minutes) lines.push(`Previsão até a origem: ${publicEtaMinutes(route.eta.rawMinutes ?? route.eta.minutes)} min.`);
+  if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
+  if (commercial.status === 'ok' && commercial.calculatedAmount != null) {
+    lines.push(`Valor estimado: ${formatCurrency(commercial.calculatedAmount)}.`);
+    lines.push('O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.');
+  } else lines.push('Valor aguardando tabela comercial aprovada no aplicativo.');
+  if (associationMissing) lines.push('Informe também a associação responsável.');
+  lines.push('Aguardando autorização expressa para seguir.');
+  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'dispatch_details', authorizationRequired: true, associationMissing, commercialStatus: commercial.status });
 }
 
 async function handleProtocolRuntime(msg, groupName, readableText, context) {
@@ -3205,8 +3369,6 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
 
 async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
   const call = context.recentCall;
-
-  // Uma autorização repetida do mesmo chamado não consome uma nova vaga.
   if (call && isFlowActiveCall(call)) {
     const repeated = await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
@@ -3217,25 +3379,18 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
     await replyAndRemember(msg, groupName, readableText, 'Autorização já registrada neste atendimento ✅', { intent: 'authorization-repeat', callId: call.id });
     return;
   }
-
   if (!call) {
     await replyAndRemember(msg, groupName, readableText, 'Recebi a autorização, mas ainda faltam os dados do atendimento. Envie origem, destino e veículo para vincular corretamente.', { intent: 'authorization-without-call' });
     return;
   }
-
   const capacity = capacitySnapshot(context.management);
   if (!capacity.canAccept) {
     await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
   }
-
   const targetAddress = call?.origin || context.facts.origin || null;
   const targetCoordinates = call?.originCoordinates || incomingLocation || null;
-  const arrival = await estimateSecondCallArrival({
-    management: context.management,
-    targetAddress,
-    targetCoordinates,
-  });
+  const arrival = await estimateSecondCallArrival({ management: context.management, targetAddress, targetCoordinates });
   if (!arrival.available) {
     await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
@@ -3243,21 +3398,30 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
   const eta = arrival.eta;
   const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
-    originAddress: targetAddress, originCoordinates: targetCoordinates, destinationAddress: call?.destination || context.facts.destination || null,
+    originAddress: targetAddress, originCoordinates: targetCoordinates,
+    destinationAddress: call?.destination || context.facts.destination || null,
     eta, status: 'autorizado', facts: context.facts,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
     eventType: 'autorizacao', phase: eta?.queued ? 'autorizado_em_fila' : 'autorizado',
   });
-  if (saved && eta?.queued) {
-    saved.queued = true;
-    saved.precedingCallId = eta.precedingCallId || null;
-  }
   const driverNotification = saved ? await notifyDriverOfConfirmedCall(saved) : { sent: false, reason: 'call_not_saved' };
   const km = formatKm(saved?.billableKm ?? saved?.routeBreakdown?.totalKm ?? saved?.estimatedTotalKm);
   const amount = formatCurrency(saved?.calculatedValue);
-  const calculationLines = [km ? `Quilometragem total calculada: ${km} km.` : null, amount ? `Valor estimado: ${amount}.` : null].filter(Boolean);
-  const confirmation = eta ? formatEtaReply(eta, true) : 'Confirmado ✅\nGuincho em deslocamento.';
-  await replyAndRemember(msg, groupName, readableText, [confirmation, ...calculationLines].join('\n'), { intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true, rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null, callId: saved?.id || null, billableKm: saved?.billableKm ?? null, calculatedValue: saved?.calculatedValue ?? null, driverNotification: driverNotification.sent ? 'sent' : driverNotification.reason });
+  const calculationLines = [
+    km ? `Quilometragem total calculada: ${km} km.` : null,
+    amount ? `Valor estimado: ${amount}.` : null,
+    amount ? 'O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.' : null,
+  ].filter(Boolean);
+  const confirmation = eta?.queued
+    ? `Confirmado ✅\nCorrida em fila após o atendimento atual.\nPrevisão informada: ${eta.minutes || 60} min.`
+    : (eta ? formatEtaReply(eta, true) : 'Confirmado ✅\nGuincho em deslocamento.');
+  await replyAndRemember(msg, groupName, readableText, [confirmation, ...calculationLines].join('\n'), {
+    intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true,
+    rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null,
+    callId: saved?.id || null, billableKm: saved?.billableKm ?? null,
+    calculatedValue: saved?.calculatedValue ?? null,
+    driverNotification: driverNotification.sent ? 'sent' : driverNotification.reason,
+  });
 }
 
 async function handleScheduledRuntime(msg, groupName, readableText, context) {
@@ -3587,7 +3751,7 @@ async function handleValueSummaryRuntime(msg, groupName, readableText, context) 
 async function handleClosureRuntime(msg, groupName, readableText, context) {
   const call = context.recentCall;
   if (!call) {
-    await replyAndRemember(msg, groupName, readableText, 'Não encontrei atendimento ativo para finalizar. Informe o protocolo da corrida.', { intent: 'closure-without-call' });
+    await replyAndRemember(msg, groupName, readableText, 'Não encontrei atendimento ativo para registrar a finalização. Informe o protocolo da corrida.', { intent: 'closure-without-call' });
     return;
   }
   const reportedTotalKm = context.facts.totalKm ?? null;
@@ -3603,24 +3767,18 @@ async function handleClosureRuntime(msg, groupName, readableText, context) {
   const commercial = addWorkedTimeToCommercial(reconcileCommercial({ approvedRules: context.approvedRules, facts, estimatedTotalKm: automaticKm }), workedTime);
   const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
-    originAddress: call?.origin || facts.origin || null,
-    destinationAddress: call?.destination || facts.destination || null,
+    originAddress: call?.origin || facts.origin || null, destinationAddress: call?.destination || facts.destination || null,
     eta: call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null,
-    status: 'concluido', facts, commercial,
-    estimatedTotalKm: automaticKm,
+    status: 'aguardando_fechamento', facts, commercial, estimatedTotalKm: automaticKm,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null, workedTime,
-    eventType: 'fechamento', phase: 'concluido',
+    eventType: 'execucao_finalizada', phase: 'aguardando_fechamento_dono',
   });
-  if (commercial.reviewRequired) {
-    logEvent('finance-review', `${groupName}: fechamento exige conferência financeira.`, { callId: saved?.id, calculated: commercial.calculatedAmount, reported: commercial.reportedAmount, delta: commercial.delta });
-  }
-  let reply = closureReply({
-    totalKm: automaticKm ?? facts.totalKm,
-    amount: saved?.value || commercial.calculatedAmount,
-    reviewRequired: commercial.reviewRequired || !(Number(saved?.value || commercial.calculatedAmount) > 0),
-  });
-  if (workedTime.chargeRequired) reply += ` Hora trabalhada: ${workedTime.chargedHours} hora(s) iniciada(s) × R$ 80,00 = ${workedTime.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`;
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'closure', financeReviewRequired: commercial.reviewRequired, commercialStatus: commercial.status, billableKm: automaticKm ?? facts.totalKm ?? null });
+  const lines = ['Execução registrada ✅'];
+  const km = saved?.billableKm ?? automaticKm ?? facts.totalKm;
+  if (Number.isFinite(Number(km))) lines.push(`Quilometragem para conferência: ${Number(km).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km.`);
+  if (Number(saved?.calculatedValue || commercial.calculatedAmount) > 0) lines.push(`Valor calculado para conferência: ${formatCurrency(saved?.calculatedValue || commercial.calculatedAmount)}.`);
+  lines.push('A corrida ficou aberta para conferência e fechamento no aplicativo. O financeiro e o repasse do motorista só ficam definitivos após esse fechamento.');
+  await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'closure_pending_owner', callId: saved?.id, ownerReviewRequired: true });
 }
 
 async function processIncomingMessage(msg) {
@@ -4358,10 +4516,12 @@ app.get('/api/audit', async (req, res) => {
   }
 });
 
-app.get('/api/management', async (_req, res) => {
+app.get('/api/management', async (req, res) => {
   try {
     const data = await getManagement();
-    return res.json({ ok: true, data: { ...data, calls: (data.calls || []).filter((item) => !isTestCall(item)) } });
+    const calls = (data.calls || []).filter((item) => !isTestCall(item));
+    const filters = { from: String(req.query.from || ''), to: String(req.query.to || ''), groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || '') };
+    return res.json({ ok: true, data: { ...data, calls }, quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters), periodReport: buildPeriodReport({ ...data, calls }, filters) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -4656,19 +4816,23 @@ app.post('/api/billing', async (req, res) => {
 app.get('/api/billing/export', async (req, res) => {
   try {
     const state = await getManagement();
-    const batch = (state.billingBatches || []).find((x) => x.id === String(req.query.batchId || ''));
-    if (!batch) return res.status(404).send('Lote não encontrado');
-    const calls = (state.calls || []).filter((x) => (batch.callIds || []).includes(x.id));
-    const cols = ['Data','Tipo de cobrança','Transportadora/Grupo','Protocolo','Veículo','Placa','Origem','Destino','KM até origem','KM serviço','KM retorno base','KM total','Valor'];
-    const quote = (value) => `"${String(value ?? '').replace(/"/g,'""')}"`;
-    const rows = calls.map((call) => [
-      call.completedAt || call.cancelledAt || call.updatedAt || '', call.cancellationChargeRequired ? 'Cancelamento após 15 min — saída/deslocamento integral' : 'Serviço concluído', call.insurer || call.client || '', call.protocol || '', call.vehicle || '', call.plate || '', call.origin || '', call.destination || '',
-      call.routeBreakdown?.legToOrigin?.km ?? '', call.routeBreakdown?.serviceLeg?.km ?? '', call.routeBreakdown?.returnToBase?.km ?? '', call.billableKm ?? call.totalKm ?? '', call.value || 0,
-    ].map(quote).join(';'));
-    const csv = '\uFEFF' + [cols.map(quote).join(';'), ...rows].join('\r\n');
-    res.setHeader('content-type','text/csv; charset=utf-8');
-    res.setHeader('content-disposition', `attachment; filename="fechamento-${String(batch.groupName || 'grupo').replace(/[^a-z0-9]+/gi,'-').slice(0,40)}-${batch.periodEnd || 'periodo'}.csv"`);
-    return res.send(csv);
+    const batchId = String(req.query.batchId || '');
+    let filters = {
+      from: String(req.query.from || ''), to: String(req.query.to || ''),
+      groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || ''),
+    };
+    if (batchId) {
+      const batch = (state.billingBatches || []).find((x) => x.id === batchId);
+      if (!batch) return res.status(404).send('Lote não encontrado');
+      filters = { ...filters, from: batch.periodStart || filters.from, to: batch.periodEnd || filters.to, groupId: batch.groupId || filters.groupId };
+    }
+    const { buffer, report } = buildPeriodWorkbook(state, filters);
+    const suffix = [filters.from || 'inicio', filters.to || 'hoje'].join('-');
+    res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('content-disposition', `attachment; filename="bot-guincho-fechamento-${suffix}.xlsx"`);
+    res.setHeader('x-botguincho-quotes', String(report.quotes.requested || 0));
+    res.setHeader('x-botguincho-calls', String(report.finalCalls || 0));
+    return res.end(buffer);
   } catch (error) { return res.status(500).send(String(error?.message || error)); }
 });
 
@@ -4739,12 +4903,9 @@ app.post('/api/tracker-bridge', async (req, res) => {
       'tracker',
       `GConnect Android: ${reading.plate} · ${reading.speedKph ?? '?'} km/h · ${reading.address || 'sem endereço'}.`,
     );
-    const settings = await getSettings();
-    if (settings.simpleMode === false) {
-      await reconcileTrackerOperations(reading).catch((error) => {
-        logEvent('warning', 'Falha ao reconciliar o atendimento com a localização do caminhão.', { error: String(error) });
-      });
-    }
+    await reconcileTrackerOperations(reading).catch((error) => {
+      logEvent('warning', 'Falha ao reconciliar o atendimento com a localização do caminhão.', { error: String(error) });
+    });
 
     return res.json({ ok: true, receivedAt: reading.receivedAt });
   } catch (error) {

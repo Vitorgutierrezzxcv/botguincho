@@ -17,6 +17,8 @@ const RUNTIME_FILES = [
   'tools/simple-operation.mjs',
   'tools/tracker-freshness.mjs',
   'tools/training-runtime-index.mjs',
+  'tools/business-orchestration.mjs',
+  'tools/reporting-engine.mjs',
   'tools/historical-spreadsheet-import.mjs',
   'tools/test-center.mjs',
 ];

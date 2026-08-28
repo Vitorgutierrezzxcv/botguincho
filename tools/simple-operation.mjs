@@ -1,4 +1,4 @@
-const CONFIRMED_STATUSES = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'concluido']);
+const CONFIRMED_STATUSES = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'aguardando_fechamento', 'concluido']);
 
 function clean(value = '', max = 500) {
   return String(value || '').trim().slice(0, max);
@@ -82,7 +82,7 @@ export function driverDispatchMessage(call = {}, truck = {}) {
     eta ? `Previsão informada: ${eta} min` : null,
     truck?.plate ? `Guincho: ${clean(truck.plate, 40)}` : null,
     '',
-    'Pode iniciar o deslocamento.',
+    call?.queued ? 'Corrida em fila. Finalize o atendimento anterior antes de iniciar este deslocamento.' : 'Pode iniciar o deslocamento.',
   ].filter((line) => line !== null);
   return lines.join('\n');
 }

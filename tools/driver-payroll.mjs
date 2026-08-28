@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { isTestCall } from './test-center.mjs';
 import { isConfirmedCall } from './simple-operation.mjs';
+import { isOwnerFinalizedCall } from './business-orchestration.mjs';
 
 export const DRIVER_CLOSING_DAY = 20;
 export const DRIVER_BASE_KM_LIMIT = 50;
@@ -68,42 +69,59 @@ export function syncDriverPayrolls(state, now = new Date()) {
   for (const call of Array.isArray(state.calls) ? state.calls : []) {
     const calculation = driverPayForCall(call);
     if (!calculation) continue;
-    const settledAt = call.completedAt || call.cancelledAt || call.updatedAt || call.createdAt;
+    const settledAt = call.ownerClosedAt || call.completedAt || call.cancelledAt || call.authorizedAt || call.updatedAt || call.createdAt;
     if (!settledAt) continue;
     const period = driverPayrollPeriodFor(settledAt);
     const driver = driverForCall(state, call);
     const key = `${driver.driverId}|${period.periodStart}|${period.periodEnd}`;
     if (!grouped.has(key)) grouped.set(key, { key, ...driver, ...period, calls: [] });
-    grouped.get(key).calls.push({ call, calculation });
+    grouped.get(key).calls.push({ call, calculation, final: isOwnerFinalizedCall(call) });
   }
 
   const today = dateOnly(now);
   state.driverPayrolls = [...grouped.values()].map((group) => {
     const old = previous.get(group.key) || {};
-    const callIds = group.calls.map(({ call }) => call.id);
-    const totalKm = money(group.calls.reduce((sum, item) => sum + item.calculation.billableKm, 0));
-    const routeAmount = money(group.calls.reduce((sum, item) => sum + item.calculation.routeAmount, 0));
-    const workedTimeAmount = money(group.calls.reduce((sum, item) => sum + item.calculation.workedTimeAmount, 0));
+    const finalItems = group.calls.filter((item) => item.final);
+    const projectedItems = group.calls.filter((item) => !item.final);
+    const callIds = finalItems.map(({ call }) => call.id);
+    const projectedCallIds = projectedItems.map(({ call }) => call.id);
+    const totalKm = money(finalItems.reduce((sum, item) => sum + item.calculation.billableKm, 0));
+    const projectedKm = money(projectedItems.reduce((sum, item) => sum + item.calculation.billableKm, 0));
+    const routeAmount = money(finalItems.reduce((sum, item) => sum + item.calculation.routeAmount, 0));
+    const workedTimeAmount = money(finalItems.reduce((sum, item) => sum + item.calculation.workedTimeAmount, 0));
     const totalAmount = money(routeAmount + workedTimeAmount);
-    const status = old.paidAt ? 'paid' : today > group.paymentDue ? 'overdue' : today >= group.paymentDue ? 'due' : 'accumulating';
+    const projectedRouteAmount = money(projectedItems.reduce((sum, item) => sum + item.calculation.routeAmount, 0));
+    const projectedWorkedTimeAmount = money(projectedItems.reduce((sum, item) => sum + item.calculation.workedTimeAmount, 0));
+    const projectedAmount = money(projectedRouteAmount + projectedWorkedTimeAmount);
+    const status = old.paidAt ? 'paid'
+      : totalAmount <= 0 && projectedAmount > 0 ? 'projected'
+      : today > group.paymentDue ? 'overdue'
+      : today >= group.paymentDue ? 'due' : 'accumulating';
     return {
       id: old.id || crypto.randomUUID(), key: group.key,
       driverId: group.driverId, driverName: group.driverName,
       periodStart: group.periodStart, periodEnd: group.periodEnd, paymentDue: group.paymentDue,
       callIds, callCount: callIds.length, totalKm, routeAmount, workedTimeAmount, totalAmount,
+      projectedCallIds, projectedCallCount: projectedCallIds.length, projectedKm,
+      projectedRouteAmount, projectedWorkedTimeAmount, projectedAmount,
+      totalWithProjected: money(totalAmount + projectedAmount),
       status, paidAt: old.paidAt || null, paidAmount: old.paidAmount ?? null,
       createdAt: old.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
   }).sort((a, b) => String(b.periodEnd).localeCompare(String(a.periodEnd)));
 
   if (!Array.isArray(state.finance)) state.finance = [];
+  const finalPayrollIds = new Set(state.driverPayrolls.filter((item) => item.totalAmount > 0).map((item) => item.id));
+  state.finance = state.finance.filter((item) => item.source !== 'driver_payroll' || item.status === 'pago' || finalPayrollIds.has(item.driverPayrollId));
   for (const payroll of state.driverPayrolls) {
+    if (!(payroll.totalAmount > 0)) continue;
     let entry = state.finance.find((item) => item.driverPayrollId === payroll.id);
     const patch = {
       description: `Pagamento motorista · ${payroll.driverName} · ${payroll.periodStart} a ${payroll.periodEnd}`,
       category: 'Pagamento do motorista', amount: payroll.totalAmount, type: 'despesa',
       status: payroll.paidAt ? 'pago' : (payroll.status === 'overdue' ? 'atrasado' : 'pendente'),
       dueDate: payroll.paymentDue, driverPayrollId: payroll.id, driverId: payroll.driverId,
+      financialStage: 'definitivo', isFinal: true,
       paidAt: payroll.paidAt || null, source: 'driver_payroll', updatedAt: new Date().toISOString(),
     };
     if (entry) Object.assign(entry, patch);
