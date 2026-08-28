@@ -2,7 +2,7 @@
   'use strict';
 
   const ownerState = { billing: { profiles: [], batches: [], insurerSummaries: [], driverPayrolls: [] }, groups: [], period: 'month' };
-  const acceptedStatuses = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'concluido']);
+  const acceptedStatuses = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'aguardando_fechamento', 'concluido']);
   const activeStatuses = new Set(['autorizado', 'a_caminho', 'em_atendimento', 'aguardando_fechamento']);
   const ownerFinalized = (call) => Boolean(call?.ownerClosedAt) || (call?.status === 'concluido' && call?.ownerCloseRequired !== true);
 
@@ -12,7 +12,7 @@
   const sortRecent = (items) => [...items].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
   const statusText = {
     novo: 'Novo', cotacao: 'Cotação aberta', aguardando_dados: 'Aguardando dados', aguardando_aprovacao: 'Aguardando aprovação',
-    autorizado: 'Aceita', agendado: 'Agendada', a_caminho: 'A caminho', em_atendimento: 'Em atendimento', concluido: 'Concluída', cancelado: 'Cancelada'
+    autorizado: 'Aceita', agendado: 'Agendada', a_caminho: 'A caminho', em_atendimento: 'Em atendimento', aguardando_fechamento: 'Aguardando fechamento', concluido: 'Concluída', cancelado: 'Cancelada'
   };
   const sourceText = (call) => call.source === 'whatsapp' ? 'WhatsApp' : 'Manual';
 
