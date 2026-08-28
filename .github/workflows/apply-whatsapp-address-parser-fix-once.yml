@@ -1,0 +1,46 @@
+name: Apply WhatsApp Address Parser Fix Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-whatsapp-address-parser-fix-once.yml'
+      - 'tools/apply_whatsapp_address_parser_fix_tmp.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Corrigir parser das fichas do WhatsApp
+        run: |
+          set -euo pipefail
+          python3 tools/apply_whatsapp_address_parser_fix_tmp.py
+
+      - name: Validar ficha real e regressões
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/operational-knowledge.mjs
+          node tools/test-whatsapp-address-fields.mjs
+          node tools/test-operational-knowledge.mjs
+          node tools/test-fast-eta.mjs
+          node tools/test-simple-operation.mjs
+
+      - name: Publicar correção final
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/apply-whatsapp-address-parser-fix-once.yml tools/apply_whatsapp_address_parser_fix_tmp.py
+          git add tools/vercel-whatsapp-worker.mjs tools/operational-knowledge.mjs tools/test-whatsapp-address-fields.mjs
+          git commit -m 'fix: interpreta fichas formatadas do WhatsApp no ETA'
+          git push origin main
