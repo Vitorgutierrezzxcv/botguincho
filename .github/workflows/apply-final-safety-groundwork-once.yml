@@ -1,0 +1,88 @@
+name: Apply final safety groundwork once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-final-safety-groundwork-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Aplicar hardening final
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: esperado 1 trecho, encontrado {count}')
+              p.write_text(s.replace(old, new, 1))
+
+          # Rastreador pode estar pareado e ainda assim com leitura antiga/offline.
+          replace_once(
+              'tools/vercel-whatsapp-worker.mjs',
+              "    configured: connected,\n    connected,\n    pairingConfigured: Boolean(pairCode),",
+              "    configured: Boolean(pairCode),\n    connected,\n    pairingConfigured: Boolean(pairCode),",
+              'tracker configured')
+
+          # Nunca mascarar falha de autenticação como GET 200/placeholder.
+          replace_once(
+              'lib/sandbox-runtime.js',
+              "  } catch (error) {\n    if (req.method === 'GET') {\n      return res.status(200).json({ ...placeholder(internalPath, tenant), companyId: tenant, warning: String(error) });\n    }\n    return res.status(503).json({ error: 'worker_unavailable', message: String(error) });\n  }\n}",
+              "  } catch (error) {\n    const status = Number(error?.status || 0);\n    if (status === 401 || status === 403) {\n      return res.status(status).json({ error: error?.message || (status === 401 ? 'unauthorized' : 'forbidden') });\n    }\n    if (req.method === 'GET') {\n      return res.status(200).json({ ...placeholder(internalPath, tenant), companyId: tenant, warning: String(error) });\n    }\n    return res.status(503).json({ error: 'worker_unavailable', message: String(error) });\n  }\n}",
+              'proxy fail closed')
+
+          # Recuperação de senha antes de retirar o acesso legado.
+          replace_once(
+              'public/login.html',
+              '<div class="login-actions section"><button id="login" class="btn">Entrar</button><button id="firstAccess" class="btn secondary">Primeiro acesso</button></div><p class="muted hint">Use “Primeiro acesso” se a administração já convidou este e-mail. Você escolhe sua própria senha; ela é enviada diretamente ao Supabase Auth.</p>',
+              '<div class="login-actions section"><button id="login" class="btn">Entrar</button><button id="firstAccess" class="btn secondary">Primeiro acesso</button></div><button id="forgotPassword" class="btn secondary" style="width:100%;margin-top:10px">Esqueci minha senha</button><p class="muted hint" id="loginHint">Use “Primeiro acesso” se a administração já convidou este e-mail. Você escolhe sua própria senha; ela é enviada diretamente ao Supabase Auth.</p>',
+              'login recovery button')
+
+          p = Path('public/login.js')
+          s = p.read_text()
+          hook = "$('login').onclick=login;$('firstAccess').onclick=firstAccess;$('password').addEventListener('keydown',e=>{if(e.key==='Enter')login()});"
+          if s.count(hook) != 1:
+              raise SystemExit(f'login hook: esperado 1, encontrado {s.count(hook)}')
+          recovery = """async function forgotPassword(){const email=String($('email').value||'').toLowerCase().trim();if(!email.includes('@'))return show('Informe seu e-mail para recuperar a senha.');try{$('forgotPassword').disabled=true;const redirectTo=location.origin+'/login.html'+(companyId?'?companyId='+encodeURIComponent(companyId):'');const r=await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`,{method:'POST',headers:{apikey:SUPABASE_ANON_KEY,'content-type':'application/json'},body:JSON.stringify({email})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.msg||d.message||d.error_description||'recover_failed');show('Se este e-mail estiver cadastrado, você receberá o link para criar uma nova senha.',false)}catch(e){show('Não foi possível solicitar a recuperação agora. Tente novamente em instantes.')}finally{$('forgotPassword').disabled=false}}async function handleRecovery(){const hash=new URLSearchParams(location.hash.replace(/^#/,''));if(hash.get('type')!=='recovery'||!hash.get('access_token'))return;const token=hash.get('access_token');$('login').style.display='none';$('firstAccess').style.display='none';$('forgotPassword').textContent='Salvar nova senha';$('loginHint').textContent='Digite a nova senha acima e clique em “Salvar nova senha”.';$('forgotPassword').onclick=async()=>{const password=String($('password').value||'');if(password.length<8)return show('Escolha uma senha com pelo menos 8 caracteres.');try{$('forgotPassword').disabled=true;const r=await fetch(`${SUPABASE_URL}/auth/v1/user`,{method:'PUT',headers:{apikey:SUPABASE_ANON_KEY,authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({password})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.msg||d.message||d.error_description||'update_failed');history.replaceState(null,'',location.pathname+location.search);show('Senha atualizada. Você já pode entrar com a nova senha.',false);$('login').style.display='';$('firstAccess').style.display='';$('forgotPassword').textContent='Esqueci minha senha';$('forgotPassword').onclick=forgotPassword}catch(e){show('Não foi possível salvar a nova senha. Solicite outro link de recuperação.')}finally{$('forgotPassword').disabled=false}}}$('login').onclick=login;$('firstAccess').onclick=firstAccess;$('forgotPassword').onclick=forgotPassword;$('password').addEventListener('keydown',e=>{if(e.key==='Enter')login()});handleRecovery();"""
+          p.write_text(s.replace(hook, recovery, 1))
+          PY
+
+      - name: Validar
+        run: |
+          set -euo pipefail
+          node --check lib/sandbox-runtime.js
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check public/login.js
+          node tools/test-tracker-freshness.mjs
+          node tools/test-learning-patterns.mjs
+          node tools/test-operational-knowledge.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+          grep -q "configured: Boolean(pairCode)" tools/vercel-whatsapp-worker.mjs
+          grep -q "status === 401 || status === 403" lib/sandbox-runtime.js
+          grep -q "forgotPassword" public/login.js
+
+      - name: Commitar
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs lib/sandbox-runtime.js public/login.html public/login.js
+          git commit -m "fix: fecha falhas de segurança e recuperação de acesso"
+          git push origin main
