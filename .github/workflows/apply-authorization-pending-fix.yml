@@ -1,0 +1,58 @@
+name: Apply Authorization Pending Fix
+
+on:
+  push:
+    branches:
+      - fix/authorization-pending-call-20260828
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preparar patch sobre a main atual
+        run: |
+          set -euo pipefail
+          cp tools/apply_authorization_pending_fix_tmp.py /tmp/apply_authorization_pending_fix.py
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+
+      - name: Aplicar correção
+        run: |
+          set -euo pipefail
+          python3 /tmp/apply_authorization_pending_fix.py
+
+      - name: Validar autorização, painel e regressões
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/business-orchestration.mjs
+          node --check owner-dashboard.js
+          node --check public/owner-dashboard.js
+          node --check test-mode-visibility.js
+          node --check public/test-mode-visibility.js
+          node tools/test-authorization-pending-selection.mjs
+          node tools/test-preview-consistency.mjs
+          node tools/test-fast-eta.mjs
+          node tools/test-simple-operation.mjs
+
+      - name: Publicar somente se tudo passar
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs tools/business-orchestration.mjs tools/test-authorization-pending-selection.mjs owner-dashboard.js public/owner-dashboard.js test-mode-visibility.js public/test-mode-visibility.js
+          if git diff --cached --quiet; then
+            echo 'Nenhuma alteração necessária.'
+            exit 0
+          fi
+          git commit -m 'fix: vincula pode seguir a cotacao pendente'
+          git push origin main
