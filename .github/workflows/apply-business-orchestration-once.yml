@@ -21,6 +21,21 @@ jobs:
       - name: Instalar dependências
         run: npm install --no-audit --no-fund
 
+      - name: Preparar aplicador
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/apply-business-orchestration-once.mjs')
+          s = p.read_text()
+          needle = "'authorization queue comment');"
+          end = s.index(needle) + len(needle)
+          start = s.rfind('  s = replaceOnce(s,', 0, end)
+          if start < 0:
+              raise SystemExit('bloco de comentário da fila não encontrado')
+          p.write_text(s[:start] + s[end:])
+          print('Aplicador preparado sem o bloco cosmético da fila.')
+          PY
+
       - name: Aplicar orquestração operacional
         run: node tools/apply-business-orchestration-once.mjs
 
