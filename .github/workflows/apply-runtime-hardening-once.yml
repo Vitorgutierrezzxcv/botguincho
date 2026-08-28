@@ -1,0 +1,123 @@
+name: Apply runtime hardening once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-runtime-hardening-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Aplicar correções críticas
+        run: |
+          set -euo pipefail
+          cat > tools/tracker-freshness.mjs <<'EOF'
+          function finiteTimestamp(value) {
+            const parsed = Date.parse(String(value || '').trim());
+            return Number.isFinite(parsed) ? parsed : null;
+          }
+
+          function parseBrazilianDate(value = '') {
+            const raw = String(value || '').trim();
+            const match = raw.match(/(?:^|\D)(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?:\D+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+            if (!match) return null;
+            const [, day, month, year, hour = '00', minute = '00', second = '00'] = match;
+            const d = Number(day), m = Number(month), y = Number(year);
+            if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2200) return null;
+            const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}-03:00`;
+            return finiteTimestamp(iso);
+          }
+
+          export function trackerSourceTimestamp(reading) {
+            const structured = finiteTimestamp(reading?.sourceUpdatedAt);
+            if (structured !== null) return structured;
+            const raw = String(reading?.lastUpdateText || '').trim();
+            if (raw) {
+              const direct = finiteTimestamp(raw);
+              if (direct !== null) return direct;
+              const brazilian = parseBrazilianDate(raw);
+              if (brazilian !== null) return brazilian;
+            }
+            return finiteTimestamp(reading?.receivedAt);
+          }
+
+          export function trackerAgeSeconds(reading, nowMs = Date.now()) {
+            const timestamp = trackerSourceTimestamp(reading);
+            if (timestamp === null) return null;
+            const ms = Number(nowMs) - timestamp;
+            return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : null;
+          }
+          EOF
+
+          cat > tools/test-tracker-freshness.mjs <<'EOF'
+          import assert from 'node:assert/strict';
+          import { trackerAgeSeconds, trackerSourceTimestamp } from './tracker-freshness.mjs';
+
+          const now = Date.parse('2026-08-28T00:10:00Z');
+          const stale = { lastUpdateText: '08/17/2026 10:36 PM', receivedAt: '2026-08-28T00:09:58Z' };
+          assert.ok(trackerAgeSeconds(stale, now) > 86400);
+          const fresh = { sourceUpdatedAt: '2026-08-28T00:09:40Z', receivedAt: '2026-08-28T00:09:58Z' };
+          assert.equal(trackerAgeSeconds(fresh, now), 20);
+          const fallback = { receivedAt: '2026-08-28T00:09:30Z' };
+          assert.equal(trackerAgeSeconds(fallback, now), 30);
+          assert.ok(Number.isFinite(trackerSourceTimestamp(stale)));
+          console.log('TRACKER_FRESHNESS_OK');
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+          def rep(old, new, label):
+              global s
+              if s.count(old) != 1:
+                  raise SystemExit(f'{label}: {s.count(old)} ocorrencias')
+              s = s.replace(old, new, 1)
+
+          rep("import { driverDispatchMessage, isConfirmedCall, publicEtaMinutes, primaryTruck, truckAvailability, whatsappChatId } from './simple-operation.mjs';\n", "import { driverDispatchMessage, isConfirmedCall, publicEtaMinutes, primaryTruck, truckAvailability, whatsappChatId } from './simple-operation.mjs';\nimport { trackerAgeSeconds } from './tracker-freshness.mjs';\n", 'import')
+          rep("function trackerAgeSeconds(reading) {\n  if (!reading?.receivedAt) return null;\n  const ms = Date.now() - new Date(reading.receivedAt).getTime();\n  return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : null;\n}\n\n", "", 'tracker antigo')
+          rep("    pairCode,\n    ageSeconds,", "    pairingConfigured: Boolean(pairCode),\n    ageSeconds,", 'pair code publico')
+          rep("app.get('/api/group-knowledge', async (_req, res) => {\n  try { return res.json({ ok: true, groups: Object.values(await learningStore.getAll()) }); }\n  catch (error) { return res.status(500).json({ ok: false, error: String(error) }); }\n});", "app.get('/api/group-knowledge', async (_req, res) => {\n  try {\n    const allowed = await getAllowedGroupIds();\n    const groups = Object.values(await learningStore.getAll()).filter((group) => allowed.has(group?.groupId));\n    return res.json({ ok: true, groups });\n  } catch (error) { return res.status(500).json({ ok: false, error: String(error) }); }\n});", 'knowledge')
+          anchor = "app.post('/api/learning/import-history', async (req, res) => {\n  try { return res.json({ ok: true, ...(await importLearningHistory(String(req.body?.groupId || ''), req.body?.limit || 500)) }); }\n  catch (error) { return res.status(400).json({ ok: false, error: String(error?.message || error) }); }\n});\n\napp.get('/api/status', async (_req, res) => {"
+          insert = "app.post('/api/learning/import-history', async (req, res) => {\n  try { return res.json({ ok: true, ...(await importLearningHistory(String(req.body?.groupId || ''), req.body?.limit || 500)) }); }\n  catch (error) { return res.status(400).json({ ok: false, error: String(error?.message || error) }); }\n});\n\napp.get('/api/learning/summary', async (_req, res) => {\n  try {\n    const allowed = await getAllowedGroupIds();\n    const all = await learningStore.getAll();\n    const groups = Object.values(all).filter((group) => allowed.has(group?.groupId)).map((group) => ({ groupId: group.groupId, groupName: group.name || 'Grupo do WhatsApp', examples: Array.isArray(group.examples) ? group.examples.length : 0, commercialStatus: group.commercialStatus || 'none', updatedAt: group.updatedAt || null }));\n    return res.json({ ok: true, groupCount: groups.length, exampleCount: groups.reduce((sum, group) => sum + group.examples, 0), groups });\n  } catch (error) { return res.status(500).json({ ok: false, error: String(error?.message || error) }); }\n});\n\napp.get('/api/status', async (_req, res) => {"
+          rep(anchor, insert, 'learning summary')
+          old = "    const groups = await discoverGroups().catch(() => []);\n    for (const group of groups) ensureBillingProfile(state, group.id, group.name || 'Grupo do WhatsApp');\n    state.billingBatches = updateBatchTemporalStatuses(state.billingBatches || []);\n    syncDriverPayrolls(state);\n    const saved = await saveManagement(state);\n    const allowed = await getAllowedGroupIds();"
+          new = "    const groups = await discoverGroups().catch(() => []);\n    const allowed = await getAllowedGroupIds();\n    for (const group of groups) {\n      if (allowed.has(group.id)) ensureBillingProfile(state, group.id, group.name || 'Grupo do WhatsApp');\n    }\n    state.billingBatches = updateBatchTemporalStatuses(state.billingBatches || []);\n    syncDriverPayrolls(state);\n    const saved = await saveManagement(state);"
+          rep(old, new, 'billing')
+          rep("{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: '', notes: '' }", "{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: 'Mauro', notes: '' }", 'mauro default')
+          rep("driverName: existing?.driverName || assignedFleet?.driver || 'Motorista principal',", "driverName: existing?.driverName || assignedFleet?.driver || 'Mauro',", 'mauro fallback')
+          rep("outOfHoursReply: 'Motorista fora de rota.',", "outOfHoursReply: 'Atendimento fora do horário configurado.',", 'fora horario')
+          p.write_text(s)
+          PY
+
+      - name: Validar correções
+        run: |
+          set -euo pipefail
+          node --check tools/tracker-freshness.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+          node tools/test-tracker-freshness.mjs
+          node tools/test-learning-patterns.mjs
+          node tools/test-operational-knowledge.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+          node tools/test-simple-operation.mjs
+
+      - name: Commitar correções
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs tools/tracker-freshness.mjs tools/test-tracker-freshness.mjs
+          git commit -m "fix: endurece rastreador aprendizado e billing"
+          git push origin main
