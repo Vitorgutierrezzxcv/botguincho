@@ -2196,6 +2196,28 @@ async function trackerCoordinates(reading) {
   return geocodeAddress(reading.address);
 }
 
+function addressMatchParts(value = '') {
+  const normalized = normalizeForIntent(String(value || ''))
+    .replace(/\b(?:rua|r|avenida|av|travessa|tv|rodovia|rod|estrada|bairro|brasil|mg|minas|gerais|de|da|do|das|dos)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const number = normalizeForIntent(String(value || '')).match(/\b\d{1,6}[a-z]?\b/)?.[0] || '';
+  const words = normalized.split(' ').filter((word) => word && word.length >= 3 && !/^\d+$/.test(word));
+  return { number, words: [...new Set(words)] };
+}
+
+function likelySameOperationalAddress(targetAddress = '', trackerAddress = '') {
+  if (!targetAddress || !trackerAddress) return false;
+  const target = addressMatchParts(targetAddress);
+  const tracker = addressMatchParts(trackerAddress);
+  if (target.number && tracker.number && target.number !== tracker.number) return false;
+  if (!target.number || !tracker.number) return false;
+  const trackerWords = new Set(tracker.words);
+  const overlap = target.words.filter((word) => trackerWords.has(word)).length;
+  const required = Math.min(2, target.words.length);
+  return required > 0 && overlap >= required;
+}
+
 async function computeEtaToClient({ targetAddress = null, targetCoordinates = null } = {}) {
   const reading = await getFreshTrackerReading();
   if (!reading) return null;
@@ -2203,6 +2225,20 @@ async function computeEtaToClient({ targetAddress = null, targetCoordinates = nu
   let destination = targetCoordinates && validCoordinates(targetCoordinates.latitude, targetCoordinates.longitude)
     ? { latitude: Number(targetCoordinates.latitude), longitude: Number(targetCoordinates.longitude) }
     : null;
+
+  if (!destination && targetAddress && likelySameOperationalAddress(targetAddress, reading.address || '')) {
+    const current = await trackerCoordinates(reading);
+    if (current) {
+      return {
+        minutes: 1,
+        distanceKm: 0,
+        trackerAddress: reading.address || null,
+        trackerPlate: reading.plate || null,
+        targetAddress,
+        sameLocation: true,
+      };
+    }
+  }
 
   if (!destination && targetAddress) {
     destination = await geocodeAddress(targetAddress);
@@ -2224,7 +2260,8 @@ async function computeEtaToClient({ targetAddress = null, targetCoordinates = nu
 }
 
 async function computeEtaWithRetry(input = {}, options = {}) {
-  const attempts = Math.max(1, Math.min(3, Number(options.attempts || 3)));
+  const attempts = Math.max(1, Math.min(3, Number(options.attempts ?? 2)));
+  const retryDelayMs = Math.max(0, Math.min(1500, Number(options.retryDelayMs ?? 250)));
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -2238,7 +2275,9 @@ async function computeEtaWithRetry(input = {}, options = {}) {
       lastError = error;
       logEvent('warning', `Tentativa ${attempt}/${attempts} de ETA falhou.`, { error: String(error) });
     }
-    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+    if (attempt < attempts && retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+    }
   }
   if (lastError) logEvent('safety', 'ETA suspenso após tentativas; nenhum dado antigo será reutilizado.', { error: String(lastError) });
   return null;
@@ -2254,19 +2293,24 @@ async function computeFullServiceRoute({ originAddress = null, destinationAddres
   if (!reading) return null;
   const start = await trackerCoordinates(reading);
   if (!start) return null;
-  const origin = originCoordinates && validCoordinates(originCoordinates.latitude, originCoordinates.longitude)
-    ? { latitude: Number(originCoordinates.latitude), longitude: Number(originCoordinates.longitude), displayName: originAddress || 'Localização compartilhada' }
-    : await geocodeAddress(originAddress);
-  const destination = await geocodeAddress(destinationAddress);
+  const originPromise = originCoordinates && validCoordinates(originCoordinates.latitude, originCoordinates.longitude)
+    ? Promise.resolve({ latitude: Number(originCoordinates.latitude), longitude: Number(originCoordinates.longitude), displayName: originAddress || 'Localização compartilhada' })
+    : geocodeAddress(originAddress);
+  const destinationPromise = geocodeAddress(destinationAddress);
   // Sem uma base configurada, fecha o circuito no ponto real de saída do
   // caminhão. Assim o cálculo continua completo e auditável, sem inventar um
   // endereço de retorno.
-  const base = baseAddress ? await geocodeAddress(baseAddress) : { ...start, displayName: reading.address || 'Ponto de saída do caminhão' };
+  const basePromise = baseAddress
+    ? geocodeAddress(baseAddress)
+    : Promise.resolve({ ...start, displayName: reading.address || 'Ponto de saída do caminhão' });
+  const [origin, destination, base] = await Promise.all([originPromise, destinationPromise, basePromise]);
   if (!origin || !destination || !base) return null;
 
-  const legToOrigin = await routeBetween(start, origin);
-  const serviceLeg = await routeBetween(origin, destination);
-  const returnToBase = await routeBetween(destination, base);
+  const [legToOrigin, serviceLeg, returnToBase] = await Promise.all([
+    routeBetween(start, origin),
+    routeBetween(origin, destination),
+    routeBetween(destination, base),
+  ]);
   if (!legToOrigin || !serviceLeg || !returnToBase) return null;
   const totalKm = Math.round((Number(legToOrigin.distanceKm || 0) + Number(serviceLeg.distanceKm || 0) + Number(returnToBase.distanceKm || 0)) * 10) / 10;
   const totalMinutes = Number(legToOrigin.minutes || 0) + Number(serviceLeg.minutes || 0) + Number(returnToBase.minutes || 0);
@@ -3159,22 +3203,53 @@ async function currentOperationalContext(groupId, groupName, text) {
 // vem numa mensagem, o veiculo em outra. O pedaco que chega sozinho precisa
 // herdar o que ja foi recebido, senao a previsao cai numa localizacao antiga
 // do grupo e sai um numero diferente do que ja tinha sido informado.
-async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null, pending = null) {
+async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null, pending = null, options = {}) {
   const originAddress = extractLabeledField(text, 'Origem') || facts.origin || enderecoEmTextoLivre(text) || pending?.origin || null;
   const destinationAddress = extractLabeledField(text, 'Destino') || facts.destination || pending?.destination || null;
   const shared = await getRecentSharedLocation(groupId);
   const originCoordinates = incomingLocation
     || (!originAddress ? (pending?.originCoordinates || shared?.coordinates || null) : null);
+
+  const fast = options?.fast === true;
   let eta = null;
-  if (originAddress || originCoordinates) eta = await computeEtaWithRetry({ targetAddress: originAddress, targetCoordinates: originCoordinates });
   let secondLeg = null;
-  if (originAddress && destinationAddress) {
+  let fullRoute = null;
+
+  if (fast) {
+    if (originAddress || originCoordinates) {
+      eta = await computeEtaWithRetry(
+        { targetAddress: originAddress, targetCoordinates: originCoordinates },
+        { attempts: 2, retryDelayMs: 150 },
+      ).catch(() => null);
+    }
+    return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, fullRoute, estimatedTotalKm: null };
+  }
+
+  if ((originAddress || originCoordinates) && destinationAddress) {
+    fullRoute = await computeFullServiceRoute({ originAddress, destinationAddress, originCoordinates }).catch(() => null);
+    if (fullRoute) {
+      eta = {
+        minutes: fullRoute.legToOrigin?.minutes ?? null,
+        rawMinutes: fullRoute.legToOrigin?.minutes ?? null,
+        distanceKm: fullRoute.legToOrigin?.km ?? null,
+      };
+      secondLeg = {
+        minutes: fullRoute.serviceLeg?.minutes ?? null,
+        distanceKm: fullRoute.serviceLeg?.km ?? null,
+      };
+    }
+  }
+
+  if (!eta && (originAddress || originCoordinates)) {
+    eta = await computeEtaWithRetry(
+      { targetAddress: originAddress, targetCoordinates: originCoordinates },
+      { attempts: 2, retryDelayMs: 200 },
+    ).catch(() => null);
+  }
+  if (!secondLeg && originAddress && destinationAddress) {
     const [from, to] = await Promise.all([geocodeAddress(originAddress), geocodeAddress(destinationAddress)]);
     if (from && to) secondLeg = await routeBetween(from, to).catch(() => null);
   }
-  const fullRoute = destinationAddress
-    ? await computeFullServiceRoute({ originAddress, destinationAddress, originCoordinates }).catch(() => null)
-    : null;
   const estimatedTotalKm = fullRoute?.totalKm ?? (eta?.distanceKm != null && secondLeg?.distanceKm != null
     ? Math.round((Number(eta.distanceKm) + Number(secondLeg.distanceKm)) * 10) / 10
     : null);
@@ -3193,7 +3268,7 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
   let route = null;
   if (hasOpportunityData) {
-    route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation, pendingRouteContext(context.recentCall)).catch(() => ({ eta: null }));
+    route = await estimateQuoteRoute(msg.from, readableText, facts, incomingLocation, pendingRouteContext(context.recentCall), { fast: true }).catch(() => ({ eta: null }));
     if (capacity.activeCount === 1 && (route.originAddress || route.originCoordinates)) {
       const queued = await estimateSecondCallArrival({ management: context.management, targetAddress: route.originAddress, targetCoordinates: route.originCoordinates });
       if (queued.eta) route.eta = queued.eta;
@@ -3216,8 +3291,9 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
     eventType: 'consulta_disponibilidade', phase: 'cotacao',
   });
   const lines = ['Disponível ✅'];
-  if (route?.eta?.minutes) lines.push(formatEtaReply(route.eta, false));
-  else if (hasOpportunityData) lines.push('Estou atualizando a localização para calcular a previsão.');
+  const etaReply = route?.eta ? formatEtaReply(route.eta, false) : null;
+  if (etaReply) lines.push(etaReply);
+  else if (hasOpportunityData) lines.push('Previsão temporariamente indisponível. A cotação foi registrada e o sistema continuará tentando atualizar a rota.');
   await replyAndRemember(msg, groupName, readableText, lines.join('\n'), {
     intent: 'availability', activeCount: capacity.activeCount,
     slotsAfterAccept: Math.max(0, capacity.slotsAvailable - 1),
@@ -3265,7 +3341,7 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
 
   const lines = [];
   if (asksAvailability(readableText)) lines.push('Disponível ✅');
-  if (route.eta?.minutes) lines.push(formatEtaReply(route.eta, false));
+  if (route.eta && formatEtaReply(route.eta, false)) lines.push(formatEtaReply(route.eta, false));
   if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
   if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
   if (commercial.status === 'ok' && commercial.calculatedAmount != null) {
@@ -3379,7 +3455,7 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
     existingCallId: call?.id || null, eventType: 'dados_do_atendimento', phase: 'aguardando_autorizacao',
   });
   const lines = ['Dados do atendimento recebidos ✅'];
-  if (route.eta?.minutes) lines.push(`Previsão até a origem: ${publicEtaMinutes(route.eta.rawMinutes ?? route.eta.minutes)} min.`);
+  if (route.eta && publicEtaMinutes(route.eta.rawMinutes ?? route.eta.minutes)) lines.push(`Previsão até a origem: ${publicEtaMinutes(route.eta.rawMinutes ?? route.eta.minutes)} min.`);
   if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
   if (commercial.status === 'ok' && commercial.calculatedAmount != null) {
     lines.push(`Valor estimado: ${formatCurrency(commercial.calculatedAmount)}.`);

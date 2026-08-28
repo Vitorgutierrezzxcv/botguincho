@@ -22,9 +22,10 @@ export function isConfirmedCall(call = {}) {
 }
 
 export function publicEtaMinutes(value) {
-  const minutes = Math.ceil(Number(value || 0));
-  if (!Number.isFinite(minutes) || minutes <= 0) return null;
-  return Math.min(60, minutes);
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.min(60, Math.max(1, Math.ceil(numeric)));
 }
 
 export function primaryTruck(management = {}) {
