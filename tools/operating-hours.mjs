@@ -77,8 +77,24 @@ function intervalContains(interval, minuteOfDay) {
   const start = minutes(interval.start);
   const end = minutes(interval.end);
   if (start < end) return minuteOfDay >= start && minuteOfDay < end;
-  // Intervalo atravessa meia-noite, por exemplo 20:00-02:00.
   return minuteOfDay >= start || minuteOfDay < end;
+}
+
+function previousDayKey(dayKey) {
+  const index = DAY_KEYS.indexOf(dayKey);
+  return DAY_KEYS[(index + DAY_KEYS.length - 1) % DAY_KEYS.length];
+}
+
+function previousDayOvernightMatch(schedule, local) {
+  const key = previousDayKey(local.dayKey);
+  const day = schedule[key] || { enabled: false, intervals: [] };
+  if (!day.enabled) return null;
+  const interval = day.intervals.find((item) => {
+    const start = minutes(item.start);
+    const end = minutes(item.end);
+    return start > end && local.minuteOfDay < end;
+  }) || null;
+  return interval ? { dayKey: key, interval } : null;
 }
 
 export function evaluateOperatingHours(settings = {}, now = new Date()) {
@@ -92,22 +108,49 @@ export function evaluateOperatingHours(settings = {}, now = new Date()) {
     schedule = sanitizeWeeklySchedule(settings?.weeklySchedule || DEFAULT_WEEKLY_SCHEDULE);
     local = localParts(now, timeZone);
   } catch {
-    return { open: true, enabled: true, reason: 'invalid_timezone_fail_open', timeZone };
+    return { open: false, enabled: true, reason: 'invalid_timezone_fail_closed', timeZone };
   }
 
   const day = schedule[local.dayKey] || { enabled: false, intervals: [] };
-  if (!day.enabled || !day.intervals.length) {
-    return { open: false, enabled: true, reason: 'day_closed', timeZone, ...local, day };
+  const matched = day.enabled
+    ? day.intervals.find((interval) => intervalContains(interval, local.minuteOfDay)) || null
+    : null;
+  if (matched) {
+    return {
+      open: true,
+      enabled: true,
+      reason: 'within_interval',
+      timeZone,
+      ...local,
+      day,
+      matchedInterval: matched,
+      matchedDayKey: local.dayKey,
+    };
   }
-  const matched = day.intervals.find((interval) => intervalContains(interval, local.minuteOfDay)) || null;
+
+  const overnight = previousDayOvernightMatch(schedule, local);
+  if (overnight) {
+    return {
+      open: true,
+      enabled: true,
+      reason: 'within_previous_overnight_interval',
+      timeZone,
+      ...local,
+      day,
+      matchedInterval: overnight.interval,
+      matchedDayKey: overnight.dayKey,
+    };
+  }
+
   return {
-    open: Boolean(matched),
+    open: false,
     enabled: true,
-    reason: matched ? 'within_interval' : 'outside_intervals',
+    reason: !day.enabled || !day.intervals.length ? 'day_closed' : 'outside_intervals',
     timeZone,
     ...local,
     day,
-    matchedInterval: matched,
+    matchedInterval: null,
+    matchedDayKey: null,
   };
 }
 
@@ -116,6 +159,6 @@ export function sanitizeOperatingSettings(input = {}) {
     operatingHoursEnabled: input?.operatingHoursEnabled === true,
     operatingTimezone: String(input?.operatingTimezone || 'America/Sao_Paulo').trim().slice(0,80) || 'America/Sao_Paulo',
     weeklySchedule: sanitizeWeeklySchedule(input?.weeklySchedule || DEFAULT_WEEKLY_SCHEDULE),
-    outOfHoursReply: String(input?.outOfHoursReply || 'Motorista fora de rota.').trim().slice(0,300) || 'Motorista fora de rota.',
+    outOfHoursReply: String(input?.outOfHoursReply || 'Atendimento fora do horário configurado.').trim().slice(0,300) || 'Atendimento fora do horário configurado.',
   };
 }
