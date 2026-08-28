@@ -19,6 +19,7 @@ import { driverPayForCall, driverPayrollPeriodFor, markDriverPayrollPaid, syncDr
 import { importHistoricalRecords } from './historical-spreadsheet-import.mjs';
 import { TEST_GROUP_NAME, TEST_MESSAGE_INTERVAL_MS, TEST_RESPONSE_TIMEOUT_MS, TEST_SCENARIOS, TEST_SUITE_VERSION, createTestRun, currentTestHistory, isTestCall, isTestGroupName, responseMatches, summarizeTestRun } from './test-center.mjs';
 import { driverDispatchMessage, isConfirmedCall, publicEtaMinutes, primaryTruck, truckAvailability, whatsappChatId } from './simple-operation.mjs';
+import { trackerAgeSeconds } from './tracker-freshness.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -133,7 +134,7 @@ const DEFAULT_SETTINGS = {
   operatingHoursEnabled: false,
   operatingTimezone: 'America/Sao_Paulo',
   weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
-  outOfHoursReply: 'Motorista fora de rota.',
+  outOfHoursReply: 'Atendimento fora do horário configurado.',
   operationalBaseAddress: '',
 };
 
@@ -222,7 +223,7 @@ const DEFAULT_MANAGEMENT = {
   billingBatches: [],
   driverPayrolls: [],
   historicalImports: [],
-  fleet: [{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: '', notes: '' }],
+  fleet: [{ id: 'fleet-gsw0h17', plate: 'GSW0H17', name: 'Guincho principal', status: 'disponivel', driver: 'Mauro', notes: '' }],
   automations: [
     { id: 'auto-confirm', name: 'Confirmar acionamento automaticamente', enabled: true, trigger: 'dispatch', action: 'confirm_eta' },
     { id: 'auto-finance', name: 'Registrar corrida confirmada no financeiro', enabled: true, trigger: 'call_confirmed', action: 'create_receivable' },
@@ -526,7 +527,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       client: groupName || existing?.client || 'Seguradora',
       insurer: groupName || existing?.insurer || '',
       driverId: existing?.driverId || assignedFleet?.driverId || assignedFleet?.id || 'driver-primary',
-      driverName: existing?.driverName || assignedFleet?.driver || 'Motorista principal',
+      driverName: existing?.driverName || assignedFleet?.driver || 'Mauro',
       driverFleetId: existing?.driverFleetId || assignedFleet?.id || null,
       association: parsed.association || existing?.association || '',
       protocol: parsed.protocol || existing?.protocol || '',
@@ -838,12 +839,6 @@ async function getTrackerReading() {
   return readJson(trackerReadingFile, null);
 }
 
-function trackerAgeSeconds(reading) {
-  if (!reading?.receivedAt) return null;
-  const ms = Date.now() - new Date(reading.receivedAt).getTime();
-  return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : null;
-}
-
 function trackerSummary(reading, pairCode) {
   const ageSeconds = trackerAgeSeconds(reading);
   const connected = ageSeconds !== null && ageSeconds <= 90;
@@ -852,7 +847,7 @@ function trackerSummary(reading, pairCode) {
     mode: 'android-ui-automation',
     configured: connected,
     connected,
-    pairCode,
+    pairingConfigured: Boolean(pairCode),
     ageSeconds,
     lastLocation: reading,
     stale: reading ? !connected : false,
@@ -4359,8 +4354,11 @@ async function importLearningHistory(groupId, requestedLimit = 500) {
 }
 
 app.get('/api/group-knowledge', async (_req, res) => {
-  try { return res.json({ ok: true, groups: Object.values(await learningStore.getAll()) }); }
-  catch (error) { return res.status(500).json({ ok: false, error: String(error) }); }
+  try {
+    const allowed = await getAllowedGroupIds();
+    const groups = Object.values(await learningStore.getAll()).filter((group) => allowed.has(group?.groupId));
+    return res.json({ ok: true, groups });
+  } catch (error) { return res.status(500).json({ ok: false, error: String(error) }); }
 });
 
 app.post('/api/group-knowledge', async (req, res) => {
@@ -4441,6 +4439,15 @@ app.post('/api/learning/import-history', async (req, res) => {
   catch (error) { return res.status(400).json({ ok: false, error: String(error?.message || error) }); }
 });
 
+app.get('/api/learning/summary', async (_req, res) => {
+  try {
+    const allowed = await getAllowedGroupIds();
+    const all = await learningStore.getAll();
+    const groups = Object.values(all).filter((group) => allowed.has(group?.groupId)).map((group) => ({ groupId: group.groupId, groupName: group.name || 'Grupo do WhatsApp', examples: Array.isArray(group.examples) ? group.examples.length : 0, commercialStatus: group.commercialStatus || 'none', updatedAt: group.updatedAt || null }));
+    return res.json({ ok: true, groupCount: groups.length, exampleCount: groups.reduce((sum, group) => sum + group.examples, 0), groups });
+  } catch (error) { return res.status(500).json({ ok: false, error: String(error?.message || error) }); }
+});
+
 app.get('/api/status', async (_req, res) => {
   const settings = await getSettings();
   const allowed = await getAllowedGroupIds();
@@ -4511,11 +4518,13 @@ app.get('/api/billing', async (_req, res) => {
   try {
     const state = await getManagement();
     const groups = await discoverGroups().catch(() => []);
-    for (const group of groups) ensureBillingProfile(state, group.id, group.name || 'Grupo do WhatsApp');
+    const allowed = await getAllowedGroupIds();
+    for (const group of groups) {
+      if (allowed.has(group.id)) ensureBillingProfile(state, group.id, group.name || 'Grupo do WhatsApp');
+    }
     state.billingBatches = updateBatchTemporalStatuses(state.billingBatches || []);
     syncDriverPayrolls(state);
     const saved = await saveManagement(state);
-    const allowed = await getAllowedGroupIds();
     const visible = selectedGroupBillingView({
       profiles: saved.billingProfiles,
       batches: saved.billingBatches,
