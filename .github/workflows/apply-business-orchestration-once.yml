@@ -38,8 +38,13 @@ jobs:
               if start < 0:
                   raise SystemExit(f'bloco {label} não encontrado')
               s = s[:start] + s[end:]
+          old = "${(item.groupIds||[]).includes(g.id)?'checked':''}"
+          new = """${'${(item.groupIds||[]).includes(g.id)?"checked":""}'}"""
+          if old not in s:
+              raise SystemExit('interpolação de grupos não encontrada')
+          s = s.replace(old, new, 1)
           p.write_text(s)
-          print('Aplicador preparado para a estrutura atual da autorização.')
+          print('Aplicador preparado para a estrutura atual e HTML de seguradoras.')
           PY
 
       - name: Aplicar orquestração operacional
@@ -49,14 +54,13 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import textwrap
           p = Path('tools/vercel-whatsapp-worker.mjs')
           s = p.read_text()
           start = s.index('async function handleAuthorizationRuntime(')
           end = s.index('async function handleScheduledRuntime(', start)
-          replacement = r'''async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
+          replacement = textwrap.dedent(r'''async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
             const call = context.recentCall;
-
-            // Uma autorização repetida do mesmo chamado não consome uma nova vaga.
             if (call && isFlowActiveCall(call)) {
               const repeated = await recordDispatchInManagement({
                 groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
@@ -67,18 +71,15 @@ jobs:
               await replyAndRemember(msg, groupName, readableText, 'Autorização já registrada neste atendimento ✅', { intent: 'authorization-repeat', callId: call.id });
               return;
             }
-
             if (!call) {
               await replyAndRemember(msg, groupName, readableText, 'Recebi a autorização, mas ainda faltam os dados do atendimento. Envie origem, destino e veículo para vincular corretamente.', { intent: 'authorization-without-call' });
               return;
             }
-
             const capacity = capacitySnapshot(context.management);
             if (!capacity.canAccept) {
               await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
               return;
             }
-
             const targetAddress = call?.origin || context.facts.origin || null;
             const targetCoordinates = call?.originCoordinates || incomingLocation || null;
             const arrival = await estimateSecondCallArrival({ management: context.management, targetAddress, targetCoordinates });
@@ -115,10 +116,7 @@ jobs:
             });
           }
 
-          '''
-          # Remove indentação extra do heredoc Python mantendo o JS legível.
-          import textwrap
-          replacement = textwrap.dedent(replacement)
+          ''')
           p.write_text(s[:start] + replacement + s[end:])
           print('Autorização/fila atualizada para até duas corridas.')
           PY
