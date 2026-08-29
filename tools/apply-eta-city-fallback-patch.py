@@ -1,0 +1,59 @@
+from pathlib import Path
+
+p = Path('tools/vercel-whatsapp-worker.mjs')
+s = p.read_text()
+
+old = """  if (parts.district && parts.city) {
+    const areaQuery = [parts.district, `${parts.city} - ${parts.state || configuredServiceState}`, 'Brasil'].filter(Boolean).join(', ');
+    const expectedArea = { city: parts.city, state: parts.state || configuredServiceState };
+    let area = await nominatimLookup({ q: areaQuery }, expectedArea).catch(() => null);
+    if (!area) area = await photonLookup(areaQuery, expectedArea);
+    if (area) return save({ ...area, approximate: true, approximateLevel: 'district' }, 'district-fallback');
+  }
+
+  logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });"""
+new = """  if (parts.district && parts.city) {
+    const areaQuery = [parts.district, `${parts.city} - ${parts.state || configuredServiceState}`, 'Brasil'].filter(Boolean).join(', ');
+    const expectedArea = { city: parts.city, state: parts.state || configuredServiceState };
+    let area = await nominatimLookup({ q: areaQuery }, expectedArea).catch(() => null);
+    if (!area) area = await photonLookup(areaQuery, expectedArea);
+    if (area) return save({ ...area, approximate: true, approximateLevel: 'district' }, 'district-fallback');
+  }
+
+  // Último fallback seguro: se a central informou cidade/UF, entrega uma prévia
+  // aproximada pelo município. É preferível informar claramente uma aproximação
+  // a omitir o ETA e responder apenas o valor.
+  const fallbackCity = parts.city || preferredRmbhCity(query);
+  if (fallbackCity) {
+    const cityQuery = [`${fallbackCity} - ${parts.state || configuredServiceState}`, 'Brasil'].filter(Boolean).join(', ');
+    const expectedCity = { city: fallbackCity, state: parts.state || configuredServiceState };
+    let cityPoint = await nominatimLookup({ q: cityQuery }, expectedCity).catch(() => null);
+    if (!cityPoint) cityPoint = await photonLookup(cityQuery, expectedCity);
+    if (cityPoint) return save({ ...cityPoint, approximate: true, approximateLevel: 'city' }, 'city-fallback');
+  }
+
+  logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });"""
+if s.count(old) != 1:
+    raise SystemExit(f'city fallback anchor: expected 1 got {s.count(old)}')
+s = s.replace(old, new, 1)
+
+old2 = """  const lines = [];
+  if (asksAvailability(readableText)) lines.push('Disponível ✅');
+  if (route.eta && formatEtaReply(route.eta, false)) lines.push(formatEtaReply(route.eta, false));
+  if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
+  if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);"""
+new2 = """  const lines = [];
+  if (asksAvailability(readableText)) lines.push('Disponível ✅');
+  if (route.eta && formatEtaReply(route.eta, false)) lines.push(formatEtaReply(route.eta, false));
+  else if (route.originAddress || route.originCoordinates) lines.push('Não consegui localizar a origem com precisão suficiente para calcular a prévia. Envie a localização do WhatsApp ou confirme a cidade/UF.');
+  if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`${route.eta?.approximate ? 'Distância aproximada até a origem' : 'Distância até a origem'}: ${route.eta.distanceKm} km.`);
+  if (route.estimatedTotalKm != null) {
+    const approximateRoute = Boolean(route.fullRoute?.origin?.approximate || route.fullRoute?.destination?.approximate);
+    lines.push(`${approximateRoute ? 'Percurso aproximado do atendimento' : 'Percurso estimado do atendimento'}: ${route.estimatedTotalKm} km.`);
+  }"""
+if s.count(old2) != 1:
+    raise SystemExit(f'quote reply anchor: expected 1 got {s.count(old2)}')
+s = s.replace(old2, new2, 1)
+
+p.write_text(s)
+print('ETA_CITY_FALLBACK_PATCH_OK')
