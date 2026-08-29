@@ -1,3 +1,4 @@
+# Reexecução explícita após criação do workflow
 name: Apply ETA city fallback once
 
 on:
