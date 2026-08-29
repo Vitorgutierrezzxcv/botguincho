@@ -2121,6 +2121,18 @@ async function geocodeAddress(address) {
     if (area) return save({ ...area, approximate: true, approximateLevel: 'district' }, 'district-fallback');
   }
 
+  // Último fallback seguro: se a central informou cidade/UF, entrega uma prévia
+  // aproximada pelo município. É preferível informar claramente uma aproximação
+  // a omitir o ETA e responder apenas o valor.
+  const fallbackCity = parts.city || preferredRmbhCity(query);
+  if (fallbackCity) {
+    const cityQuery = [`${fallbackCity} - ${parts.state || configuredServiceState}`, 'Brasil'].filter(Boolean).join(', ');
+    const expectedCity = { city: fallbackCity, state: parts.state || configuredServiceState };
+    let cityPoint = await nominatimLookup({ q: cityQuery }, expectedCity).catch(() => null);
+    if (!cityPoint) cityPoint = await photonLookup(cityQuery, expectedCity);
+    if (cityPoint) return save({ ...cityPoint, approximate: true, approximateLevel: 'city' }, 'city-fallback');
+  }
+
   logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });
   return null;
 }
@@ -3380,8 +3392,12 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
   const lines = [];
   if (asksAvailability(readableText)) lines.push('Disponível ✅');
   if (route.eta && formatEtaReply(route.eta, false)) lines.push(formatEtaReply(route.eta, false));
-  if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`Distância até a origem: ${route.eta.distanceKm} km.`);
-  if (route.estimatedTotalKm != null) lines.push(`Percurso estimado do atendimento: ${route.estimatedTotalKm} km.`);
+  else if (route.originAddress || route.originCoordinates) lines.push('Não consegui localizar a origem com precisão suficiente para calcular a prévia. Envie a localização do WhatsApp ou confirme a cidade/UF.');
+  if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`${route.eta?.approximate ? 'Distância aproximada até a origem' : 'Distância até a origem'}: ${route.eta.distanceKm} km.`);
+  if (route.estimatedTotalKm != null) {
+    const approximateRoute = Boolean(route.fullRoute?.origin?.approximate || route.fullRoute?.destination?.approximate);
+    lines.push(`${approximateRoute ? 'Percurso aproximado do atendimento' : 'Percurso estimado do atendimento'}: ${route.estimatedTotalKm} km.`);
+  }
   if (commercial.status === 'ok' && commercial.calculatedAmount != null) {
     lines.push(`Valor estimado: R$ ${Number(commercial.calculatedAmount).toFixed(2).replace('.', ',')}.`);
     lines.push('O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.');
