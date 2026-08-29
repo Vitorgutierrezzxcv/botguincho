@@ -2,9 +2,10 @@ name: Apply ETA no-number fix once
 
 on:
   push:
-    branches: [fix/eta-sem-numero-20260829]
+    branches:
+      - "fix/eta-sem-numero-20260829"
     paths:
-      - '.github/workflows/apply-eta-no-number-once.yml'
+      - ".github/workflows/apply-eta-no-number-once.yml"
 
 permissions:
   contents: write
@@ -16,140 +17,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/eta-sem-numero-20260829
+          ref: "fix/eta-sem-numero-20260829"
           fetch-depth: 0
-
-      - name: Apply exact production patch
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('tools/vercel-whatsapp-worker.mjs')
-          s = p.read_text()
-
-          def once(old, new, label):
-              global s
-              count = s.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected 1 match, got {count}')
-              s = s.replace(old, new, 1)
-
-          once(
-              "import { historicalTrainingStats } from './training-runtime-index.mjs';\n",
-              "import { historicalTrainingStats } from './training-runtime-index.mjs';\nimport { normalizeAddressInput } from './address-normalization.mjs';\n",
-              'address import'
-          )
-
-          once(
-'''function cleanAddressQuery(value = '') {
-  return String(value)
-    // Remove apenas formatacao/rótulos administrativos da ficha; preserva o endereco.
-    .replace(/[*_~`]/g, '')
-    .replace(/\\b(?:BAIRRO|CIDADE|ESTADO|PA[IÍ]S|PAS)\\s*:\\s*/gi, '')
-    .replace(/\\bref\\.?\\s*:.*$/i, '')
-    .replace(/\\bn[º°]\\s*/gi, '')
-    .replace(/[?]+$/g, '')
-    .replace(/\\s+/g, ' ')
-    .replace(/\\s+[–—-]\\s+/g, ' - ')
-    .trim();
-}''',
-'''function cleanAddressQuery(value = '') {
-  return normalizeAddressInput(value);
-}''',
-              'cleanAddressQuery'
-          )
-
-          once(
-'''  for (const variant of buildLookupVariants(query)) {
-    const found = await photonLookup(variant, expectedLocation);
-    if (found) return save(found, 'photon-fallback');
-  }
-
-  logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });''',
-'''  for (const variant of buildLookupVariants(query)) {
-    const found = await photonLookup(variant, expectedLocation);
-    if (found) return save(found, 'photon-fallback');
-  }
-
-  // Fichas de assistência frequentemente chegam sem número ("nº -", "s/n").
-  // Se o logradouro exato não existir no geocoder, usa o bairro informado para
-  // entregar uma PREVIA APROXIMADA em vez de omitir o ETA por completo.
-  if (parts.district && parts.city) {
-    const areaQuery = [parts.district, `${parts.city} - ${parts.state || configuredServiceState}`, 'Brasil'].filter(Boolean).join(', ');
-    const expectedArea = { city: parts.city, state: parts.state || configuredServiceState };
-    let area = await nominatimLookup({ q: areaQuery }, expectedArea).catch(() => null);
-    if (!area) area = await photonLookup(areaQuery, expectedArea);
-    if (area) return save({ ...area, approximate: true, approximateLevel: 'district' }, 'district-fallback');
-  }
-
-  logEvent('warning', 'Endereco nao geocodificado apos todos os fallbacks.', { query, parts });''',
-              'district fallback'
-          )
-
-          once(
-'''  return {
-    ...route,
-    trackerAddress: reading.address || null,
-    trackerPlate: reading.plate || null,
-    targetAddress: targetAddress || null,
-  };''',
-'''  return {
-    ...route,
-    trackerAddress: reading.address || null,
-    trackerPlate: reading.plate || null,
-    targetAddress: targetAddress || null,
-    approximate: Boolean(destination?.approximate),
-    approximateLevel: destination?.approximateLevel || null,
-  };''',
-              'eta approximate propagation'
-          )
-
-          once(
-'''    origin: { address: originAddress || origin.displayName || '', latitude: origin.latitude, longitude: origin.longitude },
-    destination: { address: destinationAddress, latitude: destination.latitude, longitude: destination.longitude },''',
-'''    origin: { address: originAddress || origin.displayName || '', latitude: origin.latitude, longitude: origin.longitude, approximate: Boolean(origin.approximate), approximateLevel: origin.approximateLevel || null },
-    destination: { address: destinationAddress, latitude: destination.latitude, longitude: destination.longitude, approximate: Boolean(destination.approximate), approximateLevel: destination.approximateLevel || null },''',
-              'full route approximate propagation'
-          )
-
-          once(
-'''      eta = {
-        minutes: fullRoute.legToOrigin?.minutes ?? null,
-        rawMinutes: fullRoute.legToOrigin?.minutes ?? null,
-        distanceKm: fullRoute.legToOrigin?.km ?? null,''',
-'''      eta = {
-        minutes: fullRoute.legToOrigin?.minutes ?? null,
-        rawMinutes: fullRoute.legToOrigin?.minutes ?? null,
-        distanceKm: fullRoute.legToOrigin?.km ?? null,
-        approximate: Boolean(fullRoute.origin?.approximate),
-        approximateLevel: fullRoute.origin?.approximateLevel || null,''',
-              'quote eta approximate propagation'
-          )
-
-          once(
-'''  const etaLine = `Previsão de chegada: ${minutes} min.`;''',
-'''  const etaLine = `${eta?.approximate ? 'Previsão aproximada de chegada' : 'Previsão de chegada'}: ${minutes} min.`;''',
-              'eta wording'
-          )
-
-          p.write_text(s)
-          PY
-
-      - name: Test exact failing address and regressions
-        run: |
-          set -euo pipefail
-          node tools/test-address-normalization.mjs
-          node --check tools/vercel-whatsapp-worker.mjs
-          node tools/test-operating-hours.mjs
-          node tools/test-cancellation-policy.mjs
-          node tools/test-worked-time-policy.mjs
-          node tools/test-driver-payroll.mjs
-
-      - name: Commit validated patch and remove temporary workflow
+      - run: python3 tools/apply-eta-no-number-patch.py
+      - run: node tools/test-address-normalization.mjs
+      - run: node --check tools/vercel-whatsapp-worker.mjs
+      - run: node tools/test-operating-hours.mjs
+      - run: node tools/test-cancellation-policy.mjs
+      - run: node tools/test-worked-time-policy.mjs
+      - run: node tools/test-driver-payroll.mjs
+      - name: Commit validated patch
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f .github/workflows/apply-eta-no-number-once.yml
-          git add tools/vercel-whatsapp-worker.mjs tools/address-normalization.mjs tools/test-address-normalization.mjs .github/workflows/apply-eta-no-number-once.yml
+          rm -f .github/workflows/apply-eta-no-number-once.yml tools/apply-eta-no-number-patch.py
+          git add -A
           git commit -m "fix: garante previa para enderecos sem numero"
           git push origin HEAD:fix/eta-sem-numero-20260829
