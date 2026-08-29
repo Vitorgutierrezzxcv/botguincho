@@ -1,27 +1,62 @@
-import { isTestCall } from './test-center.mjs';
+import { isTestCall, isTestGroupName } from './test-center.mjs';
 
 export const MAX_CONCURRENT_CALLS = 2;
 export const ACTIVE_CAPACITY_STATUSES = new Set(['autorizado', 'a_caminho', 'em_atendimento']);
+const TEST_SANDBOX_TIMEZONE = 'America/Sao_Paulo';
 
 function timestamp(value) {
   const time = new Date(value || 0).getTime();
   return Number.isFinite(time) ? time : 0;
 }
 
-export function isCapacityActiveCall(call = {}) {
-  // Simulações da Central de Testes nunca podem consumir vagas da operação real.
-  if (isTestCall(call)) return false;
+function brazilDayKey(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TEST_SANDBOX_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  return year && month && day ? `${year}-${month}-${day}` : '';
+}
+
+function isAutomatedTestCenterCall(call = {}) {
+  return call?.testMode === true && Boolean(String(call?.testRunId || '').trim());
+}
+
+function isCurrentManualTestCall(call = {}, now = new Date()) {
+  const groupName = call?.groupName || call?.insurer || call?.client || '';
+  if (!isTestGroupName(groupName) || isAutomatedTestCenterCall(call)) return false;
+  const referenceAt = call?.authorizedAt || call?.routeCapturedAt || call?.createdAt;
+  const callDay = brazilDayKey(referenceAt);
+  return Boolean(callDay) && callDay === brazilDayKey(now);
+}
+
+export function isCapacityActiveCall(call = {}, now = new Date()) {
+  // A Central de Testes automatizada nao pode consumir vagas da operacao.
+  if (isAutomatedTestCenterCall(call)) return false;
+
+  // Mensagens enviadas manualmente no grupo "Tests guincho" precisam obedecer
+  // exatamente as mesmas regras de capacidade da producao. Como esse grupo e um
+  // sandbox persistente, testes manuais de dias anteriores nao podem bloquear o
+  // teste atual. O sandbox manual reinicia a capacidade a cada dia em Sao Paulo.
+  if (isTestCall(call) && !isCurrentManualTestCall(call, now)) return false;
+
   return ACTIVE_CAPACITY_STATUSES.has(String(call?.status || '').toLowerCase());
 }
 
-export function activeCallsForCapacity(state = {}, excludeCallId = '') {
+export function activeCallsForCapacity(state = {}, excludeCallId = '', now = new Date()) {
   return (Array.isArray(state?.calls) ? state.calls : [])
-    .filter((call) => isCapacityActiveCall(call) && (!excludeCallId || call.id !== excludeCallId))
+    .filter((call) => isCapacityActiveCall(call, now) && (!excludeCallId || call.id !== excludeCallId))
     .sort((a, b) => timestamp(a.authorizedAt || a.routeCapturedAt || a.createdAt) - timestamp(b.authorizedAt || b.routeCapturedAt || b.createdAt));
 }
 
-export function capacitySnapshot(state = {}, excludeCallId = '') {
-  const activeCalls = activeCallsForCapacity(state, excludeCallId);
+export function capacitySnapshot(state = {}, excludeCallId = '', now = new Date()) {
+  const activeCalls = activeCallsForCapacity(state, excludeCallId, now);
   return {
     maxConcurrentCalls: MAX_CONCURRENT_CALLS,
     activeCount: activeCalls.length,
