@@ -1,3 +1,4 @@
 deploy full training memory 2026-09-01T04:08:30Z
 readonly training import enabled
 real groups remain unselected
+fix test close 2026-09-01T16:51:00Z
