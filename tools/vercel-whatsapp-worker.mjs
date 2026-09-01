@@ -890,7 +890,8 @@ async function closeCallFromOwner(state, body = {}) {
   const index = state.calls.findIndex((item) => item.id === callId);
   if (index < 0) throw new Error('call_not_found');
   const call = state.calls[index];
-  if (isTestCall(call)) throw new Error('test_call_cannot_be_closed');
+  // Corridas do grupo de testes também podem ser fechadas pelo dono para validar o fluxo completo.
+  // A proteção de envio ao WhatsApp continua abaixo com !isTestCall(next).
   if (!(call.authorizedAt || isConfirmedCall(call) || call.cancellationChargeRequired === true)) throw new Error('call_not_authorized');
   const final = body.final || body.item || {};
   const billableKm = closingNumber(final.billableKm, closingNumber(call.billableKm, closingNumber(call.totalKm, call.estimatedTotalKm)));
