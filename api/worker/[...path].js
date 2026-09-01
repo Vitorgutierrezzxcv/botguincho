@@ -166,7 +166,7 @@ async function syncTrainingGroup(groupId, { importFirst = true } = {}) {
   if (importFirst) {
     imported = await externalWorkerFetch('/api/learning/import-history', {
       method: 'POST',
-      body: JSON.stringify({ groupId, limit: 'all' }),
+      body: JSON.stringify({ groupId, limit: 10000 }),
       timeoutMs: 50000,
     });
   }
