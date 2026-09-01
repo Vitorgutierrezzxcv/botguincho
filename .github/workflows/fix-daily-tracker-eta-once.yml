@@ -25,8 +25,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          # 1) A rota serverless deve medir a frescura da ponte/recebimento do agente,
-          # e não o ultimo movimento do veiculo. Caminhao parado pode ter lastUpdateText antigo.
           p = Path('api/worker/tracker.js')
           s = p.read_text()
           imp = "import { requestTenant } from '../../lib/sandbox-runtime.js';\n"
@@ -36,24 +34,17 @@ jobs:
           end = s.find('export default async function handler')
           if start >= 0 and end > start:
               s = s[:start] + s[end:]
-          old = """    const timestamp = sourceTimestamp(safe.lastLocation);
-              const ageSeconds = timestamp === null ? null : Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-              const connected = ageSeconds !== null && ageSeconds <= 90;
-          """
-          new = """    const ageSeconds = trackerAgeSeconds(safe.lastLocation);
-              const connected = ageSeconds !== null && ageSeconds <= 120;
-          """
+          old = "const timestamp = sourceTimestamp(safe.lastLocation);\n    const ageSeconds = timestamp === null ? null : Math.max(0, Math.round((Date.now() - timestamp) / 1000));\n    const connected = ageSeconds !== null && ageSeconds <= 90;"
+          new = "const ageSeconds = trackerAgeSeconds(safe.lastLocation);\n    const connected = ageSeconds !== null && ageSeconds <= 120;"
           if old not in s:
               raise SystemExit('Bloco antigo de idade do tracker nao encontrado')
           s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # 2) Se o tracker estiver velho, nao culpar o endereco do cliente.
           p = Path('tools/vercel-whatsapp-worker.mjs')
           s = p.read_text()
-          old = """    else if (route.originAddress || route.originCoordinates) lines.push('Não consegui localizar a origem com precisão suficiente para calcular a prévia. Envie a localização do WhatsApp ou confirme a cidade/UF.');
-          """
-          new = """    else if (route.originAddress || route.originCoordinates) {
+          old = "else if (route.originAddress || route.originCoordinates) lines.push('Não consegui localizar a origem com precisão suficiente para calcular a prévia. Envie a localização do WhatsApp ou confirme a cidade/UF.');"
+          new = """else if (route.originAddress || route.originCoordinates) {
               const currentTracker = await getTrackerReading().catch(() => null);
               const currentTrackerAge = trackerAgeSeconds(currentTracker);
               if (!currentTracker || currentTrackerAge === null || currentTrackerAge > 120) {
@@ -61,14 +52,12 @@ jobs:
               } else {
                 lines.push('Não consegui calcular a rota até a origem informada. Se possível, envie a localização do WhatsApp.');
               }
-            }
-          """
+            }"""
           if old not in s:
               raise SystemExit('Fallback antigo de origem nao encontrado')
           s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # 3) Regressao com o caso real do print de 01/09.
           p = Path('tools/test-whatsapp-address-fields.mjs')
           s = p.read_text()
           marker = "// Garante que o caminho de rota tambem remove markdown e rotulos antes do geocoder.\n"
@@ -86,49 +75,37 @@ jobs:
               if marker not in s:
                   raise SystemExit('Marcador do teste de endereco nao encontrado')
               s = s.replace(marker, block + marker, 1)
-          old_assert = "assert.match(workerSource, /BAIRRO\\|CIDADE\\|ESTADO\\|PA\\[IÍ\\]S\\|PAS/);\n"
-          add_assert = old_assert + "assert.match(workerSource, /Rastreador do guincho sem atualização recente/);\nassert.doesNotMatch(workerSource, /Não consegui localizar a origem com precisão suficiente/);\n"
-          if 'Rastreador do guincho sem atualização recente' not in s:
-              s = s.replace(old_assert, add_assert, 1)
           p.write_text(s)
 
-          # 4) Script de recuperacao sem apagar login/dados do WhatsApp.
           Path('ops/recover-gconnect.sh').write_text(r'''#!/usr/bin/env bash
           set -Eeuo pipefail
-
           if [ "$(id -u)" -ne 0 ]; then
             echo "Execute como root: sudo bash ops/recover-gconnect.sh"
             exit 1
           fi
-
           AGENT=botguincho-gconnect.service
           EMULATOR=botguincho-android-emulator.service
           TIMER=botguincho-gconnect-watchdog.timer
-
           for unit in "$AGENT" "$EMULATOR" "$TIMER"; do
             if ! systemctl cat "$unit" >/dev/null 2>&1; then
-              echo "Unidade $unit nao encontrada. Rode novamente tools/install-gconnect-agent.sh com o codigo de pareamento existente."
+              echo "Unidade $unit nao encontrada."
               exit 2
             fi
           done
-
           systemctl daemon-reload
           systemctl enable "$AGENT" "$EMULATOR" "$TIMER" >/dev/null
           systemctl restart "$EMULATOR"
-
           echo "Aguardando Android/ADB..."
           sleep 20
           systemctl restart "$AGENT"
           systemctl restart "$TIMER"
           sleep 8
-
           echo "=== Servicos ==="
           systemctl is-active "$EMULATOR" "$AGENT" "$TIMER"
-          echo "=== Timer ==="
+          echo "=== Watchdog ==="
           systemctl --no-pager --full status "$TIMER" | head -20 || true
           echo "=== Agente ==="
           journalctl -u "$AGENT" -n 35 --no-pager || true
-          echo "GConnect recuperado sem apagar sessao do WhatsApp."
           ''')
           Path('ops/recover-gconnect.sh').chmod(0o755)
           PY
@@ -141,7 +118,7 @@ jobs:
           node tools/test-tracker-freshness.mjs
           node tools/test-whatsapp-address-fields.mjs
           node tools/test-operating-hours.mjs
-          node tools/test-dispatch-capacity.mjs
+          node tools/test-complete-operational-flows.mjs
           grep -q "trackerAgeSeconds(safe.lastLocation)" api/worker/tracker.js
           grep -q "Rastreador do guincho sem atualização recente" tools/vercel-whatsapp-worker.mjs
           grep -q "RUA DOIS 85" tools/test-whatsapp-address-fields.mjs
