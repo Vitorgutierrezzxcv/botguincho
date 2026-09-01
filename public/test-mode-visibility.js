@@ -62,6 +62,12 @@
       let financeCard = document.getElementById('testModeFinancePanel');
       if (!financeCard) { financeCard = document.createElement('div'); financeCard.id = 'testModeFinancePanel'; financeCard.className = 'card section test-mode-card'; financePage.prepend(financeCard); }
       financeCard.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">FINANCEIRO DE TESTE</div><h3>Simulação das corridas do Tests guincho</h3><p>Calculado com as mesmas regras da operação, mas isolado do financeiro oficial.</p></div><span class="test-mode-badge">NÃO É COBRANÇA REAL</span></div><div class="test-mode-metrics"><div class="test-mode-metric"><span>Corridas aceitas</span><b>${acceptedCalls.length}</b></div><div class="test-mode-metric"><span>Faturamento simulado</span><b>${money(simulatedRevenue)}</b></div><div class="test-mode-metric"><span>Pagamento Mauro</span><b>${money(simulatedDriver)}</b></div></div>`;
+      const persistedTestFinance = Array.isArray(mgmt?.testFinance) ? mgmt.testFinance : [];
+      const financeByCall = new Map();
+      for (const c of calls.filter((item) => item?.ownerClosedAt || item?.status === 'concluido')) financeByCall.set(c.id, { sourceCallId:c.id, description:`[TESTE] ${c.vehicle || 'Corrida'} · ${c.groupName || c.insurer || 'Tests guincho'}`, amount:simulatedRevenueForCall(c), billableKm:num(c.billableKm ?? c.totalKm), updatedAt:c.ownerClosedAt || c.completedAt || c.updatedAt, testMode:true });
+      for (const entry of persistedTestFinance) financeByCall.set(entry.sourceCallId || entry.id, entry);
+      const testFinanceRows = [...financeByCall.values()].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0));
+      if (testFinanceRows.length) financeCard.insertAdjacentHTML('beforeend', `<div class="test-mode-list test-finance-detail-list">${testFinanceRows.slice(0,20).map(f=>`<div class="test-mode-row"><div><b>${esc(f.description || '[TESTE] Corrida concluída')}</b><small>Fechado em ${stamp(f.updatedAt)}</small><div class="test-mode-route">${num(f.billableKm).toLocaleString('pt-BR',{maximumFractionDigits:1})} km · ${money(f.amount)}</div></div><span class="test-mode-status">TESTE · FECHADO</span></div>`).join('')}</div>`);
     }
     const callsPage = document.getElementById('calls');
     if (callsPage) {

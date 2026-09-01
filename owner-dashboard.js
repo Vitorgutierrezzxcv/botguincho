@@ -376,7 +376,7 @@
         const sent = d.data?.closeResult?.noticeSent;
         await refreshOwner();
         closeModal();
-        alert(testClosure ? 'Corrida de teste concluída ✅ Os dados foram processados e ela saiu dos atendimentos em aberto.' : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));
+        alert(testClosure ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o resumo. Confira o grupo.') : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));
       } catch (error) {
         if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }
         throw error;

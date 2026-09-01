@@ -750,6 +750,43 @@ function confirmedFinanceAmount(item = {}) {
   return candidates[0] || 0;
 }
 
+function ensureTestFinanceTracking(state, item, { finalized = false } = {}) {
+  if (!item || !isTestCall(item)) return null;
+  if (!Array.isArray(state.finance)) state.finance = [];
+  const amount = confirmedFinanceAmount(item);
+  const now = new Date().toISOString();
+  let entry = state.finance.find((candidate) => candidate.sourceCallId === item.id && candidate.type === 'receita' && candidate.testMode === true);
+  const effectiveFinal = finalized === true || isOwnerFinalizedCall(item) || entry?.isFinal === true;
+  const patch = {
+    description: `[TESTE] Corrida ${effectiveFinal ? 'fechada' : 'aberta'} · ${item.groupName || item.insurer || item.client || 'Tests guincho'} · ${item.vehicle || 'Veículo'}`,
+    category: 'Financeiro de teste',
+    amount,
+    type: 'receita',
+    status: 'pendente',
+    financialStage: effectiveFinal ? 'faturado' : 'previsto',
+    isFinal: effectiveFinal,
+    needsValueReview: !(amount > 0),
+    dueDate: null,
+    client: item.client || item.insurer || item.groupName || 'Tests guincho',
+    insurer: item.insurer || item.client || item.groupName || 'Tests guincho',
+    insurerId: item.insurerId || '',
+    groupId: item.sourceGroupId || '',
+    groupName: item.groupName || 'Tests guincho',
+    protocol: item.protocol || '',
+    sourceCallId: item.id,
+    billableKm: Number(item.billableKm ?? item.totalKm ?? item.estimatedTotalKm ?? 0),
+    source: 'test_close',
+    testMode: true,
+    updatedAt: now,
+  };
+  if (entry) Object.assign(entry, patch);
+  else {
+    entry = { id: crypto.randomUUID(), ...patch, createdAt: now };
+    state.finance.unshift(entry);
+  }
+  return entry;
+}
+
 function ensureConfirmedFinanceTracking(state, item, { finalized = false } = {}) {
   if (!item || item?.historicalImport === true || isTestCall(item) || !managementAutomationEnabled(state, 'auto-finance')) return null;
   const amount = confirmedFinanceAmount(item);
@@ -961,18 +998,22 @@ async function closeCallFromOwner(state, body = {}) {
     }),
   };
   state.calls[index] = next;
-  ensureConfirmedFinanceTracking(state, next, { finalized: true });
+  if (isTestCall(next)) ensureTestFinanceTracking(state, next, { finalized: true });
+  else ensureConfirmedFinanceTracking(state, next, { finalized: true });
   syncDriverPayrolls(state);
   await saveManagement(state);
   await promoteQueuedCallAfter(next.id);
   let noticeSent = false;
-  if (waClient && waStatus === 'pronto' && next.sourceGroupId && !isTestCall(next)) {
+  const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');
+  if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {
     try {
       const message = finalGroupMessage(next);
       botReplyFingerprints.set(`${next.sourceGroupId}|${normalizeForIntent(message)}`, Date.now());
       await waClient.sendMessage(next.sourceGroupId, message);
       noticeSent = true;
-      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm });
+      next.ownerCloseNoticeSentAt = new Date().toISOString();
+      await saveManagement(state);
+      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });
     } catch (error) {
       logEvent('warning', 'Corrida fechada, mas não foi possível enviar o resumo final ao grupo.', { callId: next.id, error: String(error) });
     }
@@ -4966,12 +5007,15 @@ app.get('/api/management', async (req, res) => {
     const allCalls = data.calls || [];
     const calls = allCalls.filter((item) => !isTestCall(item));
     const testCalls = allCalls.filter((item) => isTestCall(item));
+    const allFinance = data.finance || [];
+    const finance = allFinance.filter((item) => item?.testMode !== true);
+    const testFinance = allFinance.filter((item) => item?.testMode === true);
     const filters = { from: String(req.query.from || ''), to: String(req.query.to || ''), groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || '') };
     return res.json({
       ok: true,
-      data: { ...data, calls, testCalls },
+      data: { ...data, calls, testCalls, finance, testFinance },
       quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),
-      periodReport: buildPeriodReport({ ...data, calls }, filters),
+      periodReport: buildPeriodReport({ ...data, calls, finance }, filters),
       testSummary: {
         total: testCalls.length,
         quotes: testCalls.filter((item) => item.quoteTracked === true || ['cotacao','aguardando_dados','aguardando_aprovacao'].includes(item.status)).length,
@@ -5220,8 +5264,8 @@ app.get('/api/billing', async (_req, res) => {
     const visible = selectedGroupBillingView({
       profiles: saved.billingProfiles,
       batches: saved.billingBatches,
-      finance: saved.finance,
-      calls: saved.calls,
+      finance: (saved.finance || []).filter((entry) => entry?.testMode !== true),
+      calls: (saved.calls || []).filter((call) => !isTestCall(call)),
       historicalImports: saved.historicalImports,
     }, allowed);
     const settings = await getSettings();

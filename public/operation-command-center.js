@@ -121,7 +121,10 @@
     const call = findCall(id); if (!call) return alert('Corrida não encontrada. Atualize a tela e tente novamente.');
     openModal('Conferir e concluir corrida', commandForm(call, true), async () => {
       const { data, item } = readCommandForm(call);
-      const response = await api('/api/worker/management', { method:'POST', body: JSON.stringify({
+      const saveButton = document.getElementById('modalSave');
+      if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Concluindo...'; }
+      try {
+        const response = await api('/api/worker/management', { method:'POST', body: JSON.stringify({
         action:'close_call', callId:id, ownerName:'Thiago', final:{
           billableKm:item.billableKm, value:item.value,
           workedTimeChargedHours:item.workedTimeChargedHours, workedTimeAmount:item.workedTimeAmount,
@@ -132,8 +135,15 @@
       await loadManagement();
       if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
       renderManagement();
-      const sent = response?.data?.closeResult?.noticeSent;
-      alert(sent ? 'Corrida concluída. Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. Confira o grupo do WhatsApp para confirmar o envio do resumo.');
+        const sent = response?.data?.closeResult?.noticeSent;
+        closeModal();
+        alert(isTestCall(call)
+          ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o envio do resumo. Confira o grupo.')
+          : (sent ? 'Corrida concluída ✅ Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. O WhatsApp não confirmou o resumo; confira o grupo.'));
+      } catch (error) {
+        if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }
+        throw error;
+      }
     });
     const save = document.getElementById('modalSave'); if (save) save.textContent = 'Concluir corrida';
   };
