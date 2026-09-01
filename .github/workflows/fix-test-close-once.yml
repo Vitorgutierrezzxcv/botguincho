@@ -1,0 +1,76 @@
+name: Fix test close once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-test-close-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Allow owner close for test calls
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          worker = Path('tools/vercel-whatsapp-worker.mjs')
+          text = worker.read_text()
+          guard = "  if (isTestCall(call)) throw new Error('test_call_cannot_be_closed');\n"
+          if text.count(guard) != 1:
+              raise SystemExit(f'expected one test close guard, found {text.count(guard)}')
+          text = text.replace(
+              guard,
+              "  // Corridas do grupo de testes também podem ser fechadas pelo dono para validar o fluxo completo.\n"
+              "  // A proteção de envio ao WhatsApp continua abaixo com !isTestCall(next).\n",
+              1,
+          )
+          worker.write_text(text)
+
+          for name in ['owner-dashboard.js', 'public/owner-dashboard.js']:
+              path = Path(name)
+              js = path.read_text()
+              old = "    const call = (mgmt.calls || []).find((x) => x.id === id); if (!call) return;\n    openModal('Conferir e fechar corrida'"
+              new = "    const call = (mgmt.calls || []).find((x) => x.id === id); if (!call) return;\n    const testClosure = call?.testMode === true || /^tests?\\s+guincho$/i.test(String(call.insurer || call.client || call.groupName || '').trim());\n    openModal('Conferir e fechar corrida'"
+              if old not in js:
+                  raise SystemExit(f'ownerCloseCall header not found in {name}')
+              js = js.replace(old, new, 1)
+
+              old_alert = "      const sent = d.data?.closeResult?.noticeSent;\n      await refreshOwner(); alert(sent ? 'Corrida fechada e resumo enviado ao grupo.' : 'Corrida fechada. O WhatsApp não confirmou o envio do resumo; confira o grupo.');"
+              new_alert = "      const sent = d.data?.closeResult?.noticeSent;\n      await refreshOwner();\n      alert(testClosure ? 'Corrida de teste concluída. Valores, KM e fechamento foram processados; o resumo não é enviado ao grupo de teste.' : (sent ? 'Corrida fechada e resumo enviado ao grupo.' : 'Corrida fechada. O WhatsApp não confirmou o envio do resumo; confira o grupo.'));"
+              if old_alert not in js:
+                  raise SystemExit(f'ownerCloseCall alert not found in {name}')
+              js = js.replace(old_alert, new_alert, 1)
+              path.write_text(js)
+          PY
+
+      - name: Validate patch
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check owner-dashboard.js
+          node --check public/owner-dashboard.js
+          ! grep -q "test_call_cannot_be_closed" tools/vercel-whatsapp-worker.mjs
+          grep -q "!isTestCall(next)" tools/vercel-whatsapp-worker.mjs
+          grep -q "Corrida de teste concluída" owner-dashboard.js
+          grep -q "Corrida de teste concluída" public/owner-dashboard.js
+          echo TEST_CLOSE_PATCH_OK
+
+      - name: Commit fix
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs owner-dashboard.js public/owner-dashboard.js
+          git commit -m "Permite concluir corridas de teste no painel"
+          git push
