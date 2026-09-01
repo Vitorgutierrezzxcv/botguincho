@@ -1,0 +1,42 @@
+name: Activate configured operating hours once
+
+on:
+  push:
+    branches: [fix/owner-runtime-schedule]
+    paths:
+      - '.github/workflows/activate-operating-hours-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE: https://botguincho.vercel.app
+      COMPANY: cliente-teste
+    steps:
+      - name: Activate saved schedule
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" \
+            -H 'content-type: application/json' \
+            --data '{"operatingHoursEnabled":true}' -o /tmp/saved.json
+          node -e "const x=require('/tmp/saved.json'); if(x.settings?.operatingHoursEnabled!==true) process.exit(1); console.log('OPERATING_HOURS_ENABLED')"
+      - name: Verify effective closed state and group isolation
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json
+          curl -fsS --max-time 30 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups.json
+          node <<'NODE'
+          const s=require('/tmp/status.json');
+          const g=require('/tmp/groups.json').groups||[];
+          const selected=g.filter(x=>x.selected);
+          if(s.operatingHours?.enabled!==true) throw new Error('hours not enabled');
+          if(s.operatingHours?.open!==false) throw new Error('expected current configured hours to be closed');
+          if(s.whatsapp?.status!=='pronto') throw new Error('whatsapp not ready');
+          if(selected.length!==1 || selected[0].name!=='Tests guincho') throw new Error('group isolation changed');
+          console.log('HOURS_CLOSED_NOW_AND_TEST_GROUP_ONLY');
+          NODE
