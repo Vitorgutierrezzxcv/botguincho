@@ -927,6 +927,7 @@ async function closeCallFromOwner(state, body = {}) {
   const index = state.calls.findIndex((item) => item.id === callId);
   if (index < 0) throw new Error('call_not_found');
   const call = state.calls[index];
+  if (call.deletedAt || call.status === 'excluido') throw new Error('call_deleted');
   // Fechamento idempotente: clique repetido não duplica timeline, financeiro ou repasse.
   if (call.ownerClosedAt) {
     return { call, noticeSent: false, driverPay: driverPayForCall(call), alreadyClosed: true };
@@ -1021,6 +1022,43 @@ async function closeCallFromOwner(state, body = {}) {
   return { call: next, noticeSent, driverPay: driverPayForCall(next) };
 }
 
+async function deleteCallFromOwner(state, body = {}) {
+  const callId = String(body.callId || body.id || '');
+  const index = (state.calls || []).findIndex((item) => item.id === callId);
+  if (index < 0) throw new Error('call_not_found');
+  const call = state.calls[index];
+  const now = new Date().toISOString();
+  const deletedBy = String(body.ownerName || body.deletedBy || 'Painel').trim().slice(0, 120) || 'Painel';
+  const testMode = isTestCall(call);
+
+  if (testMode) {
+    state.calls.splice(index, 1);
+    state.finance = (state.finance || []).filter((entry) => entry?.sourceCallId !== callId);
+  } else {
+    state.calls[index] = {
+      ...call,
+      status: 'excluido',
+      operationalPhase: 'excluido',
+      deletedAt: now,
+      deletedBy,
+      deletedPreviousStatus: call.status || null,
+      updatedAt: now,
+    };
+    state.finance = (state.finance || []).map((entry) => entry?.sourceCallId === callId
+      ? { ...entry, deletedAt: now, deletedBy, updatedAt: now }
+      : entry);
+  }
+
+  syncDriverPayrolls(state);
+  await saveManagement(state);
+  await promoteQueuedCallAfter(callId).catch(() => undefined);
+  logEvent('owner-delete', testMode
+    ? 'Corrida de teste excluída definitivamente pelo painel.'
+    : 'Corrida removida do painel e preservada para auditoria.',
+    { callId, deletedBy, testMode, hardDeleted: testMode });
+  return { callId, testMode, hardDeleted: testMode, deletedAt: now };
+}
+
 async function applyManagementAction(body = {}) {
   const state = await getManagement();
   const action = String(body.action || 'get');
@@ -1034,6 +1072,10 @@ async function applyManagementAction(body = {}) {
   if (action === 'close_call') {
     const result = await closeCallFromOwner(state, body);
     return { ...state, closeResult: result };
+  }
+  if (action === 'delete_call') {
+    const result = await deleteCallFromOwner(state, body);
+    return { ...state, deleteResult: result };
   }
 
   if (action === 'replace_company') {
@@ -1071,6 +1113,10 @@ async function applyManagementAction(body = {}) {
   }
   if (action === 'delete') {
     const id = String(body.id || '');
+    if (collection === 'calls') {
+      const result = await deleteCallFromOwner(state, { ...body, callId: id });
+      return { ...state, deleteResult: result };
+    }
     state[collection] = state[collection].filter((x) => x.id !== id);
     return saveManagement(state);
   }
@@ -5005,15 +5051,18 @@ app.get('/api/management', async (req, res) => {
   try {
     const data = await getManagement();
     const allCalls = data.calls || [];
-    const calls = allCalls.filter((item) => !isTestCall(item));
-    const testCalls = allCalls.filter((item) => isTestCall(item));
+    const deletedCalls = allCalls.filter((item) => Boolean(item?.deletedAt) || item?.status === 'excluido');
+    const visibleCalls = allCalls.filter((item) => !item?.deletedAt && item?.status !== 'excluido');
+    const calls = visibleCalls.filter((item) => !isTestCall(item));
+    const testCalls = visibleCalls.filter((item) => isTestCall(item));
     const allFinance = data.finance || [];
-    const finance = allFinance.filter((item) => item?.testMode !== true);
-    const testFinance = allFinance.filter((item) => item?.testMode === true);
+    const visibleFinance = allFinance.filter((item) => !item?.deletedAt);
+    const finance = visibleFinance.filter((item) => item?.testMode !== true);
+    const testFinance = visibleFinance.filter((item) => item?.testMode === true);
     const filters = { from: String(req.query.from || ''), to: String(req.query.to || ''), groupId: String(req.query.groupId || ''), insurerId: String(req.query.insurerId || '') };
     return res.json({
       ok: true,
-      data: { ...data, calls, testCalls, finance, testFinance },
+      data: { ...data, calls, testCalls, finance, testFinance, deletedCalls },
       quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),
       periodReport: buildPeriodReport({ ...data, calls, finance }, filters),
       testSummary: {
@@ -5264,8 +5313,8 @@ app.get('/api/billing', async (_req, res) => {
     const visible = selectedGroupBillingView({
       profiles: saved.billingProfiles,
       batches: saved.billingBatches,
-      finance: (saved.finance || []).filter((entry) => entry?.testMode !== true),
-      calls: (saved.calls || []).filter((call) => !isTestCall(call)),
+      finance: (saved.finance || []).filter((entry) => entry?.testMode !== true && !entry?.deletedAt),
+      calls: (saved.calls || []).filter((call) => !isTestCall(call) && !call?.deletedAt && call?.status !== 'excluido'),
       historicalImports: saved.historicalImports,
     }, allowed);
     const settings = await getSettings();
@@ -5348,7 +5397,8 @@ app.get('/api/billing/export', async (req, res) => {
       if (!batch) return res.status(404).send('Lote não encontrado');
       filters = { ...filters, from: batch.periodStart || filters.from, to: batch.periodEnd || filters.to, groupId: batch.groupId || filters.groupId };
     }
-    const { buffer, report } = buildPeriodWorkbook(state, filters);
+    const visibleReportState = { ...state, calls: (state.calls || []).filter((call) => !call?.deletedAt && call?.status !== 'excluido'), finance: (state.finance || []).filter((entry) => !entry?.deletedAt) };
+    const { buffer, report } = buildPeriodWorkbook(visibleReportState, filters);
     const suffix = [filters.from || 'inicio', filters.to || 'hoje'].join('-');
     res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('content-disposition', `attachment; filename="bot-guincho-fechamento-${suffix}.xlsx"`);
@@ -5364,7 +5414,7 @@ app.get('/api/billing/driver-export', async (req, res) => {
     syncDriverPayrolls(state);
     const payroll = (state.driverPayrolls || []).find((item) => item.id === String(req.query.payrollId || ''));
     if (!payroll) return res.status(404).send('Folha do motorista não encontrada');
-    const calls = (state.calls || []).filter((call) => (payroll.callIds || []).includes(call.id));
+    const calls = (state.calls || []).filter((call) => !call?.deletedAt && call?.status !== 'excluido' && (payroll.callIds || []).includes(call.id));
     const cols = ['Data','Motorista','Seguradora','Protocolo','Veículo','KM da corrida','Até 50 km','KM excedentes','Valor corrida','Hora trabalhada','Total motorista'];
     const quote = (value) => `"${String(value ?? '').replace(/"/g,'""')}"`;
     const rows = calls.map((call) => {

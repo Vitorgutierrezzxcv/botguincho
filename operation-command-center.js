@@ -43,7 +43,7 @@
       <div class="op-card-head"><div><div class="op-title">${esc(call.vehicle || call.plate || 'Veículo não informado')}</div><div class="op-sub">${esc(call.insurerName || call.insurer || call.client || call.groupName || 'Seguradora')} · ${fmtDate(call.authorizedAt || call.createdAt)}</div></div><div>${test ? '<span class="op-badge test">TESTE</span> ' : ''}${statusBadge(call)}</div></div>
       <div class="op-route"><b>Origem:</b> ${esc(call.origin || 'Não informada')}<br><b>Destino:</b> ${esc(call.destination || 'Não informado')}</div>
       <div class="op-meta"><div><span>Protocolo</span><b>${esc(call.protocol || 'Aguardando')}</b></div><div><span>KM atual</span><b>${currentKm(call).toLocaleString('pt-BR',{maximumFractionDigits:1})} km</b></div><div><span>Valor atual</span><b>${money(currentValue(call))}</b></div><div><span>Motorista</span><b>${esc(call.driverName || 'Mauro')}</b></div></div>
-      <div class="op-actions"><button class="btn secondary" type="button" onclick="event.stopPropagation();operationEditCall('${esc(call.id)}')">Editar comanda</button><button class="btn" type="button" onclick="event.stopPropagation();operationCloseCall('${esc(call.id)}')">Concluir corrida</button></div>
+      <div class="op-actions"><button class="btn secondary" type="button" onclick="event.stopPropagation();operationEditCall('${esc(call.id)}')">Editar comanda</button><button class="btn" type="button" onclick="event.stopPropagation();operationCloseCall('${esc(call.id)}')">Concluir corrida</button><button class="btn ghost" type="button" onclick="event.stopPropagation();operationDeleteCall('${esc(call.id)}')">Excluir</button></div>
     </div>`;
   }
 
@@ -115,6 +115,20 @@
       alert('Alterações salvas. A corrida continua em andamento.');
     });
     const save = document.getElementById('modalSave'); if (save) save.textContent = 'Salvar alterações';
+  };
+
+  window.operationDeleteCall = async (id) => {
+    const call = findCall(id); if (!call) return alert('Corrida não encontrada. Atualize a tela e tente novamente.');
+    const test = isTestCall(call);
+    const confirmed = confirm(test
+      ? 'Excluir esta corrida de TESTE? Ela será removida definitivamente, junto com o financeiro de teste vinculado.'
+      : 'Excluir esta corrida? Ela sairá do painel e dos totais, mas continuará preservada internamente para auditoria.');
+    if (!confirmed) return;
+    await api('/api/worker/management', { method:'POST', body: JSON.stringify({ action:'delete_call', callId:id, ownerName:'Thiago' }) });
+    await loadManagement();
+    if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
+    renderManagement();
+    alert(test ? 'Corrida de teste excluída.' : 'Corrida removida do painel. O histórico interno foi preservado.');
   };
 
   window.operationCloseCall = (id) => {

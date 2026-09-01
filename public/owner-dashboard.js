@@ -182,7 +182,7 @@
         <div class="owner-row-main"><div class="owner-row-title"><b>${esc(call.insurer || call.client || 'Seguradora')}</b>${outcomeTag(call)}${ownerTag(sourceText(call), call.source === 'whatsapp' ? 'source' : '')}</div>
         <div class="owner-route">${esc(call.origin || 'Origem não informada')} <span>→</span> ${esc(call.destination || 'Destino não informado')}</div>
         ${call.lastOperationalText ? `<div class="owner-message">“${esc(call.lastOperationalText).slice(0, 150)}”</div>` : ''}</div>
-        <div class="owner-row-side"><b>${n(call.value) > 0 ? money(call.value) : '—'}</b><button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button></div>
+        <div class="owner-row-side"><b>${n(call.value) > 0 ? money(call.value) : '—'}</b><button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button><button class="btn ghost small" onclick="ownerDeleteCall('${esc(call.id)}')">Excluir</button></div>
       </div>`).join('') : '<div class="empty">Nenhuma cotação registrada neste período.</div>';
   }
 
@@ -192,7 +192,7 @@
     const items = sortRecent(calls).slice(0, 8);
     target.innerHTML = items.length ? `<table class="table owner-table"><thead><tr><th>Corrida</th><th>Status</th><th>KM</th><th>Faturado</th><th>Motorista</th><th></th></tr></thead><tbody>${items.map((call) => `
       <tr><td><b>${esc(call.insurer || call.client || 'Seguradora')}</b><br><span class="muted">${esc(call.vehicle || call.plate || 'Veículo')}</span><br><span class="owner-source-line">${sourceText(call)}</span></td>
-      <td>${callStatusTag(call)}</td><td>${fmtKm(call.billableKm ?? call.totalKm)}</td><td><b>${n(call.value || call.calculatedValue) > 0 ? money(call.value || call.calculatedValue) : 'A calcular'}</b><br>${ownerFinalized(call) ? ownerTag('Definitivo','won') : ownerTag('Previsto','open')}${call.financeReviewRequired ? '<br><span class="owner-alert">Revisar</span>' : ''}</td><td>${money(driverPayForCall(call))}</td><td><button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button>${!ownerFinalized(call) && isAccepted(call) ? `<button class="btn small" onclick="ownerCloseCall('${esc(call.id)}')">Fechar</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Nenhuma corrida aceita neste período.</div>';
+      <td>${callStatusTag(call)}</td><td>${fmtKm(call.billableKm ?? call.totalKm)}</td><td><b>${n(call.value || call.calculatedValue) > 0 ? money(call.value || call.calculatedValue) : 'A calcular'}</b><br>${ownerFinalized(call) ? ownerTag('Definitivo','won') : ownerTag('Previsto','open')}${call.financeReviewRequired ? '<br><span class="owner-alert">Revisar</span>' : ''}</td><td>${money(driverPayForCall(call))}</td><td><button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button>${!ownerFinalized(call) && isAccepted(call) ? `<button class="btn small" onclick="ownerCloseCall('${esc(call.id)}')">Fechar</button>` : ''}<button class="btn ghost small" onclick="ownerDeleteCall('${esc(call.id)}')">Excluir</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Nenhuma corrida aceita neste período.</div>';
   }
 
   function renderDriverCard(payroll) {
@@ -361,6 +361,14 @@
       await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'upsert_insurer', insurer: data }) });
       await refreshOwner();
     });
+  };
+
+  window.ownerDeleteCall = async (id) => {
+    const call = (mgmt.calls || []).find((x) => x.id === id); if (!call) return alert('Corrida não encontrada. Atualize a tela.');
+    if (!confirm('Excluir esta corrida? Ela sairá do painel, Financeiro e totais visíveis, mas ficará preservada internamente para auditoria.')) return;
+    await api('/api/worker/management', { method:'POST', body: JSON.stringify({ action:'delete_call', callId:id, ownerName:'Thiago' }) });
+    await refreshOwner();
+    alert('Corrida removida do painel. O histórico interno foi preservado.');
   };
 
   window.ownerCloseCall = (id) => {
