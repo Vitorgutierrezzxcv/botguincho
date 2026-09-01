@@ -23,7 +23,7 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: Apply full training memory patch
-        run: node tools/apply-full-training-memory.mjs
+        run: node tools/apply-full-training-memory-v3.mjs
       - name: Validate runtime regressions
         run: |
           set -euo pipefail
@@ -44,6 +44,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -f .github/workflows/apply-full-training-memory-once.yml
           rm -f tools/apply-full-training-memory.mjs
+          rm -f tools/apply-full-training-memory-v3.mjs
           git add -A
           git commit -m "feat: memória integral das conversas reais [full-training-memory-applied]"
           git push origin HEAD:main
