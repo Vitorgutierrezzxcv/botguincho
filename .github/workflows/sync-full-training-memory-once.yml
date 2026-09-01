@@ -22,20 +22,58 @@ jobs:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
     steps:
-      - name: Preflight WhatsApp and group isolation
+      - name: Preflight WhatsApp and preserve current state
         run: |
           set -euo pipefail
-          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json
-          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups.json
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status-before.json
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups-before.json
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/settings?companyId=$COMPANY" -o /tmp/settings-before.json
           python3 - <<'PY'
           import json
-          s=json.load(open('/tmp/status.json'))
-          g=json.load(open('/tmp/groups.json')).get('groups',[])
+          s=json.load(open('/tmp/status-before.json'))
+          g=json.load(open('/tmp/groups-before.json')).get('groups',[])
+          selected=[x for x in g if x.get('selected')]
           assert s.get('whatsapp',{}).get('status') == 'pronto', s
           assert not s.get('whatsapp',{}).get('qrDataUrl'), s
-          selected=[x for x in g if x.get('selected')]
           assert len(selected)==1 and selected[0].get('name')=='Tests guincho', [x.get('name') for x in selected]
           print('PREFLIGHT_OK Tests guincho')
+          PY
+
+      - name: Enable read-only training isolation
+        run: |
+          set -euo pipefail
+          # Primeiro silencia todo processamento automático. Só depois concede
+          # leitura temporária dos grupos reais. Isso elimina a janela de resposta.
+          curl -fsS --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" \
+            -H 'content-type: application/json' \
+            --data '{"humanTakeover":true}' -o /tmp/settings-safe.json
+          python3 - <<'PY' > /tmp/groups-training.json
+          import json
+          before=json.load(open('/tmp/groups-before.json')).get('groups',[])
+          ids=[x['id'] for x in before if x.get('selected')]
+          training=[
+            '120363423676050159@g.us',
+            '120363426217873172@g.us',
+            '120363425466768635@g.us',
+            '120363423146395442@g.us',
+            '120363425275300094@g.us',
+            '120363407693831862@g.us',
+            '120363422517323048@g.us',
+            '120363425180918070@g.us',
+            '120363426146393894@g.us',
+            '120363405025654368@g.us',
+          ]
+          print(json.dumps({'groupIds':list(dict.fromkeys(ids+training))}))
+          PY
+          curl -fsS --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/groups-training.json -o /tmp/groups-safe.json
+          curl -fsS --max-time 60 "$BASE/api/worker/settings?companyId=$COMPANY" -o /tmp/settings-check.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/settings-check.json'))
+          assert d.get('humanTakeover') is True, d
+          print('TRAINING_ISOLATION_OK humanTakeover=true')
           PY
 
       - name: Import and persist all ten insurer histories
@@ -83,25 +121,52 @@ jobs:
           d=json.load(open('/tmp/one.json'))
           assert d.get('ok') is True, d
           assert int(d.get('totalMessages') or 0) > 0, d
-          print(json.dumps({'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'imported':d.get('imported'),'syncedChunks':d.get('syncedChunks')}, ensure_ascii=False))
-          PY
-            python3 - "$GROUP_ID" "$GROUP_NAME" >> /tmp/results.ndjson <<'PY'
-          import json,sys
-          d=json.load(open('/tmp/one.json'))
-          print(json.dumps({'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'imported':d.get('imported'),'syncedChunks':d.get('syncedChunks')}, ensure_ascii=False))
+          out={'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'imported':d.get('imported'),'syncedChunks':d.get('syncedChunks')}
+          print(json.dumps(out, ensure_ascii=False))
+          with open('/tmp/results.ndjson','a') as f:
+              f.write(json.dumps(out, ensure_ascii=False)+'\n')
           PY
           done < /tmp/groups.tsv
           cat /tmp/results.ndjson
 
-      - name: Verify real groups stayed read-only
+      - name: Restore reply permissions and previous takeover state
         if: always()
         run: |
           set -euo pipefail
+          if [ -f /tmp/groups-before.json ]; then
+            python3 - <<'PY' > /tmp/groups-restore.json
+          import json
+          g=json.load(open('/tmp/groups-before.json')).get('groups',[])
+          print(json.dumps({'groupIds':[x['id'] for x in g if x.get('selected')]}))
+          PY
+            # Primeiro remove os grupos reais da allowlist; somente depois reativa
+            # o processamento automático no estado anterior.
+            curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" \
+              -H 'content-type: application/json' --data-binary @/tmp/groups-restore.json -o /tmp/groups-restored.json
+          fi
+          if [ -f /tmp/settings-before.json ]; then
+            python3 - <<'PY' > /tmp/settings-restore.json
+          import json
+          d=json.load(open('/tmp/settings-before.json'))
+          print(json.dumps({'humanTakeover':bool(d.get('humanTakeover',False))}))
+          PY
+            curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" \
+              -H 'content-type: application/json' --data-binary @/tmp/settings-restore.json -o /tmp/settings-restored.json
+          fi
+
+      - name: Verify final isolation and WhatsApp health
+        if: always()
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status-after.json
           curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups-after.json
           python3 - <<'PY'
           import json
+          s=json.load(open('/tmp/status-after.json'))
           g=json.load(open('/tmp/groups-after.json')).get('groups',[])
           selected=[x for x in g if x.get('selected')]
+          assert s.get('whatsapp',{}).get('status') == 'pronto', s
+          assert not s.get('whatsapp',{}).get('qrDataUrl'), s
           assert len(selected)==1 and selected[0].get('name')=='Tests guincho', [x.get('name') for x in selected]
-          print('READ_ONLY_GROUPS_OK')
+          print('FINAL_ISOLATION_OK Tests guincho only; WhatsApp pronto')
           PY
