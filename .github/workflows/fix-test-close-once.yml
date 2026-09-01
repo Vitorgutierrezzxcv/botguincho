@@ -18,59 +18,186 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Allow owner close for test calls
+      - name: Corrigir fechamento completo do modo teste
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
+          def replace_once(text, old, new, label):
+              if new in text:
+                  return text
+              if old not in text:
+                  raise SystemExit(f'Bloco não encontrado: {label}')
+              return text.replace(old, new, 1)
+
+          # 1) Worker: financeiro de teste isolado + resumo no grupo Tests guincho.
           worker = Path('tools/vercel-whatsapp-worker.mjs')
           text = worker.read_text()
-          guard = "  if (isTestCall(call)) throw new Error('test_call_cannot_be_closed');\n"
-          if text.count(guard) != 1:
-              raise SystemExit(f'expected one test close guard, found {text.count(guard)}')
-          text = text.replace(
-              guard,
-              "  // Corridas do grupo de testes também podem ser fechadas pelo dono para validar o fluxo completo.\n"
-              "  // A proteção de envio ao WhatsApp continua abaixo com !isTestCall(next).\n",
-              1,
+
+          finance_marker = "function ensureConfirmedFinanceTracking(state, item, { finalized = false } = {}) {\n"
+          helper = """function ensureTestFinanceTracking(state, item, { finalized = false } = {}) {
+  if (!item || !isTestCall(item)) return null;
+  if (!Array.isArray(state.finance)) state.finance = [];
+  const amount = confirmedFinanceAmount(item);
+  const now = new Date().toISOString();
+  let entry = state.finance.find((candidate) => candidate.sourceCallId === item.id && candidate.type === 'receita' && candidate.testMode === true);
+  const effectiveFinal = finalized === true || isOwnerFinalizedCall(item) || entry?.isFinal === true;
+  const patch = {
+    description: `[TESTE] Corrida ${effectiveFinal ? 'fechada' : 'aberta'} · ${item.groupName || item.insurer || item.client || 'Tests guincho'} · ${item.vehicle || 'Veículo'}`,
+    category: 'Financeiro de teste',
+    amount,
+    type: 'receita',
+    status: 'pendente',
+    financialStage: effectiveFinal ? 'faturado' : 'previsto',
+    isFinal: effectiveFinal,
+    needsValueReview: !(amount > 0),
+    dueDate: null,
+    client: item.client || item.insurer || item.groupName || 'Tests guincho',
+    insurer: item.insurer || item.client || item.groupName || 'Tests guincho',
+    insurerId: item.insurerId || '',
+    groupId: item.sourceGroupId || '',
+    groupName: item.groupName || 'Tests guincho',
+    protocol: item.protocol || '',
+    sourceCallId: item.id,
+    billableKm: Number(item.billableKm ?? item.totalKm ?? item.estimatedTotalKm ?? 0),
+    source: 'test_close',
+    testMode: true,
+    updatedAt: now,
+  };
+  if (entry) Object.assign(entry, patch);
+  else {
+    entry = { id: crypto.randomUUID(), ...patch, createdAt: now };
+    state.finance.unshift(entry);
+  }
+  return entry;
+}
+
+"""
+          if 'function ensureTestFinanceTracking(' not in text:
+              if finance_marker not in text:
+                  raise SystemExit('Ponto de inserção do financeiro de teste não encontrado')
+              text = text.replace(finance_marker, helper + finance_marker, 1)
+
+          text = replace_once(
+              text,
+              "  state.calls[index] = next;\n  ensureConfirmedFinanceTracking(state, next, { finalized: true });\n  syncDriverPayrolls(state);",
+              "  state.calls[index] = next;\n  if (isTestCall(next)) ensureTestFinanceTracking(state, next, { finalized: true });\n  else ensureConfirmedFinanceTracking(state, next, { finalized: true });\n  syncDriverPayrolls(state);",
+              'financeiro no close_call',
           )
+
+          text = replace_once(
+              text,
+              "  let noticeSent = false;\n  if (waClient && waStatus === 'pronto' && next.sourceGroupId && !isTestCall(next)) {",
+              "  let noticeSent = false;\n  const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');\n  if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {",
+              'liberação do resumo no WhatsApp de teste',
+          )
+
+          text = replace_once(
+              text,
+              "      noticeSent = true;\n      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm });",
+              "      noticeSent = true;\n      next.ownerCloseNoticeSentAt = new Date().toISOString();\n      await saveManagement(state);\n      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });",
+              'marcação do envio do resumo',
+          )
+
+          # API de gestão: testFinance separado para nunca contaminar números oficiais.
+          text = replace_once(
+              text,
+              "    const allCalls = data.calls || [];\n    const calls = allCalls.filter((item) => !isTestCall(item));\n    const testCalls = allCalls.filter((item) => isTestCall(item));\n    const filters =",
+              "    const allCalls = data.calls || [];\n    const calls = allCalls.filter((item) => !isTestCall(item));\n    const testCalls = allCalls.filter((item) => isTestCall(item));\n    const allFinance = data.finance || [];\n    const finance = allFinance.filter((item) => item?.testMode !== true);\n    const testFinance = allFinance.filter((item) => item?.testMode === true);\n    const filters =",
+              'separação do financeiro de teste',
+          )
+          text = replace_once(
+              text,
+              "      data: { ...data, calls, testCalls },\n      quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),\n      periodReport: buildPeriodReport({ ...data, calls }, filters),",
+              "      data: { ...data, calls, testCalls, finance, testFinance },\n      quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),\n      periodReport: buildPeriodReport({ ...data, calls, finance }, filters),",
+              'resposta de gestão isolada',
+          )
+
+          # Billing oficial também recebe só produção real.
+          text = replace_once(
+              text,
+              "      finance: saved.finance,\n      calls: saved.calls,",
+              "      finance: (saved.finance || []).filter((entry) => entry?.testMode !== true),\n      calls: (saved.calls || []).filter((call) => !isTestCall(call)),",
+              'isolamento no billing oficial',
+          )
+
           worker.write_text(text)
 
-          for name in ['owner-dashboard.js', 'public/owner-dashboard.js']:
-              path = Path(name)
+          # 2) Tela Operação: botão bloqueia duplo clique, fecha modal e confirma TESTE corretamente.
+          for filename in ['operation-command-center.js', 'public/operation-command-center.js']:
+              path = Path(filename)
               js = path.read_text()
-              old = "    const call = (mgmt.calls || []).find((x) => x.id === id); if (!call) return;\n    openModal('Conferir e fechar corrida'"
-              new = "    const call = (mgmt.calls || []).find((x) => x.id === id); if (!call) return;\n    const testClosure = call?.testMode === true || /^tests?\\s+guincho$/i.test(String(call.insurer || call.client || call.groupName || '').trim());\n    openModal('Conferir e fechar corrida'"
-              if old not in js:
-                  raise SystemExit(f'ownerCloseCall header not found in {name}')
-              js = js.replace(old, new, 1)
+              js = replace_once(
+                  js,
+                  "      const { data, item } = readCommandForm(call);\n      const response = await api('/api/worker/management',",
+                  "      const { data, item } = readCommandForm(call);\n      const saveButton = document.getElementById('modalSave');\n      if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Concluindo...'; }\n      try {\n        const response = await api('/api/worker/management',",
+                  f'início do fechamento em {filename}',
+              )
+              js = replace_once(
+                  js,
+                  "      const sent = response?.data?.closeResult?.noticeSent;\n      alert(sent ? 'Corrida concluída. Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. Confira o grupo do WhatsApp para confirmar o envio do resumo.');",
+                  "        const sent = response?.data?.closeResult?.noticeSent;\n        closeModal();\n        alert(isTestCall(call)\n          ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o envio do resumo. Confira o grupo.')\n          : (sent ? 'Corrida concluída ✅ Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. O WhatsApp não confirmou o resumo; confira o grupo.'));\n      } catch (error) {\n        if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }\n        throw error;\n      }",
+                  f'fim do fechamento em {filename}',
+              )
+              path.write_text(js)
 
-              old_alert = "      const sent = d.data?.closeResult?.noticeSent;\n      await refreshOwner(); alert(sent ? 'Corrida fechada e resumo enviado ao grupo.' : 'Corrida fechada. O WhatsApp não confirmou o envio do resumo; confira o grupo.');"
-              new_alert = "      const sent = d.data?.closeResult?.noticeSent;\n      await refreshOwner();\n      alert(testClosure ? 'Corrida de teste concluída. Valores, KM e fechamento foram processados; o resumo não é enviado ao grupo de teste.' : (sent ? 'Corrida fechada e resumo enviado ao grupo.' : 'Corrida fechada. O WhatsApp não confirmou o envio do resumo; confira o grupo.'));"
-              if old_alert not in js:
-                  raise SystemExit(f'ownerCloseCall alert not found in {name}')
-              js = js.replace(old_alert, new_alert, 1)
+          # 3) Financeiro: listar cada fechamento TESTE, não apenas total agregado.
+          for filename in ['test-mode-visibility.js', 'public/test-mode-visibility.js']:
+              path = Path(filename)
+              js = path.read_text()
+              marker = "      financeCard.innerHTML = `<div class=\"test-mode-head\""
+              if 'test-finance-detail-list' not in js:
+                  lines = js.splitlines()
+                  index = next((i for i, line in enumerate(lines) if marker in line), None)
+                  if index is None:
+                      raise SystemExit(f'Painel financeiro de teste não encontrado: {filename}')
+                  insertion = [
+                      "      const persistedTestFinance = Array.isArray(mgmt?.testFinance) ? mgmt.testFinance : [];",
+                      "      const financeByCall = new Map();",
+                      "      for (const c of calls.filter((item) => item?.ownerClosedAt || item?.status === 'concluido')) financeByCall.set(c.id, { sourceCallId:c.id, description:`[TESTE] ${c.vehicle || 'Corrida'} · ${c.groupName || c.insurer || 'Tests guincho'}`, amount:simulatedRevenueForCall(c), billableKm:num(c.billableKm ?? c.totalKm), updatedAt:c.ownerClosedAt || c.completedAt || c.updatedAt, testMode:true });",
+                      "      for (const entry of persistedTestFinance) financeByCall.set(entry.sourceCallId || entry.id, entry);",
+                      "      const testFinanceRows = [...financeByCall.values()].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0));",
+                      "      if (testFinanceRows.length) financeCard.insertAdjacentHTML('beforeend', `<div class=\"test-mode-list test-finance-detail-list\">${testFinanceRows.slice(0,20).map(f=>`<div class=\"test-mode-row\"><div><b>${esc(f.description || '[TESTE] Corrida concluída')}</b><small>Fechado em ${stamp(f.updatedAt)}</small><div class=\"test-mode-route\">${num(f.billableKm).toLocaleString('pt-BR',{maximumFractionDigits:1})} km · ${money(f.amount)}</div></div><span class=\"test-mode-status\">TESTE · FECHADO</span></div>`).join('')}</div>`);",
+                  ]
+                  lines[index+1:index+1] = insertion
+                  js = '\n'.join(lines) + ('\n' if js.endswith('\n') else '')
+              path.write_text(js)
+
+          # 4) Mensagem do outro fechamento do painel também deve refletir o novo comportamento de teste.
+          for filename in ['owner-dashboard.js', 'public/owner-dashboard.js']:
+              path = Path(filename)
+              js = path.read_text()
+              old = "        alert(testClosure ? 'Corrida de teste concluída ✅ Os dados foram processados e ela saiu dos atendimentos em aberto.' : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));"
+              new = "        alert(testClosure ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o resumo. Confira o grupo.') : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));"
+              js = replace_once(js, old, new, f'mensagem owner {filename}')
               path.write_text(js)
           PY
 
-      - name: Validate patch
+      - name: Validar sintaxe e isolamento
         run: |
           set -euo pipefail
           node --check tools/vercel-whatsapp-worker.mjs
+          node --check operation-command-center.js
+          node --check public/operation-command-center.js
+          node --check test-mode-visibility.js
+          node --check public/test-mode-visibility.js
           node --check owner-dashboard.js
           node --check public/owner-dashboard.js
-          ! grep -q "test_call_cannot_be_closed" tools/vercel-whatsapp-worker.mjs
-          grep -q "!isTestCall(next)" tools/vercel-whatsapp-worker.mjs
-          grep -q "Corrida de teste concluída" owner-dashboard.js
-          grep -q "Corrida de teste concluída" public/owner-dashboard.js
-          echo TEST_CLOSE_PATCH_OK
+          node tools/test-simple-operation.mjs
+          node tools/test-driver-payroll.mjs
+          grep -q "ensureTestFinanceTracking" tools/vercel-whatsapp-worker.mjs
+          grep -q "allowCloseNotice" tools/vercel-whatsapp-worker.mjs
+          grep -q "testFinance" tools/vercel-whatsapp-worker.mjs
+          grep -q "test-finance-detail-list" test-mode-visibility.js
+          grep -q "closeModal();" operation-command-center.js
+          echo TEST_CLOSE_FULL_FLOW_OK
 
-      - name: Commit fix
+      - name: Publicar correção
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tools/vercel-whatsapp-worker.mjs owner-dashboard.js public/owner-dashboard.js
-          git commit -m "Permite concluir corridas de teste no painel"
-          git push
+          git add tools/vercel-whatsapp-worker.mjs operation-command-center.js public/operation-command-center.js test-mode-visibility.js public/test-mode-visibility.js owner-dashboard.js public/owner-dashboard.js
+          git commit -m "Completa fechamento do modo teste no WhatsApp e financeiro"
+          git push origin main
