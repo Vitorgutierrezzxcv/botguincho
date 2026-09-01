@@ -75,6 +75,17 @@ jobs:
               if marker not in s:
                   raise SystemExit('Marcador do teste de endereco nao encontrado')
               s = s.replace(marker, block + marker, 1)
+
+          # Este assert verificava a implementação interna antiga do parser e ficou obsoleto.
+          # Mantemos os asserts funcionais acima e validamos o normalizador que o runtime usa hoje.
+          stale = "assert.match(workerSource, /BAIRRO\\|CIDADE\\|ESTADO\\|PA\\[IÍ\\]S\\|PAS/);\n"
+          s = s.replace(stale, '')
+          anchor = "assert.match(workerSource, /lineWithoutWhatsAppMarkup/);\n"
+          extra = "assert.match(workerSource, /normalizeAddressInput/);\nassert.match(workerSource, /Rastreador do guincho sem atualização recente/);\nassert.doesNotMatch(workerSource, /Não consegui localizar a origem com precisão suficiente/);\n"
+          if 'assert.match(workerSource, /normalizeAddressInput/);' not in s:
+              if anchor not in s:
+                  raise SystemExit('Assert base do worker nao encontrado')
+              s = s.replace(anchor, anchor + extra, 1)
           p.write_text(s)
 
           Path('ops/recover-gconnect.sh').write_text(r'''#!/usr/bin/env bash
