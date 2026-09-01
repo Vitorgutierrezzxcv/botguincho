@@ -44,4 +44,28 @@ const sparse = { protocol: '12345' };
 assert.equal(protocolHasStrongIdentity(sparse), false);
 assert.equal(selectProtocolTargetCall({ calls: [active, second], groupId, identity: sparse, fallbackCall: second })?.id, 'second-call', 'protocolo sem dados continua usando contexto recente');
 
+const concludedSamePlateDifferentProtocol = {
+  ...second,
+  id: 'concluded-old',
+  status: 'concluido',
+  protocol: 'PROTO-ANTIGO',
+  updatedAt: '2026-09-01T18:59:00.000Z',
+};
+const newServiceSamePlate = {
+  protocol: 'PROTO-NOVO', plate: 'QWE2B34',
+  origin: 'Rua Nova 10, Betim MG', destination: 'Rua Outra 20, Contagem MG',
+};
+assert.equal(
+  selectProtocolTargetCall({ calls: [concludedSamePlateDifferentProtocol], groupId, identity: newServiceSamePlate, fallbackCall: concludedSamePlateDifferentProtocol }),
+  null,
+  'corrida concluida nao pode capturar novo protocolo apenas pela mesma placa',
+);
+
+const lateSameProtocol = { protocol: 'PROTO-ANTIGO', plate: 'QWE2B34', origin: concludedSamePlateDifferentProtocol.origin, destination: concludedSamePlateDifferentProtocol.destination };
+assert.equal(
+  selectProtocolTargetCall({ calls: [concludedSamePlateDifferentProtocol], groupId, identity: lateSameProtocol, fallbackCall: null })?.id,
+  'concluded-old',
+  'mesmo numero de protocolo ainda pode atualizar registro concluido',
+);
+
 console.log('protocol-call-matching regression: ok');
