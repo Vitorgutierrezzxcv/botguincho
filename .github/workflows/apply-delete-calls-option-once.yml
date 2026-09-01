@@ -1,0 +1,44 @@
+name: Apply delete calls option once
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/apply-delete-calls-option.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply patch
+        run: python3 ops/apply-delete-calls-option.py
+      - name: Validate JavaScript
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check app.js
+          node --check operation-command-center.js
+          node --check owner-dashboard.js
+          node --check public/app.js
+          node --check public/operation-command-center.js
+          node --check public/owner-dashboard.js
+      - name: Commit result
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs app.js operation-command-center.js owner-dashboard.js public/app.js public/operation-command-center.js public/owner-dashboard.js
+          git commit -m 'Adiciona exclusão segura de corridas'
+          git push origin main
