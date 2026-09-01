@@ -1,0 +1,54 @@
+name: Validate context followups once
+
+on:
+  push:
+    branches:
+      - fix/context-followups-20260831
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: ${{ !contains(github.event.head_commit.message || '', '[context-followups-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/context-followups-20260831
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Apply contextual fixes
+        run: |
+          node tools/apply-context-followups.mjs
+          node tools/apply-historical-ai-examples.mjs
+      - name: Validate regressions
+        run: |
+          node --check tools/learning-engine.mjs
+          node --check tools/operational-knowledge.mjs
+          node --check tools/ai-operational-fallback.mjs
+          node --check tools/training-runtime-index.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+          node tools/test-context-followups.mjs
+          node tools/test-ai-operational-fallback.mjs
+          node tools/test-address-state-detection.mjs
+          node tools/test-operating-hours.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+          node tools/test-manual-test-capacity.mjs
+          node tools/test-whatsapp-recovery.mjs
+      - name: Commit validated fix
+        run: |
+          rm -f .github/workflows/validate-context-followups-once.yml
+          rm -f tools/apply-context-followups.mjs tools/apply-historical-ai-examples.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: vincula agendamento e autorização à cotação [context-followups-applied]"
+          git push origin HEAD:fix/context-followups-20260831
