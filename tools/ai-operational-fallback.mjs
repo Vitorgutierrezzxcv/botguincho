@@ -83,6 +83,10 @@ export function shouldUseAiOperationalFallback({ text = '', facts = {}, intent =
   if (['authorization', 'cancellation', 'closure', 'departure', 'arrival', 'destination_arrival'].includes(intent)) return false;
   if (intent === 'other' || intent === 'incomplete_dispatch') return true;
   if (!facts?.origin || !facts?.destination || !facts?.vehicleType) return true;
+  // Se o parser deterministico ja reconheceu uma cotacao completa, nao gastamos
+  // tempo nem credito com IA apenas por causa de ruido como "nº -". O endereco
+  // passa pelo normalizador/geocoder; a IA continua sendo fallback quando faltar dado.
+  if (intent === 'quote') return false;
   if (messyStructuredMessage(text)) return true;
   return false;
 }

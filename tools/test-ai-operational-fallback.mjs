@@ -12,7 +12,8 @@ const deterministicFacts = {
   protocol: '',
 };
 
-assert.equal(shouldUseAiOperationalFallback({ text: messy, facts: deterministicFacts, intent: 'quote' }), true);
+assert.equal(shouldUseAiOperationalFallback({ text: messy, facts: deterministicFacts, intent: 'quote' }), false, 'cotacao deterministica completa deve usar fast path sem IA');
+assert.equal(shouldUseAiOperationalFallback({ text: messy, facts: { ...deterministicFacts, origin: '' }, intent: 'quote' }), true, 'faltando origem deve usar IA');
 assert.equal(shouldUseAiOperationalFallback({ text: 'pode seguir', facts: {}, intent: 'authorization' }), false);
 assert.equal(shouldUseAiOperationalFallback({ text: 'cancelado', facts: {}, intent: 'cancellation' }), false);
 
