@@ -1,0 +1,53 @@
+name: Apply owner runtime fix once
+
+on:
+  push:
+    branches: [fix/owner-runtime-schedule]
+    paths:
+      - '.github/workflows/apply-owner-runtime-fix-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Preserve patch and switch to production main
+        run: |
+          cp tools/apply_owner_runtime_fix_tmp.py /tmp/apply_owner_runtime_fix_tmp.py
+          git fetch origin main
+          git checkout -B owner-runtime-release origin/main
+      - name: Apply integrated fix
+        run: python3 /tmp/apply_owner_runtime_fix_tmp.py
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Syntax and build
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/scheduling-policy.mjs
+          node --check tools/test-runtime-regressions.mjs
+          node --check app.js
+          npm run build
+      - name: Operational regressions
+        run: npm run test:operational
+      - name: Verify critical integration markers
+        run: |
+          grep -q "groupProcessingQueues" tools/vercel-whatsapp-worker.mjs
+          grep -q "scheduled_out_of_hours" tools/vercel-whatsapp-worker.mjs
+          grep -q "agendamento_confirmado" tools/vercel-whatsapp-worker.mjs
+          grep -q "limit: 500" tools/vercel-whatsapp-worker.mjs
+          grep -q "OWNER_RUNTIME_HUB_V1" app.js
+          grep -q "scheduledCapacitySnapshot" tools/scheduling-policy.mjs
+      - name: Publish one production commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs tools/scheduling-policy.mjs tools/test-runtime-regressions.mjs app.js app.css package.json
+          git commit -m "Corrige agenda, horários, leitura e painel operacional"
+          git push origin owner-runtime-release:main
