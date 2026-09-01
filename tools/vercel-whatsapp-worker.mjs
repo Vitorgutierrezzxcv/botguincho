@@ -3502,6 +3502,28 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
   }
 
   const facts = context.facts;
+  // DISPONIBILIDADE_PURA: uma pergunta sem dados de atendimento responde somente disponibilidade.
+// Nao cria previa comercial nem informa valor-base sem dados da solicitacao.
+const bareAvailabilityOnly = asksAvailability(readableText)
+  && !facts?.origin
+  && !facts?.destination
+  && !facts?.vehicle
+  && !facts?.vehicleType
+  && !facts?.plate
+  && !facts?.protocol
+  && !extractLabeledField(readableText, 'Origem')
+  && !extractLabeledField(readableText, 'Destino')
+  && !enderecoEmTextoLivre(readableText);
+if (bareAvailabilityOnly) {
+  await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', {
+    intent: 'availability',
+    activeCount: capacity.activeCount,
+    slotsAvailable: capacity.slotsAvailable,
+    bareAvailabilityOnly: true,
+  });
+  return;
+}
+
   const pending = pendingForIncomingFacts(context.recentCall, facts);
   const hasOpportunityData = Boolean(facts.origin || facts.destination || facts.vehicle || facts.vehicleType || facts.plate || facts.protocol || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText));
   const preliminaryFacts = mergedOpportunityFacts(facts, pending, null, readableText);
