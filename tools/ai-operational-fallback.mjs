@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import OpenAI from 'openai';
 import { normalizeAddressInput } from './address-normalization.mjs';
+import { historicalExamplesForAi } from './training-runtime-index.mjs';
 
 const DEFAULT_MODEL = 'gpt-5.6-luna';
 const DEFAULT_DAILY_LIMIT = 30;
@@ -151,6 +152,10 @@ async function interpretWithOpenAI({ text, groupName }) {
   const baseURL = String(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').trim();
   const model = String(process.env.OPENAI_FALLBACK_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
   const timeout = clampInt(process.env.OPENAI_FALLBACK_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 1000, 10000);
+  const historicalExamples = historicalExamplesForAi(text, groupName, 4);
+  const examplesInstruction = historicalExamples.length
+    ? ['Exemplos anonimizados de linguagem real já observada (use apenas como referência de intenção):', ...historicalExamples.map((item) => `- ${item.intent}: ${item.phrase}`)].join('\n')
+    : '';
   const openai = new OpenAI({ apiKey, baseURL });
   const response = await openai.responses.create({
     model,
@@ -164,6 +169,7 @@ async function interpretWithOpenAI({ text, groupName }) {
       'Em endereços, remova ruído como "nº -", referências, telefone e rótulos repetidos, mas preserve rua, número quando existir, bairro, cidade e UF.',
       'Uma ficha com origem, destino e veículo/serviço é uma cotação, salvo quando a mensagem contiver uma autorização, cancelamento ou agendamento explícito.',
       'Classifique intenção apenas entre as opções do schema.',
+      examplesInstruction,
       `Grupo WhatsApp: ${safeText(groupName, 120) || 'não informado'}.`,
     ].join('\n'),
     input: String(text || '').slice(0, 5000),

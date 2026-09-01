@@ -103,3 +103,30 @@ export function historicalTrainingStats() {
     privacy: 'anonymized',
   };
 }
+
+
+export function historicalExamplesForAi(text = '', groupName = '', limit = 4) {
+  const value = norm(text);
+  if (!value) return [];
+  const max = Math.min(6, Math.max(1, Number(limit) || 4));
+  const seen = new Set();
+  return ENTRIES
+    .map((entry) => {
+      const phrase = norm(entry.phrase);
+      const sameGroup = groupMatchScore(groupName, entry.group);
+      const exact = value === phrase;
+      const contained = Math.min(value.length, phrase.length) >= 4 && (value.includes(phrase) || phrase.includes(value));
+      const lexical = exact ? 1 : contained ? 0.94 : Math.max(dice(value, phrase), tokenCoverage(value, phrase));
+      return { ...entry, score: Math.min(1, lexical * 0.78 + sameGroup * 0.22) };
+    })
+    .filter((entry) => entry.score >= 0.34)
+    .sort((a, b) => b.score - a.score)
+    .filter((entry) => {
+      const key = `${entry.intent}:${norm(entry.phrase)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, max)
+    .map(({ group, intent, phrase, score }) => ({ group, intent, phrase, score: Math.round(score * 100) / 100 }));
+}

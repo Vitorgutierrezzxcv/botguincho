@@ -323,19 +323,39 @@ export function extractOperationalFacts(text = '') {
   const companions = firstNumber(raw, [/(?:acompanhantes?)\s*[:=\-]?\s*(\d{1,2})/i]);
 
   const dateMatch = raw.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))\b/);
-  const timeMatch = raw.match(/\b(?:[aà]s?\s*)?(\d{1,2})[:h](\d{2})\b/i);
+  const explicitTimeMatch = raw.match(/\b(?:[aà]s?\s*)?(\d{1,2})(?::(\d{2})|h(?:\s*(\d{2}))?)\b/i);
+  const relativeTimeMatch = raw.match(/\b(?:amanh[ãa]|hoje)(?:\s+(?:[aà]s?))?\s*(\d{1,2})(?:(?::|h)\s*(\d{1,2}))?\b/i);
+  const timeMatch = relativeTimeMatch || explicitTimeMatch;
   let scheduledAt = null;
+  const saoPauloDateParts = (date = new Date()) => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(date);
+    const get = (type) => parts.find((part) => part.type === type)?.value || '';
+    return { year: Number(get('year')), month: Number(get('month')), day: Number(get('day')) };
+  };
+  const toSaoPauloIso = ({ year, month, day, hour = 0, minute = 0 }) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const value = new Date(`${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:00-03:00`);
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  };
   if (/\bagend/.test(value) && dateMatch) {
-    const year = Number(dateMatch[3] || new Date().getFullYear());
+    const nowParts = saoPauloDateParts();
+    const year = Number(dateMatch[3] || nowParts.year);
     const fullYear = year < 100 ? 2000 + year : year;
-    const hh = Number(timeMatch?.[1] || 0), mm = Number(timeMatch?.[2] || 0);
-    const dt = new Date(fullYear, Number(dateMatch[2]) - 1, Number(dateMatch[1]), hh, mm);
-    if (!Number.isNaN(dt.getTime())) scheduledAt = dt.toISOString();
-  } else if (/\bagend|\bamanha\b/.test(value) && /\bamanha\b/.test(value) && timeMatch) {
-    const dt = new Date();
-    dt.setDate(dt.getDate() + 1);
-    dt.setHours(Number(timeMatch[1]), Number(timeMatch[2]), 0, 0);
-    scheduledAt = dt.toISOString();
+    const hh = Number(timeMatch?.[1] || 0), mm = Number(timeMatch?.[2] || timeMatch?.[3] || 0);
+    scheduledAt = toSaoPauloIso({ year: fullYear, month: Number(dateMatch[2]), day: Number(dateMatch[1]), hour: hh, minute: mm });
+  } else if (/\bamanha\b/.test(value) && timeMatch) {
+    const current = saoPauloDateParts();
+    const noonUtc = new Date(Date.UTC(current.year, current.month - 1, current.day, 12, 0, 0));
+    noonUtc.setUTCDate(noonUtc.getUTCDate() + 1);
+    const next = saoPauloDateParts(noonUtc);
+    const hh = Number(timeMatch[1] || 0), mm = Number(timeMatch[2] || timeMatch[3] || 0);
+    scheduledAt = toSaoPauloIso({ ...next, hour: hh, minute: mm });
+  } else if (/\bhoje\b/.test(value) && timeMatch) {
+    const current = saoPauloDateParts();
+    const hh = Number(timeMatch[1] || 0), mm = Number(timeMatch[2] || timeMatch[3] || 0);
+    scheduledAt = toSaoPauloIso({ ...current, hour: hh, minute: mm });
   }
 
   return {

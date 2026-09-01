@@ -57,15 +57,20 @@ export function inferLearningIntent(text = '') {
     return 'pending_approval';
   }
 
+  // Follow-ups curtos de agenda aparecem logo depois de uma cotacao completa.
+  // Comunicados administrativos ja foram filtrados acima, portanto "amanha as 7"
+  // pode ser tratado como agendamento sem exigir repetir origem/destino.
+  const shortSchedule = /^(?:amanha|hoje)(?:\s+(?:as|a))?\s+\d{1,2}(?:(?::|h)\d{0,2})?$/i.test(value);
   if (
     /\b(agendamento|agendado|agendada)\b/.test(value)
-    || (hasOperationalContext && /\bamanha\s+(?:as|às)\s*\d{1,2}/.test(value))
-    || (hasOperationalContext && /\bpara o dia\s+\d{1,2}[\/.-]\d{1,2}/.test(value))
+    || shortSchedule
+    || /\bamanha\s+(?:as|a)?\s*\d{1,2}(?:(?::|h)\d{0,2})?\b/.test(value)
+    || /\bpara o dia\s+\d{1,2}[\/.-]\d{1,2}/.test(value)
   ) {
     return 'scheduled_dispatch';
   }
 
-  if (/\b(pode\s*seguir|pode\s*ir|liberado|libera|autorizado|autorizada)\b/.test(value) || /^seguir\??$/.test(value)) return 'authorization';
+  if (/\b(pode\s*(?:seguir|prosseguir|continuar|ir)|liberado|libera|autorizado|autorizada)\b/.test(value) || /^(?:seguir|prosseguir)\??$/.test(value)) return 'authorization';
 
   const hasClosingSignal = /\b(finalizamos|finalizado|finalizada|fechamento|fechado|concluido|concluida)\b/.test(value);
   const hasClosingData = /\b(km\s*total|km\s*totais|quilometragem\s*total|valor\s*total|fotos\s+no\s+destino|fotos\s+na\s+origem)\b/.test(value);

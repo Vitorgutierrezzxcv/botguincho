@@ -3685,7 +3685,10 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
 }
 
 async function handleScheduledRuntime(msg, groupName, readableText, context) {
-  const call = context.recentCall;
+  // Follow-up temporal curto (ex.: "AMANHA AS 7") pertence à cotação aberta
+  // mais recente do grupo, e não a uma corrida antiga atualizada pelo rastreador.
+  const pendingCall = pendingAuthorizationCallForGroup(context.management?.calls || [], msg.from);
+  const call = pendingCall || context.recentCall;
   await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: context.facts.origin || call?.origin || null,
