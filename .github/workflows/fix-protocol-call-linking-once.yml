@@ -1,0 +1,42 @@
+name: Fix protocol call linking once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/fix-protocol-call-linking.py'
+      - '.github/workflows/fix-protocol-call-linking-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply protocol linking fix
+        run: python ops/fix-protocol-call-linking.py
+      - name: Validate protocol identity matching
+        run: node tools/test-protocol-call-matching.mjs
+      - name: Existing regression checks
+        run: |
+          node tools/test-excluded-areas.mjs
+          node tools/test-simple-operation.mjs
+          node tools/test-driver-payroll.mjs
+      - name: Syntax check worker
+        run: node --check tools/vercel-whatsapp-worker.mjs
+      - name: Commit applied fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs tools/protocol-call-matching.mjs tools/test-protocol-call-matching.mjs
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Evita vincular protocolo a corrida diferente'
+          git push
