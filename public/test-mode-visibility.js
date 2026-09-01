@@ -32,7 +32,8 @@
       .test-mode-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin-top:14px}
       .test-mode-metric{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:12px}.test-mode-metric span{display:block;color:#64748b;font-size:12px}.test-mode-metric b{display:block;color:#0f172a;font-size:24px;margin-top:4px}
       .test-mode-list{display:grid;gap:8px;margin-top:14px}.test-mode-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:12px}.test-mode-row small{display:block;color:#64748b;margin-top:5px}.test-mode-status{align-self:start;padding:5px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:800}.test-mode-route{margin-top:5px;font-size:13px;color:#334155}
-      @media(max-width:720px){.test-mode-metrics{grid-template-columns:1fr 1fr}.test-mode-head{display:block}.test-mode-badge{margin-top:10px}.test-mode-row{grid-template-columns:1fr}.test-mode-status{justify-self:start}}
+      .test-mode-actions{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;justify-content:flex-end}.test-mode-actions .btn{min-height:30px}.test-mode-delete{color:#b91c1c!important;border-color:#fecaca!important;background:#fff!important}.test-mode-delete:hover{background:#fef2f2!important;border-color:#fca5a5!important}
+      @media(max-width:720px){.test-mode-metrics{grid-template-columns:1fr 1fr}.test-mode-head{display:block}.test-mode-badge{margin-top:10px}.test-mode-row{grid-template-columns:1fr}.test-mode-status{justify-self:start}.test-mode-actions{justify-content:flex-start}}
     `;
     document.head.appendChild(style);
   }
@@ -73,9 +74,24 @@
     if (callsPage) {
       let panel = document.getElementById('testModeCallsPanel');
       if (!panel) { panel = document.createElement('div'); panel.id = 'testModeCallsPanel'; panel.className = 'card section test-mode-card'; callsPage.prepend(panel); }
-      panel.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">MODO DE TESTE</div><h3>Cotações e corridas do Tests guincho</h3><p>Visíveis para conferência, isoladas dos números oficiais.</p></div><span class="test-mode-badge">${calls.length} registro(s)</span></div><div class="test-mode-list">${calls.length ? [...calls].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0)).map(c=>`<div class="test-mode-row"><div><b>${esc(c.vehicle||'Atendimento de teste')}</b><small>${esc(outcome(c))} · ${stamp(c.updatedAt||c.createdAt)}</small><div class="test-mode-route">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div>${c.lastOperationalText?`<small>“${esc(c.lastOperationalText).slice(0,150)}”</small>`:''}</div><span class="test-mode-status">${esc(statusLabel[c.status]||c.status||'Teste')}</span></div>`).join('') : '<div class="empty">Nenhum atendimento de teste registrado.</div>'}</div>`;
+      panel.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">MODO DE TESTE</div><h3>Cotações e corridas do Tests guincho</h3><p>Visíveis para conferência, isoladas dos números oficiais.</p></div><span class="test-mode-badge">${calls.length} registro(s)</span></div><div class="test-mode-list">${calls.length ? [...calls].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0)).map(c=>`<div class="test-mode-row"><div><b>${esc(c.vehicle||'Atendimento de teste')}</b><small>${esc(outcome(c))} · ${stamp(c.updatedAt||c.createdAt)}</small><div class="test-mode-route">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div>${c.lastOperationalText?`<small>“${esc(c.lastOperationalText).slice(0,150)}”</small>`:''}</div><div class="test-mode-actions"><span class="test-mode-status">${esc(statusLabel[c.status]||c.status||'Teste')}</span><button type="button" class="btn small ghost test-mode-delete" onclick="deleteTestCall('${esc(c.id)}')">Excluir</button></div></div>`).join('') : '<div class="empty">Nenhum atendimento de teste registrado.</div>'}</div>`;
     }
   }
+
+  window.deleteTestCall = async (id) => {
+    const call = (Array.isArray(mgmt?.testCalls) ? mgmt.testCalls : []).find((item) => item?.id === id);
+    if (!call) return alert('Corrida de teste não encontrada. Atualize a tela.');
+    if (!confirm('Excluir definitivamente esta corrida de TESTE? Ela também será removida do Financeiro de teste.')) return;
+    try {
+      await api('/api/worker/management', { method:'POST', body:JSON.stringify({ action:'delete_call', callId:id, ownerName:'Thiago' }) });
+      await loadManagement();
+      if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
+      alert('Corrida de teste excluída.');
+    } catch (error) {
+      alert('Não foi possível excluir: ' + (error?.message || error));
+    }
+  };
+
   const previousRenderManagement = renderManagement;
   renderManagement = function(){ previousRenderManagement(); renderTestMode(); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderTestMode); else renderTestMode();
