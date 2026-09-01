@@ -42,8 +42,6 @@ jobs:
       - name: Enable read-only training isolation
         run: |
           set -euo pipefail
-          # Primeiro silencia todo processamento automático. Só depois concede
-          # leitura temporária dos grupos reais. Isso elimina a janela de resposta.
           curl -fsS --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" \
             -H 'content-type: application/json' \
             --data '{"humanTakeover":true}' -o /tmp/settings-safe.json
@@ -95,10 +93,31 @@ jobs:
           EOF
           : > /tmp/results.ndjson
           while IFS=$'\t' read -r GROUP_ID GROUP_NAME; do
-            echo "Sincronizando: $GROUP_NAME"
+            echo "Importando histórico completo: $GROUP_NAME"
+            IMPORT_BODY=$(python3 - "$GROUP_ID" <<'PY'
+          import json,sys
+          print(json.dumps({'groupId':sys.argv[1],'limit':10000}, ensure_ascii=False))
+          PY
+          )
+            IMPORT_HTTP=$(curl -sS --max-time 210 -X POST "$BASE/api/worker/learning-import?companyId=$COMPANY" \
+              -H 'content-type: application/json' --data "$IMPORT_BODY" -o /tmp/import.json -w '%{http_code}')
+            if [ "$IMPORT_HTTP" != "200" ]; then
+              echo "LEARNING_IMPORT_HTTP_$IMPORT_HTTP"
+              cat /tmp/import.json
+              exit 1
+            fi
+            python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/import.json'))
+          assert d.get('ok') is True, d
+          assert int(d.get('available') or 0) > 1, d
+          print('IMPORT_OK available=', d.get('available'), 'new=', d.get('imported'))
+          PY
+
+            echo "Persistindo no Supabase: $GROUP_NAME"
             BODY=$(python3 - "$GROUP_ID" <<'PY'
           import json,sys
-          print(json.dumps({'action':'sync','groupId':sys.argv[1],'importFirst':True}, ensure_ascii=False))
+          print(json.dumps({'action':'sync','groupId':sys.argv[1],'importFirst':False}, ensure_ascii=False))
           PY
           )
             HTTP=$(curl -sS --max-time 210 -X POST "$BASE/api/worker/training-sync?companyId=$COMPANY" \
@@ -121,7 +140,7 @@ jobs:
           d=json.load(open('/tmp/one.json'))
           assert d.get('ok') is True, d
           assert int(d.get('totalMessages') or 0) > 0, d
-          out={'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'imported':d.get('imported'),'syncedChunks':d.get('syncedChunks')}
+          out={'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'syncedChunks':d.get('syncedChunks')}
           print(json.dumps(out, ensure_ascii=False))
           with open('/tmp/results.ndjson','a') as f:
               f.write(json.dumps(out, ensure_ascii=False)+'\n')
@@ -139,8 +158,6 @@ jobs:
           g=json.load(open('/tmp/groups-before.json')).get('groups',[])
           print(json.dumps({'groupIds':[x['id'] for x in g if x.get('selected')]}))
           PY
-            # Primeiro remove os grupos reais da allowlist; somente depois reativa
-            # o processamento automático no estado anterior.
             curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" \
               -H 'content-type: application/json' --data-binary @/tmp/groups-restore.json -o /tmp/groups-restored.json
           fi
