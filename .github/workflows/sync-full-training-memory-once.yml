@@ -22,7 +22,7 @@ jobs:
       BASE: https://botguincho.vercel.app
       COMPANY: cliente-teste
     steps:
-      - name: Preflight WhatsApp and preserve current state
+      - name: Preflight and preserve state
         run: |
           set -euo pipefail
           curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status-before.json
@@ -36,45 +36,29 @@ jobs:
           assert s.get('whatsapp',{}).get('status') == 'pronto', s
           assert not s.get('whatsapp',{}).get('qrDataUrl'), s
           assert len(selected)==1 and selected[0].get('name')=='Tests guincho', [x.get('name') for x in selected]
-          print('PREFLIGHT_OK Tests guincho')
+          print('PREFLIGHT_OK')
           PY
 
-      - name: Enable read-only training isolation
+      - name: Isolate training from replies
         run: |
           set -euo pipefail
-          curl -fsS --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" \
-            -H 'content-type: application/json' \
-            --data '{"humanTakeover":true}' -o /tmp/settings-safe.json
+          curl -fsS --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" -H 'content-type: application/json' --data '{"humanTakeover":true}' -o /tmp/settings-safe.json
           python3 - <<'PY' > /tmp/groups-training.json
           import json
-          before=json.load(open('/tmp/groups-before.json')).get('groups',[])
-          ids=[x['id'] for x in before if x.get('selected')]
-          training=[
-            '120363423676050159@g.us',
-            '120363426217873172@g.us',
-            '120363425466768635@g.us',
-            '120363423146395442@g.us',
-            '120363425275300094@g.us',
-            '120363407693831862@g.us',
-            '120363422517323048@g.us',
-            '120363425180918070@g.us',
-            '120363426146393894@g.us',
-            '120363405025654368@g.us',
-          ]
+          current=json.load(open('/tmp/groups-before.json')).get('groups',[])
+          ids=[x['id'] for x in current if x.get('selected')]
+          training=['120363423676050159@g.us','120363426217873172@g.us','120363425466768635@g.us','120363423146395442@g.us','120363425275300094@g.us','120363407693831862@g.us','120363422517323048@g.us','120363425180918070@g.us','120363426146393894@g.us','120363405025654368@g.us']
           print(json.dumps({'groupIds':list(dict.fromkeys(ids+training))}))
           PY
-          curl -fsS --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" \
-            -H 'content-type: application/json' \
-            --data-binary @/tmp/groups-training.json -o /tmp/groups-safe.json
+          curl -fsS --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" -H 'content-type: application/json' --data-binary @/tmp/groups-training.json -o /tmp/groups-safe.json
           curl -fsS --max-time 60 "$BASE/api/worker/settings?companyId=$COMPANY" -o /tmp/settings-check.json
           python3 - <<'PY'
           import json
-          d=json.load(open('/tmp/settings-check.json'))
-          assert d.get('humanTakeover') is True, d
-          print('TRAINING_ISOLATION_OK humanTakeover=true')
+          assert json.load(open('/tmp/settings-check.json')).get('humanTakeover') is True
+          print('TRAINING_ISOLATION_OK')
           PY
 
-      - name: Import and persist all ten insurer histories
+      - name: Import and persist ten insurer histories
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -88,50 +72,26 @@ jobs:
           120363407693831862@g.us	América Guincho/ HORIZONTE DEBORA GRAZEIELE
           120363422517323048@g.us	AMERICA GUINCHO/ SOCORRE ASSISTÊNCIA
           120363425180918070@g.us	AMERICA REBOQUE/ BETIM/ CONTAGEM PREMIUM ASSISTÊNCIA
-          120363426146393894@g.us	ASSISTÊNCIA SEGURA  X AMERICA GUINCHO - BETIM - MG
+          120363426146393894@g.us	ASSISTÊNCIA SEGURA X AMERICA GUINCHO - BETIM - MG
           120363405025654368@g.us	PREST. AMERICA GUINCHOS X POWER - BETIM
           EOF
           : > /tmp/results.ndjson
           while IFS=$'\t' read -r GROUP_ID GROUP_NAME; do
-            echo "Importando histórico completo: $GROUP_NAME"
-            IMPORT_BODY=$(python3 - "$GROUP_ID" <<'PY'
-          import json,sys
-          print(json.dumps({'groupId':sys.argv[1],'limit':10000}, ensure_ascii=False))
-          PY
-          )
-            IMPORT_HTTP=$(curl -sS --max-time 210 -X POST "$BASE/api/worker/learning-import?companyId=$COMPANY" \
-              -H 'content-type: application/json' --data "$IMPORT_BODY" -o /tmp/import.json -w '%{http_code}')
-            if [ "$IMPORT_HTTP" != "200" ]; then
-              echo "LEARNING_IMPORT_HTTP_$IMPORT_HTTP"
-              cat /tmp/import.json
-              exit 1
-            fi
-            python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/import.json'))
-          assert d.get('ok') is True, d
-          assert int(d.get('available') or 0) > 1, d
-          print('IMPORT_OK available=', d.get('available'), 'new=', d.get('imported'))
-          PY
-
-            echo "Persistindo no Supabase: $GROUP_NAME"
+            echo "Sincronizando: $GROUP_NAME"
             BODY=$(python3 - "$GROUP_ID" <<'PY'
           import json,sys
-          print(json.dumps({'action':'sync','groupId':sys.argv[1],'importFirst':False}, ensure_ascii=False))
+          print(json.dumps({'action':'sync','groupId':sys.argv[1],'importFirst':True}, ensure_ascii=False))
           PY
           )
-            HTTP=$(curl -sS --max-time 210 -X POST "$BASE/api/worker/training-sync?companyId=$COMPANY" \
-              -H "Authorization: Bearer $GH_TOKEN" -H 'content-type: application/json' \
-              --data "$BODY" -o /tmp/one.json -w '%{http_code}')
+            HTTP=$(curl -sS --max-time 240 -X POST "$BASE/api/worker/training-sync?companyId=$COMPANY" -H "Authorization: Bearer $GH_TOKEN" -H 'content-type: application/json' --data "$BODY" -o /tmp/one.json -w '%{http_code}')
             if [ "$HTTP" != "200" ]; then
               echo "TRAINING_SYNC_HTTP_$HTTP"
               python3 - <<'PY'
           import json
           try:
-              d=json.load(open('/tmp/one.json'))
-              print('TRAINING_SYNC_ERROR:', d.get('error','unknown_error'))
+            d=json.load(open('/tmp/one.json')); print('ERROR:', d.get('error','unknown_error'))
           except Exception:
-              print('TRAINING_SYNC_ERROR: invalid_json_response')
+            print('ERROR: invalid_json_response')
           PY
               exit 1
             fi
@@ -140,15 +100,16 @@ jobs:
           d=json.load(open('/tmp/one.json'))
           assert d.get('ok') is True, d
           assert int(d.get('totalMessages') or 0) > 0, d
-          out={'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'syncedChunks':d.get('syncedChunks')}
+          assert int(d.get('syncedChunks') or 0) > 0, d
+          out={'groupId':sys.argv[1],'groupName':sys.argv[2],'available':d.get('available'),'imported':d.get('imported'),'totalMessages':d.get('totalMessages'),'syncedChunks':d.get('syncedChunks')}
           print(json.dumps(out, ensure_ascii=False))
-          with open('/tmp/results.ndjson','a') as f:
-              f.write(json.dumps(out, ensure_ascii=False)+'\n')
+          with open('/tmp/results.ndjson','a') as f: f.write(json.dumps(out, ensure_ascii=False)+'\n')
           PY
           done < /tmp/groups.tsv
+          echo 'SYNC_RESULTS:'
           cat /tmp/results.ndjson
 
-      - name: Restore reply permissions and previous takeover state
+      - name: Restore previous permissions and takeover state
         if: always()
         run: |
           set -euo pipefail
@@ -158,8 +119,7 @@ jobs:
           g=json.load(open('/tmp/groups-before.json')).get('groups',[])
           print(json.dumps({'groupIds':[x['id'] for x in g if x.get('selected')]}))
           PY
-            curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" \
-              -H 'content-type: application/json' --data-binary @/tmp/groups-restore.json -o /tmp/groups-restored.json
+            curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/groups?companyId=$COMPANY" -H 'content-type: application/json' --data-binary @/tmp/groups-restore.json -o /tmp/groups-restored.json
           fi
           if [ -f /tmp/settings-before.json ]; then
             python3 - <<'PY' > /tmp/settings-restore.json
@@ -167,8 +127,7 @@ jobs:
           d=json.load(open('/tmp/settings-before.json'))
           print(json.dumps({'humanTakeover':bool(d.get('humanTakeover',False))}))
           PY
-            curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" \
-              -H 'content-type: application/json' --data-binary @/tmp/settings-restore.json -o /tmp/settings-restored.json
+            curl -fsS --retry 5 --retry-delay 2 --max-time 60 -X POST "$BASE/api/worker/settings?companyId=$COMPANY" -H 'content-type: application/json' --data-binary @/tmp/settings-restore.json -o /tmp/settings-restored.json
           fi
 
       - name: Verify final isolation and WhatsApp health
