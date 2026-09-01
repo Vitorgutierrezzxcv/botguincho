@@ -2876,7 +2876,7 @@ async function handleDispatch(msg, groupName, readableText, location) {
     targetCoordinates: originCoordinates || null,
   });
   if (!arrival.available) {
-    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    await replyAndRemember(msg, groupName, readableText, 'Motorista fora de rota.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     logEvent('capacity', `${groupName}: terceira corrida recusada; limite simultâneo atingido.`, { groupId: msg.from, activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
   }
@@ -3436,7 +3436,7 @@ async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null,
 async function handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, context) {
   const capacity = capacitySnapshot(context.management);
   if (!capacity.canAccept) {
-    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    await replyAndRemember(msg, groupName, readableText, 'Motorista fora de rota.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
   }
 
@@ -3505,7 +3505,7 @@ async function handleAvailabilityRuntime(msg, groupName, readableText, incomingL
 async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation, context) {
   const capacity = capacitySnapshot(context.management);
   if (!capacity.canAccept) {
-    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    await replyAndRemember(msg, groupName, readableText, 'Motorista fora de rota.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
   }
 
@@ -3793,14 +3793,14 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
   }
   const capacity = capacitySnapshot(context.management);
   if (!capacity.canAccept) {
-    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    await replyAndRemember(msg, groupName, readableText, 'Motorista fora de rota.', { intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
   }
   const targetAddress = call?.origin || context.facts.origin || null;
   const targetCoordinates = call?.originCoordinates || incomingLocation || null;
   const arrival = await estimateSecondCallArrival({ management: context.management, targetAddress, targetCoordinates });
   if (!arrival.available) {
-    await replyAndRemember(msg, groupName, readableText, 'Indisponível no momento.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
+    await replyAndRemember(msg, groupName, readableText, 'Motorista fora de rota.', { intent: 'capacity-full', activeCount: arrival.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS });
     return;
   }
   const eta = arrival.eta;
