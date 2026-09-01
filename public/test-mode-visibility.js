@@ -28,12 +28,13 @@
     style.textContent = `
       .test-mode-card{border:1px solid #93c5fd;background:linear-gradient(135deg,#eff6ff,#f8fbff);box-shadow:0 10px 30px rgba(37,99,235,.08)}
       .test-mode-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+      .test-mode-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
       .test-mode-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:800;letter-spacing:.04em}
       .test-mode-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin-top:14px}
       .test-mode-metric{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:12px}.test-mode-metric span{display:block;color:#64748b;font-size:12px}.test-mode-metric b{display:block;color:#0f172a;font-size:24px;margin-top:4px}
       .test-mode-list{display:grid;gap:8px;margin-top:14px}.test-mode-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:12px}.test-mode-row small{display:block;color:#64748b;margin-top:5px}.test-mode-status{align-self:start;padding:5px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:800}.test-mode-route{margin-top:5px;font-size:13px;color:#334155}
-      .test-mode-actions{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;justify-content:flex-end}.test-mode-actions .btn{min-height:30px}.test-mode-delete{color:#b91c1c!important;border-color:#fecaca!important;background:#fff!important}.test-mode-delete:hover{background:#fef2f2!important;border-color:#fca5a5!important}
-      @media(max-width:720px){.test-mode-metrics{grid-template-columns:1fr 1fr}.test-mode-head{display:block}.test-mode-badge{margin-top:10px}.test-mode-row{grid-template-columns:1fr}.test-mode-status{justify-self:start}.test-mode-actions{justify-content:flex-start}}
+      .test-mode-actions{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;justify-content:flex-end}.test-mode-actions .btn{min-height:30px}.test-mode-delete{color:#b91c1c!important;border-color:#fecaca!important;background:#fff!important}.test-mode-delete:hover{background:#fef2f2!important;border-color:#fca5a5!important}.test-mode-delete-all{color:#fff!important;border-color:#b91c1c!important;background:#b91c1c!important}.test-mode-delete-all:hover{background:#991b1b!important;border-color:#991b1b!important}.test-mode-delete-all:disabled{opacity:.65;cursor:wait}
+      @media(max-width:720px){.test-mode-metrics{grid-template-columns:1fr 1fr}.test-mode-head{display:block}.test-mode-head-actions{justify-content:flex-start;margin-top:10px}.test-mode-badge{margin-top:0}.test-mode-row{grid-template-columns:1fr}.test-mode-status{justify-self:start}.test-mode-actions{justify-content:flex-start}}
     `;
     document.head.appendChild(style);
   }
@@ -74,7 +75,7 @@
     if (callsPage) {
       let panel = document.getElementById('testModeCallsPanel');
       if (!panel) { panel = document.createElement('div'); panel.id = 'testModeCallsPanel'; panel.className = 'card section test-mode-card'; callsPage.prepend(panel); }
-      panel.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">MODO DE TESTE</div><h3>Cotações e corridas do Tests guincho</h3><p>Visíveis para conferência, isoladas dos números oficiais.</p></div><span class="test-mode-badge">${calls.length} registro(s)</span></div><div class="test-mode-list">${calls.length ? [...calls].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0)).map(c=>`<div class="test-mode-row"><div><b>${esc(c.vehicle||'Atendimento de teste')}</b><small>${esc(outcome(c))} · ${stamp(c.updatedAt||c.createdAt)}</small><div class="test-mode-route">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div>${c.lastOperationalText?`<small>“${esc(c.lastOperationalText).slice(0,150)}”</small>`:''}</div><div class="test-mode-actions"><span class="test-mode-status">${esc(statusLabel[c.status]||c.status||'Teste')}</span><button type="button" class="btn small ghost test-mode-delete" onclick="deleteTestCall('${esc(c.id)}')">Excluir</button></div></div>`).join('') : '<div class="empty">Nenhum atendimento de teste registrado.</div>'}</div>`;
+      panel.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">MODO DE TESTE</div><h3>Cotações e corridas do Tests guincho</h3><p>Visíveis para conferência, isoladas dos números oficiais.</p></div><div class="test-mode-head-actions"><span class="test-mode-badge">${calls.length} registro(s)</span>${calls.length ? '<button type="button" class="btn small test-mode-delete-all" onclick="deleteAllTestCalls(this)">Apagar todos</button>' : ''}</div></div><div class="test-mode-list">${calls.length ? [...calls].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0)).map(c=>`<div class="test-mode-row"><div><b>${esc(c.vehicle||'Atendimento de teste')}</b><small>${esc(outcome(c))} · ${stamp(c.updatedAt||c.createdAt)}</small><div class="test-mode-route">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div>${c.lastOperationalText?`<small>“${esc(c.lastOperationalText).slice(0,150)}”</small>`:''}</div><div class="test-mode-actions"><span class="test-mode-status">${esc(statusLabel[c.status]||c.status||'Teste')}</span><button type="button" class="btn small ghost test-mode-delete" onclick="deleteTestCall('${esc(c.id)}')">Excluir</button></div></div>`).join('') : '<div class="empty">Nenhum atendimento de teste registrado.</div>'}</div>`;
     }
   }
 
@@ -90,6 +91,33 @@
     } catch (error) {
       alert('Não foi possível excluir: ' + (error?.message || error));
     }
+  };
+
+  window.deleteAllTestCalls = async (button) => {
+    const calls = Array.isArray(mgmt?.testCalls) ? [...mgmt.testCalls] : [];
+    if (!calls.length) return alert('Não há corridas de teste para excluir.');
+    if (!confirm(`APAGAR TODOS OS ${calls.length} REGISTROS DE TESTE?\n\nIsso remove definitivamente todas as cotações/corridas do Tests guincho e o Financeiro de teste vinculado.\n\nAs corridas e o financeiro REAIS não serão alterados. Essa ação não pode ser desfeita.`)) return;
+    const originalText = button?.textContent || 'Apagar todos';
+    if (button) button.disabled = true;
+    let deleted = 0;
+    const failures = [];
+    for (const call of calls) {
+      if (button) button.textContent = `Apagando ${deleted + 1}/${calls.length}...`;
+      try {
+        await api('/api/worker/management', { method:'POST', body:JSON.stringify({ action:'delete_call', callId:call.id, ownerName:'Thiago' }) });
+        deleted += 1;
+      } catch (error) {
+        failures.push({ id:call.id, error:error?.message || String(error) });
+      }
+    }
+    try {
+      await loadManagement();
+      if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
+    } finally {
+      if (button) { button.disabled = false; button.textContent = originalText; }
+    }
+    if (failures.length) alert(`${deleted} registro(s) apagado(s). ${failures.length} não puderam ser excluídos; atualize a tela e tente novamente.`);
+    else alert(`Pronto. ${deleted} registro(s) de teste foram apagados.`);
   };
 
   const previousRenderManagement = renderManagement;
