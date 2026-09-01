@@ -1,3 +1,3 @@
-validate deterministic trained runtime 2026-08-27T21:23:30Z
-ai remains disabled
-training corpus fallback enabled
+deploy full training memory 2026-09-01T04:08:30Z
+readonly training import enabled
+real groups remain unselected
