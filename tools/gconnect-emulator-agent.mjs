@@ -47,8 +47,9 @@ async function hasGConnect(serial) {
 
 async function screenContainsPlate(serial) {
   try {
-    await execAdbRaw(['-s', serial, 'shell', 'uiautomator', 'dump', '/sdcard/gconnect-select.xml'], 15000);
-    const xml = await execAdbRaw(['-s', serial, 'shell', 'cat', '/sdcard/gconnect-select.xml'], 10000);
+    const path = '/data/local/tmp/gconnect-select.xml';
+    await execAdbRaw(['-s', serial, 'shell', 'uiautomator', 'dump', '--compressed', path], 15000);
+    const xml = await execAdbRaw(['-s', serial, 'shell', 'cat', path], 10000);
     return xml.toUpperCase().includes(PLATE);
   } catch {
     return false;
@@ -198,9 +199,62 @@ function parseUiDump(xml) {
   return { provider: 'gconnect-emulator', plate: card.plate || PLATE, ignition: card.ignition || null, speedKph: card.speedKph ?? null, odometerKm: card.odometerKm ?? null, batteryVoltage: card.batteryVoltage ?? null, address: card.address || null, lastUpdateText: card.lastUpdateText || null, capturedAt: new Date().toISOString() };
 }
 
+function visibleLabels(xml) {
+  return extractAttributes(xml)
+    .flatMap((node) => [node.text, node['content-desc']])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+}
+
+function isLoadingOnly(xml) {
+  const nodes = extractAttributes(xml);
+  if (!nodes.some((node) => /ProgressBar$/i.test(String(node.class || '')))) return false;
+  return visibleLabels(xml).length === 0;
+}
+
+function isLoginScreen(xml) {
+  const labels = visibleLabels(xml).join(' | ');
+  return /\b(login|sign in|entrar|acessar)\b/i.test(labels) && !xml.toUpperCase().includes(PLATE);
+}
+
+function uiSummary(xml) {
+  const labels = visibleLabels(xml).slice(0, 8);
+  return labels.length ? labels.join(' | ') : 'sem textos acessíveis';
+}
+
 async function dumpUi() {
-  await adb('shell', 'uiautomator', 'dump', '/sdcard/gconnect-bot.xml');
-  return adb('shell', 'cat', '/sdcard/gconnect-bot.xml');
+  const path = '/data/local/tmp/gconnect-bot.xml';
+  await adb('shell', 'uiautomator', 'dump', '--compressed', path);
+  return adb('shell', 'cat', path);
+}
+
+async function launchApp() {
+  await adb('shell', 'monkey', '-p', APP_PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1');
+}
+
+async function forceRestartApp() {
+  console.warn('GConnect preso em carregamento. Reiniciando somente o aplicativo, sem apagar dados.');
+  await adb('shell', 'am', 'force-stop', APP_PACKAGE).catch(() => {});
+  await sleep(1000);
+  await launchApp();
+  await sleep(7000);
+}
+
+async function recoverLoadingIfNeeded(xml) {
+  if (!isLoadingOnly(xml)) return xml;
+
+  // Dá uma chance ao carregamento normal antes de intervir.
+  await sleep(5000);
+  let current = await dumpUi();
+  if (!isLoadingOnly(current)) return current;
+
+  await forceRestartApp();
+  current = await dumpUi();
+  if (!isLoadingOnly(current)) return current;
+
+  // Uma segunda espera evita reiniciar o Android por uma abertura apenas lenta.
+  await sleep(7000);
+  return dumpUi();
 }
 
 async function wakeAndOpen() {
@@ -209,48 +263,85 @@ async function wakeAndOpen() {
   await adb('shell', 'wm', 'dismiss-keyguard').catch(() => {});
   const current = await adb('shell', 'dumpsys', 'window', 'windows');
   if (!current.includes(APP_PACKAGE)) {
-    await adb('shell', 'monkey', '-p', APP_PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1');
-    await sleep(2500);
+    await launchApp();
+    await sleep(3500);
   }
 }
 
 async function navigateToListIfNeeded(xml) {
   if (xml.toUpperCase().includes(PLATE)) return xml;
   const nodes = extractAttributes(xml);
-  const list = nodes.find((n) => String(n['content-desc'] || '').toLowerCase() === 'list' || String(n.text || '').toLowerCase() === 'list');
+  const list = nodes.find((n) => {
+    const label = `${n['content-desc'] || ''} ${n.text || ''}`.trim().toLowerCase();
+    return /^(list|lista|vehicles?|ve[ií]culos?)$/.test(label) || /vehicle list|lista de ve[ií]culos/.test(label);
+  });
   const p = boundsCenter(list?.bounds);
   if (p) {
     await adb('shell', 'input', 'tap', String(p.x), String(p.y));
     await sleep(1800);
-    return dumpUi();
+    return recoverLoadingIfNeeded(await dumpUi());
   }
-  await adb('shell', 'monkey', '-p', APP_PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1');
-  await sleep(2500);
-  return dumpUi();
+
+  // Se caiu em detalhe/mapa/subtela, voltar uma vez costuma recuperar a lista.
+  await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK').catch(() => {});
+  await sleep(1200);
+  let afterBack = await recoverLoadingIfNeeded(await dumpUi());
+  if (afterBack.toUpperCase().includes(PLATE)) return afterBack;
+
+  await launchApp();
+  await sleep(3500);
+  afterBack = await recoverLoadingIfNeeded(await dumpUi());
+  return afterBack;
 }
 
 async function filterPlateIfNeeded(xml) {
   if (xml.toUpperCase().includes(PLATE)) return xml;
   const nodes = extractAttributes(xml);
-  const field = nodes.find((n) => /filter for a vehicle/i.test(String(n.text || '')));
+  const field = nodes.find((n) => {
+    const label = `${n.text || ''} ${n['content-desc'] || ''}`;
+    return /filter for a vehicle|search vehicle|filtrar.*ve[ií]culo|buscar.*ve[ií]culo/i.test(label);
+  });
   const p = boundsCenter(field?.bounds);
   if (!p) return xml;
   await adb('shell', 'input', 'tap', String(p.x), String(p.y));
   await sleep(300);
   await adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END').catch(() => {});
+  await adb('shell', 'input', 'keyevent', 'KEYCODE_CTRL_A').catch(() => {});
   await adb('shell', 'input', 'text', PLATE);
-  await sleep(1200);
-  return dumpUi();
+  await sleep(1500);
+  return recoverLoadingIfNeeded(await dumpUi());
 }
 
 async function readLocation() {
   await wakeAndOpen();
-  let xml = await dumpUi();
+  let xml = await recoverLoadingIfNeeded(await dumpUi());
+
+  if (isLoadingOnly(xml)) {
+    throw new Error('GConnect permaneceu preso na tela de carregamento mesmo após reiniciar o aplicativo.');
+  }
+  if (isLoginScreen(xml)) {
+    throw new Error(`GConnect exige autenticação novamente. Tela: ${uiSummary(xml)}`);
+  }
+
   xml = await navigateToListIfNeeded(xml);
+  xml = await recoverLoadingIfNeeded(xml);
   xml = await filterPlateIfNeeded(xml);
+  xml = await recoverLoadingIfNeeded(xml);
+
+  if (isLoadingOnly(xml)) {
+    throw new Error('GConnect permaneceu preso na tela de carregamento durante a navegação.');
+  }
+  if (isLoginScreen(xml)) {
+    throw new Error(`GConnect exige autenticação novamente. Tela: ${uiSummary(xml)}`);
+  }
+
   const reading = parseUiDump(xml);
-  if (!xml.toUpperCase().includes(PLATE)) throw new Error(`Veículo ${PLATE} não apareceu na tela atual do GConnect.`);
-  if (!reading.address && reading.speedKph == null && reading.batteryVoltage == null) throw new Error('GConnect aberto, mas o cartão do veículo não trouxe dados legíveis pelo UIAutomator.');
+  if (!xml.toUpperCase().includes(PLATE)) {
+    throw new Error(`Veículo ${PLATE} não apareceu na tela atual do GConnect. Tela: ${uiSummary(xml)}`);
+  }
+  if (!reading.address && reading.speedKph == null && reading.batteryVoltage == null) {
+    throw new Error(`GConnect aberto, mas o cartão do veículo não trouxe dados legíveis. Tela: ${uiSummary(xml)}`);
+  }
   return reading;
 }
 
@@ -258,7 +349,7 @@ async function sendReading(reading) {
   if (!PAIR_CODE) throw new Error('BOTGUINCHO_PAIR_CODE não configurado no agente.');
   const r = await fetch(BRIDGE_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-botguincho-pair-code': PAIR_CODE, 'x-botguincho-agent': 'gconnect-emulator-v3' },
+    headers: { 'content-type': 'application/json', 'x-botguincho-pair-code': PAIR_CODE, 'x-botguincho-agent': 'gconnect-emulator-v4' },
     body: JSON.stringify(reading),
     signal: AbortSignal.timeout(20000),
   });
@@ -275,7 +366,7 @@ async function cycle() {
 }
 
 async function main() {
-  console.log(`GConnect Android Agent v3 iniciado. placa=${PLATE} intervalo=${POLL_SECONDS}s maxFalhas=${MAX_CONSECUTIVE_FAILURES}`);
+  console.log(`GConnect Android Agent v4 iniciado. placa=${PLATE} intervalo=${POLL_SECONDS}s maxFalhas=${MAX_CONSECUTIVE_FAILURES}`);
   while (true) {
     try {
       await cycle();
@@ -284,7 +375,7 @@ async function main() {
       console.error(`[${new Date().toISOString()}] falha ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}: ${e instanceof Error ? e.message : String(e)}`);
       cachedSerial = '';
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        console.error('Falhas consecutivas excedidas. Encerrando para o systemd reiniciar o agente.');
+        console.error('Falhas consecutivas excedidas. Encerrando para o systemd reiniciar o agente; watchdog cuidará do Android se não houver heartbeat.');
         process.exit(42);
       }
     }
