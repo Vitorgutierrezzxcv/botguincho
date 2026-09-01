@@ -911,15 +911,48 @@ function closingNumber(value, fallback = null) {
 
 function finalGroupMessage(call = {}) {
   const lines = ['Corrida finalizada ✅'];
-  if (call.protocol) lines.push(`Protocolo: ${call.protocol}`);
-  if (Number.isFinite(Number(call.billableKm))) lines.push(`Quilometragem total: ${Number(call.billableKm).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km.`);
-  if (Number(call.value) > 0) lines.push(`Valor final: ${formatCurrency(call.value)}.`);
+  const protocol = String(call.protocol || '').trim();
+  const vehicle = String(call.vehicle || '').trim();
+  const plate = String(call.plate || '').trim();
+  const origin = String(call.origin || '').trim();
+  const destination = String(call.destination || '').trim();
+  const finalKm = Number(call.billableKm);
+  const finalValue = Number(call.value || 0);
+  const workedAmount = Math.max(0, Number(call.workedTimeAmount || 0));
+  const dirtAmount = Math.max(0, Number(call.dirtRoadChargeAmount || 0));
+  const tollAmount = Math.max(0, Number(call.finalTollAmount || 0));
+  const otherAmount = Math.max(0, Number(call.finalOtherExtras || 0));
+  const extrasTotal = workedAmount + dirtAmount + tollAmount + otherAmount;
+  const serviceValue = finalValue > 0 ? Math.max(0, Math.round((finalValue - extrasTotal) * 100) / 100) : 0;
+
+  if (protocol) lines.push(`Protocolo: ${protocol}`);
+  if (vehicle || plate) lines.push(`Veículo: ${vehicle || 'Não informado'}${plate ? ` · Placa: ${plate}` : ''}`);
+  if (origin) lines.push(`Origem: ${origin}`);
+  if (destination) lines.push(`Destino: ${destination}`);
+  if (Number.isFinite(finalKm) && finalKm >= 0) lines.push(`Quilometragem total: ${finalKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km.`);
+  if (serviceValue > 0) lines.push(`Valor do serviço: ${formatCurrency(serviceValue)}.`);
+
   const extras = [];
-  if (Number(call.workedTimeAmount) > 0) extras.push(`hora trabalhada ${formatCurrency(call.workedTimeAmount)}`);
-  if (Number(call.dirtRoadChargeAmount) > 0) extras.push(`estrada de terra ${formatCurrency(call.dirtRoadChargeAmount)}`);
-  if (Number(call.finalTollAmount) > 0) extras.push(`pedágio ${formatCurrency(call.finalTollAmount)}`);
-  if (Number(call.finalOtherExtras) > 0) extras.push(`outros adicionais ${formatCurrency(call.finalOtherExtras)}`);
-  if (extras.length) lines.push(`Adicionais confirmados: ${extras.join(' · ')}.`);
+  if (workedAmount > 0) {
+    const hours = Number(call.workedTimeChargedHours || 0);
+    extras.push(`Hora trabalhada${hours > 0 ? ` (${hours}h)` : ''}: ${formatCurrency(workedAmount)}`);
+  }
+  if (dirtAmount > 0) {
+    const dirtKm = Number(call.dirtRoadBillableKm || 0);
+    extras.push(`Estrada de terra${dirtKm > 0 ? ` (${dirtKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km)` : ''}: ${formatCurrency(dirtAmount)}`);
+  }
+  if (tollAmount > 0) extras.push(`Pedágio: ${formatCurrency(tollAmount)}`);
+  if (otherAmount > 0) extras.push(`Outros adicionais: ${formatCurrency(otherAmount)}`);
+  if (extras.length) {
+    lines.push('Adicionais confirmados:');
+    for (const extra of extras) lines.push(`• ${extra}`);
+  } else {
+    lines.push('Adicionais confirmados: nenhum.');
+  }
+
+  if (finalValue > 0) lines.push(`Valor final: ${formatCurrency(finalValue)}.`);
+  const notes = String(call.ownerClosingNotes || '').trim();
+  if (notes) lines.push(`Observação de fechamento: ${notes}`);
   return lines.join('\n');
 }
 
@@ -3743,6 +3776,24 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
     logEvent('protocol', `${groupName}: protocolo tratado como nova solicitacao; dados nao correspondem ao atendimento em andamento.`, {
       groupId: msg.from, protocol: protocolIdentity.protocol || null, plate: protocolIdentity.plate || null,
     });
+    // Protocolo formal sem correspondencia nao autoriza nada sozinho: vira cotacao
+    // e recebe a mesma previa de ETA, km e valor de qualquer nova oportunidade.
+    await handleQuoteRuntime(msg, groupName, readableText, null, {
+      ...context,
+      recentCall: null,
+      intent: 'quote',
+    });
+    return;
+  }
+  // Se o protocolo corresponde a uma oportunidade ainda nao autorizada, atualiza
+  // aquela mesma cotacao e devolve a previa completa. Nunca transforma protocolo em autorizacao.
+  if (call && ['cotacao','aguardando_dados','aguardando_aprovacao'].includes(call.status)) {
+    await handleQuoteRuntime(msg, groupName, readableText, null, {
+      ...context,
+      recentCall: call,
+      intent: 'quote',
+    });
+    return;
   }
   const status = call?.status || 'aguardando_aprovacao';
   const flowActive = isFlowActiveCall(call);

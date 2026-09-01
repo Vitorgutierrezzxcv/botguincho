@@ -187,7 +187,7 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   if (activeService && /\b(chegou|chegamos|entregue|entregamos)\b.{0,28}\b(destino|oficina|patio)\b/.test(value)) return 'destination_arrival';
   if (activeService && /\b(saindo|saiu|a caminho|em deslocamento|iniciando deslocamento)\b/.test(value)) return 'departure';
   if (evidenceContext && (/\b(fotos?|checklist|video|evidencias?)\b.{0,30}\b(enviad\w*|anexad\w*|realizad\w*|concluid\w*|feito|pronto)\b/.test(value) || value === '[imagem recebida]')) return 'evidence';
-  if (evidenceContext && /\bprotocolo\b/.test(value)) return 'protocol_update';
+  if (evidenceContext && /\bprotocolo\b/.test(value) && !hasQuoteSignals(text)) return 'protocol_update';
 
   if (base === 'cancellation') return 'cancellation';
   if (base === 'pending_approval') return 'pending_approval';
@@ -222,7 +222,8 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
 
   if (hasFormalProtocol(text)) {
     if (activeService) return 'protocol_update';
-    if (profile.formalProtocolCanAuthorize && ['cotacao','aguardando_aprovacao','novo','disponibilidade'].includes(recentCall?.status)) return 'formal_dispatch';
+    // Protocolo, ficha ou WebPrestador nunca autorizam sozinhos. Mesmo quando uma
+    // central historicamente manda ficha formal, a execucao exige autorizacao expressa.
     return 'protocol_received';
   }
 
