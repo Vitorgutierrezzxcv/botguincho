@@ -82,8 +82,17 @@ export function protocolIdentityMatchesCall(call = {}, identity = {}) {
 export function selectProtocolTargetCall({ calls = [], groupId = '', identity = {}, fallbackCall = null } = {}) {
   if (!protocolHasStrongIdentity(identity)) return fallbackCall || null;
 
+  const incomingProtocol = norm(identity.protocol);
+  const finalStatuses = new Set(['concluido', 'cancelado']);
   const candidates = (Array.isArray(calls) ? calls : [])
-    .filter((call) => call && !call.deletedAt && call.sourceGroupId === groupId)
+    .filter((call) => {
+      if (!call || call.deletedAt || call.sourceGroupId !== groupId) return false;
+      const status = norm(call.status);
+      if (!finalStatuses.has(status)) return true;
+      // Corrida encerrada so pode receber atualizacao quando o numero do protocolo ja e exatamente o mesmo.
+      const callProtocol = norm(call.protocol);
+      return Boolean(incomingProtocol && callProtocol && incomingProtocol === callProtocol);
+    })
     .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
 
   return candidates.find((call) => protocolIdentityMatchesCall(call, identity)) || null;
