@@ -9,7 +9,7 @@ import chromium from '@sparticuz/chromium';
 import whatsappWebJs from 'whatsapp-web.js';
 import { createLearningStore, inferLearningIntent } from './learning-engine.mjs';
 import { classifyRuntimeIntent, resolveGroupProfile, extractOperationalFacts, inferVehicleType, buildEvidenceChecklist, markEvidenceChecklist, appendOperationalTimeline, calculateApprovedCommercial, reconcileCommercial, learningContextForGroup, shouldStaySilent } from './operational-knowledge.mjs';
-import { sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
+import { extractLabeledAddressBlock, sanitizeExcludedAreas, matchExcludedArea } from './excluded-areas.mjs';
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, selectedGroupBillingView, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
@@ -2855,8 +2855,8 @@ async function promoteQueuedCallAfter(completedCallId) {
 }
 
 async function handleDispatch(msg, groupName, readableText, location) {
-  const originAddress = extractLabeledField(readableText, 'Origem');
-  const destinationAddress = extractLabeledField(readableText, 'Destino');
+  const originAddress = extractLabeledAddressBlock(readableText, 'Origem') || extractLabeledField(readableText, 'Origem');
+  const destinationAddress = extractLabeledAddressBlock(readableText, 'Destino') || extractLabeledField(readableText, 'Destino');
   if (originAddress && isExplicitlyOutOfCoverage(originAddress)) {
     await replyAndRemember(msg, groupName, readableText, `Fora da área de atendimento. Atendemos somente ${configuredServiceState}.`, { intent: 'dispatch-out-of-coverage', originAddress });
     return;
@@ -3304,8 +3304,8 @@ async function findConfiguredExcludedArea({ groupId, readableText, facts = {}, i
   const areas = sanitizeExcludedAreas(settings?.excludedAreas || []);
   if (!areas.length) return null;
 
-  const originAddress = extractLabeledField(readableText, 'Origem') || facts.origin || enderecoEmTextoLivre(readableText) || null;
-  const destinationAddress = extractLabeledField(readableText, 'Destino') || facts.destination || null;
+  const originAddress = extractLabeledAddressBlock(readableText, 'Origem') || facts.origin || extractLabeledField(readableText, 'Origem') || enderecoEmTextoLivre(readableText) || null;
+  const destinationAddress = extractLabeledAddressBlock(readableText, 'Destino') || facts.destination || extractLabeledField(readableText, 'Destino') || null;
 
   if (originAddress) {
     const originMatch = await resolveConfiguredExcludedAddress(originAddress, 'origin', settings);
@@ -3379,8 +3379,8 @@ async function currentOperationalContext(groupId, groupName, text) {
 // herdar o que ja foi recebido, senao a previsao cai numa localizacao antiga
 // do grupo e sai um numero diferente do que ja tinha sido informado.
 async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null, pending = null, options = {}) {
-  const originAddress = extractLabeledField(text, 'Origem') || facts.origin || enderecoEmTextoLivre(text) || pending?.origin || null;
-  const destinationAddress = extractLabeledField(text, 'Destino') || facts.destination || pending?.destination || null;
+  const originAddress = extractLabeledAddressBlock(text, 'Origem') || facts.origin || extractLabeledField(text, 'Origem') || enderecoEmTextoLivre(text) || pending?.origin || null;
+  const destinationAddress = extractLabeledAddressBlock(text, 'Destino') || facts.destination || extractLabeledField(text, 'Destino') || pending?.destination || null;
   const shared = await getRecentSharedLocation(groupId);
   const originCoordinates = incomingLocation
     || (!originAddress ? (pending?.originCoordinates || shared?.coordinates || null) : null);
