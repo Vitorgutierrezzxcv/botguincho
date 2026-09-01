@@ -13,6 +13,7 @@ import { extractLabeledAddressBlock, sanitizeExcludedAreas, matchExcludedArea } 
 import { DEFAULT_WEEKLY_SCHEDULE, sanitizeWeeklySchedule, evaluateOperatingHours } from './operating-hours.mjs';
 import { sanitizeBillingProfile, ensureBillingProfile, settlementForCall, upsertBillingBatch, financeEntryFromCall, sanitizeBillingBatch, updateBatchTemporalStatuses, buildInsurerSummaries, selectedGroupBillingView, closureReply } from './financial-engine.mjs';
 import { MAX_CONCURRENT_CALLS, isCapacityActiveCall, activeCallsForCapacity, capacitySnapshot, plannedRemainingMinutes, capSecondCallEta } from './dispatch-capacity.mjs';
+import { protocolHasStrongIdentity, selectProtocolTargetCall } from './protocol-call-matching.mjs';
 import { FREE_CANCELLATION_WINDOW_MINUTES, cancellationDeadlineFor, cancellationReply, enforceFullCancellationCommercial, evaluateCancellationPolicy } from './cancellation-policy.mjs';
 import { ON_SITE_GRACE_MINUTES, WORKED_HOUR_RATE, addWorkedTimeToCommercial, evaluateWorkedTime } from './worked-time-policy.mjs';
 import { driverPayForCall, driverPayrollPeriodFor, markDriverPayrollPaid, syncDriverPayrolls } from './driver-payroll.mjs';
@@ -3714,7 +3715,35 @@ async function handleDispatchDetailsRuntime(msg, groupName, readableText, incomi
 }
 
 async function handleProtocolRuntime(msg, groupName, readableText, context) {
-  const call = context.recentCall;
+  const protocolIdentity = {
+    protocol: context.facts?.protocol || readableText.match(/\bprotocolo\s*[:#-]?\s*([A-Z0-9.-]+)/i)?.[1] || '',
+    plate: context.facts?.plate || readableText.match(/\bplaca\s*[:#-]?\s*([A-Z]{3}[0-9A-Z]{4})/i)?.[1] || '',
+    vehicle: context.facts?.vehicle || readableText.match(/(?:modelo\s*\/\s*montadora|modelo|ve[ií]culo)\s*:\s*([^\n]+)/i)?.[1] || '',
+    origin: extractLabeledAddressBlock(readableText, 'Origem') || context.facts?.origin || '',
+    destination: extractLabeledAddressBlock(readableText, 'Destino') || context.facts?.destination || '',
+  };
+  const call = selectProtocolTargetCall({
+    calls: context.management?.calls || [],
+    groupId: msg.from,
+    identity: protocolIdentity,
+    fallbackCall: context.recentCall,
+  });
+  const protocolIsNewRequest = protocolHasStrongIdentity(protocolIdentity) && !call;
+  if (protocolIsNewRequest) {
+    const capacity = capacitySnapshot(context.management);
+    if (!capacity.canAccept) {
+      await replyAndRemember(msg, groupName, readableText, 'Motorista fora de rota.', {
+        intent: 'capacity-full', activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS, protocolNewRequest: true,
+      });
+      logEvent('capacity', `${groupName}: novo protocolo recusado; nao corresponde às corridas ativas e limite simultaneo foi atingido.`, {
+        groupId: msg.from, activeCount: capacity.activeCount, maxConcurrentCalls: MAX_CONCURRENT_CALLS, protocol: protocolIdentity.protocol || null, plate: protocolIdentity.plate || null,
+      });
+      return;
+    }
+    logEvent('protocol', `${groupName}: protocolo tratado como nova solicitacao; dados nao correspondem ao atendimento em andamento.`, {
+      groupId: msg.from, protocol: protocolIdentity.protocol || null, plate: protocolIdentity.plate || null,
+    });
+  }
   const status = call?.status || 'aguardando_aprovacao';
   const flowActive = isFlowActiveCall(call);
   const nextOrigin = context.facts.origin || call?.origin || null;
