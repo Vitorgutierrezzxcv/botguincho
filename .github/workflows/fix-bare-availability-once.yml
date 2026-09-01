@@ -1,0 +1,87 @@
+name: Fix bare availability once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-bare-availability-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply isolated availability fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/vercel-whatsapp-worker.mjs')
+          text = path.read_text(encoding='utf-8')
+
+          old = """  const facts = context.facts;
+          const pending = pendingForIncomingFacts(context.recentCall, facts);
+          """
+
+          new = """  const facts = context.facts;
+          // DISPONIBILIDADE_PURA: uma pergunta sem dados de atendimento deve responder
+          // somente a disponibilidade. Nao cria previa comercial, nao herda cotacao
+          // anterior e nao informa valor-base sem origem/destino/veiculo.
+          const bareAvailabilityOnly = asksAvailability(readableText)
+            && !facts?.origin
+            && !facts?.destination
+            && !facts?.vehicle
+            && !facts?.vehicleType
+            && !facts?.plate
+            && !facts?.protocol
+            && !extractLabeledField(readableText, 'Origem')
+            && !extractLabeledField(readableText, 'Destino')
+            && !enderecoEmTextoLivre(readableText);
+          if (bareAvailabilityOnly) {
+            await replyAndRemember(msg, groupName, readableText, 'Disponível ✅', {
+              intent: 'availability',
+              activeCount: capacity.activeCount,
+              slotsAvailable: capacity.slotsAvailable,
+              bareAvailabilityOnly: true,
+            });
+            return;
+          }
+
+          const pending = pendingForIncomingFacts(context.recentCall, facts);
+          """
+
+          if old not in text:
+              raise SystemExit('anchor not found; refusing to change anything')
+          if text.count(old) != 1:
+              raise SystemExit(f'anchor count={text.count(old)}; refusing ambiguous change')
+
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate only affected worker and existing regressions
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node tools/test-route-address-latency.mjs
+          node tools/test-protocol-call-matching.mjs
+          node tools/test-close-summary-and-protocol-policy.mjs
+          node tools/test-simple-operation.mjs
+          node tools/test-driver-payroll.mjs
+          grep -F "bareAvailabilityOnly" tools/vercel-whatsapp-worker.mjs
+          grep -F "await replyAndRemember(msg, groupName, readableText, 'Disponível ✅'" tools/vercel-whatsapp-worker.mjs
+
+      - name: Commit only worker change
+        run: |
+          rm -f .github/workflows/fix-bare-availability-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs .github/workflows/fix-bare-availability-once.yml
+          git diff --cached --stat
+          git commit -m 'Corrige resposta de disponibilidade sem dados'
+          git push origin main
