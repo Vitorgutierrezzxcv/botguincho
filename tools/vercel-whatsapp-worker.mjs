@@ -890,6 +890,10 @@ async function closeCallFromOwner(state, body = {}) {
   const index = state.calls.findIndex((item) => item.id === callId);
   if (index < 0) throw new Error('call_not_found');
   const call = state.calls[index];
+  // Fechamento idempotente: clique repetido não duplica timeline, financeiro ou repasse.
+  if (call.ownerClosedAt) {
+    return { call, noticeSent: false, driverPay: driverPayForCall(call), alreadyClosed: true };
+  }
   // Corridas do grupo de testes também podem ser fechadas pelo dono para validar o fluxo completo.
   // A proteção de envio ao WhatsApp continua abaixo com !isTestCall(next).
   if (!(call.authorizedAt || isConfirmedCall(call) || call.cancellationChargeRequired === true)) throw new Error('call_not_authorized');

@@ -369,10 +369,18 @@
     openModal('Conferir e fechar corrida', `<div class="notice warn">Confira os dados antes de fechar. Depois deste botão o valor vira definitivo no Financeiro, entra no repasse do motorista e o resumo é enviado ao grupo do WhatsApp.</div><div class="form-grid section"><div class="field"><label>Protocolo</label><input value="${esc(call.protocol||'Aguardando')}" disabled></div><div class="field"><label>Motorista</label><input value="${esc(call.driverName||driverName())}" disabled></div><div class="field"><label>KM cobrados</label><input name="billableKm" type="number" step="0.1" value="${n(call.billableKm??call.totalKm??call.estimatedTotalKm)||''}"></div><div class="field"><label>Valor final</label><input name="value" type="number" step="0.01" value="${n(call.value||call.calculatedValue)||''}"></div><div class="field"><label>Horas trabalhadas</label><input name="workedTimeChargedHours" type="number" step="1" min="0" value="${n(call.workedTimeChargedHours)||0}"></div><div class="field"><label>Valor hora trabalhada</label><input name="workedTimeAmount" type="number" step="0.01" min="0" value="${n(call.workedTimeAmount)||0}"></div><div class="field"><label>KM estrada de terra</label><input name="dirtRoadBillableKm" type="number" step="0.1" min="0" value="${n(call.dirtRoadBillableKm)||0}"></div><div class="field"><label>Pedágio</label><input name="toll" type="number" step="0.01" min="0" value="${n(call.finalTollAmount)||0}"></div><div class="field"><label>Outros adicionais</label><input name="otherExtras" type="number" step="0.01" min="0" value="${n(call.finalOtherExtras)||0}"></div><div class="field"><label>Fechado por</label><input name="ownerName" value="Thiago"></div></div><div class="field section"><label>Observações do fechamento</label><textarea name="notes">${esc(call.ownerClosingNotes||'')}</textarea></div>`, async () => {
       const data = Object.fromEntries(new FormData(document.getElementById('modalForm')).entries());
       for (const key of ['billableKm','value','workedTimeChargedHours','workedTimeAmount','dirtRoadBillableKm','toll','otherExtras']) data[key] = data[key] === '' ? null : Number(data[key]);
-      const d = await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'close_call', callId: id, ownerName: data.ownerName || 'Thiago', final: data }) });
-      const sent = d.data?.closeResult?.noticeSent;
-      await refreshOwner();
-      alert(testClosure ? 'Corrida de teste concluída. Valores, KM e fechamento foram processados; o resumo não é enviado ao grupo de teste.' : (sent ? 'Corrida fechada e resumo enviado ao grupo.' : 'Corrida fechada. O WhatsApp não confirmou o envio do resumo; confira o grupo.'));
+      const saveButton = document.getElementById('modalSave');
+      if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Concluindo...'; }
+      try {
+        const d = await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'close_call', callId: id, ownerName: data.ownerName || 'Thiago', final: data }) });
+        const sent = d.data?.closeResult?.noticeSent;
+        await refreshOwner();
+        closeModal();
+        alert(testClosure ? 'Corrida de teste concluída ✅ Os dados foram processados e ela saiu dos atendimentos em aberto.' : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));
+      } catch (error) {
+        if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }
+        throw error;
+      }
     });
   };
 
