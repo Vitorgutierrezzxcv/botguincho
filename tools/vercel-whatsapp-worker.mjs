@@ -26,6 +26,7 @@ import { historicalTrainingStats } from './training-runtime-index.mjs';
 import { normalizeAddressInput } from './address-normalization.mjs';
 import { detectBrazilStateFromAddress } from './address-state-detection.mjs';
 import { maybeInterpretOperationalMessage } from './ai-operational-fallback.mjs';
+import { selectRecentUnprocessedMessages } from './whatsapp-recovery.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -90,6 +91,7 @@ let nominatimQueue = Promise.resolve();
 let lastNominatimRequestAt = 0;
 let whatsappRecoveryTimer = null;
 let lastWhatsappRecoveryAt = 0;
+let whatsappUnavailableSince = Date.now();
 let simulatorClient = null;
 let simulatorStatus = 'desconectado';
 let simulatorQrDataUrl = null;
@@ -4339,6 +4341,44 @@ function scheduleWhatsAppRecovery(reason = 'unknown') {
   }, delay);
 }
 
+async function recoverMissedWhatsAppMessages(sinceMs) {
+  if (!waClient || waStatus !== 'pronto') return 0;
+  const allowed = await getAllowedGroupIds();
+  if (!allowed.size) return 0;
+
+  let recovered = 0;
+  const processedIds = new Set(processedMessageIds.keys());
+  for (const groupId of allowed) {
+    try {
+      const chat = await waClient.getChatById(groupId);
+      if (!chat?.isGroup) continue;
+      const recent = await chat.fetchMessages({ limit: 25 });
+      const pending = selectRecentUnprocessedMessages(recent, {
+        sinceMs,
+        processedIds,
+      });
+      for (const message of pending) {
+        const messageId = message?.id?._serialized || '';
+        logEvent('recovery', `Recuperando mensagem recebida durante indisponibilidade em ${chat.name || groupId}.`, {
+          groupId,
+          messageId,
+          timestamp: message?.timestamp || null,
+        });
+        await processIncomingMessage(message);
+        if (messageId) processedIds.add(messageId);
+        recovered += 1;
+      }
+    } catch (error) {
+      logEvent('warning', 'Falha ao recuperar mensagens recentes após reconexão.', {
+        groupId,
+        error: String(error?.message || error).slice(0, 180),
+      });
+    }
+  }
+  if (recovered) logEvent('recovery', `${recovered} mensagem(ns) recuperada(s) após reconexão do WhatsApp.`);
+  return recovered;
+}
+
 async function startWhatsApp() {
   if (waClient) return;
   waStatus = 'iniciando';
@@ -4407,12 +4447,17 @@ async function startWhatsApp() {
   });
 
   waClient.on('ready', async () => {
+    const recoverySince = whatsappUnavailableSince || Date.now();
     waStatus = 'pronto';
     qrDataUrl = null;
     logEvent('whatsapp', 'WhatsApp conectado e pronto.');
     try {
       await discoverGroups();
     } catch {}
+    await recoverMissedWhatsAppMessages(recoverySince).catch((error) => {
+      logEvent('warning', 'Recuperação de mensagens após ready falhou.', { error: String(error?.message || error).slice(0, 180) });
+    });
+    whatsappUnavailableSince = null;
     const settings = await getSettings();
     if (settings.simpleMode === false && await simulatorAutoConnectEnabled()) scheduleSimulatorRecovery('primary-ready', 8000);
   });
@@ -4440,6 +4485,7 @@ async function startWhatsApp() {
   });
 
   waClient.on('auth_failure', (message) => {
+    whatsappUnavailableSince = whatsappUnavailableSince || Date.now();
     waStatus = 'erro';
     lastError = String(message);
     logEvent('error', 'Falha de autenticação do WhatsApp.', { error: lastError });
@@ -4447,6 +4493,7 @@ async function startWhatsApp() {
   });
 
   waClient.on('disconnected', (reason) => {
+    whatsappUnavailableSince = whatsappUnavailableSince || Date.now();
     waStatus = 'desconectado';
     lastError = String(reason);
     logEvent('warning', 'WhatsApp desconectado.', { reason: lastError });
