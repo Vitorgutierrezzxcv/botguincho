@@ -61,4 +61,22 @@ const otherIntent = mergeAiOperationalInterpretation({
 assert.equal(otherIntent.intent, 'quote');
 assert.equal(otherIntent.facts.vehicleType, 'leve');
 
+const conservativeAiIntent = mergeAiOperationalInterpretation({
+  text: messy,
+  facts: { origin: '', destination: '', vehicle: '', vehicleType: null, service: '' },
+  intent: 'other',
+  ai: {
+    intent: 'other',
+    origin: 'Alameda das Acácias, Jardim Recreio Alvorada, Betim - MG',
+    destination: 'Rua Palmeiras, 780, Colonial, Contagem - MG',
+    vehicle: 'Volkswagen Gol',
+    vehicleType: 'leve',
+    service: 'Reboque leve',
+    protocol: '',
+    confidence: 0.99,
+  },
+});
+assert.equal(conservativeAiIntent.intent, 'quote', 'ficha completa deve virar cotacao mesmo se o rotulo da IA vier other');
+assert.equal(conservativeAiIntent.used, true);
+
 console.log('AI_OPERATIONAL_FALLBACK_OK');
