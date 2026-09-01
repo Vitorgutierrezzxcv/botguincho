@@ -1,0 +1,94 @@
+name: Fix training export read-only once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-training-export-readonly-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: botguincho-fix-training-export-readonly
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Corrigir permissão de leitura do histórico
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/vercel-whatsapp-worker.mjs')
+          text = path.read_text()
+          start = text.index("app.get('/api/learning/export-history'")
+          end = text.index("app.get('/api/learning/summary'", start)
+          block = text[start:end]
+
+          old = """    const allowed = await getAllowedGroupIds();
+    if (!allowed.has(groupId)) return res.status(403).json({ ok: false, error: 'group_not_authorized' });
+"""
+          new = """    // Ler histórico para treinamento não autoriza o bot a responder no grupo.
+    // A fonte precisa existir no registry da sessão atual e ser um grupo operacional,
+    // mas NÃO precisa estar em groups.json (lista de grupos autorizados a responder).
+    const registry = await getRegistry();
+    const registeredGroup = registry[groupId];
+    if (!registeredGroup) return res.status(404).json({ ok: false, error: 'group_not_found' });
+    const allowed = await getAllowedGroupIds();
+    if (!isOperationalGroupCandidate(registeredGroup, allowed)) {
+      return res.status(403).json({ ok: false, error: 'group_not_training_readable' });
+    }
+"""
+
+          if old not in block:
+              if 'group_not_training_readable' in block:
+                  print('Patch já aplicado; nada a fazer.')
+              else:
+                  raise SystemExit('Trecho esperado da exportação não encontrado; abortando sem alterar.')
+          else:
+              block = block.replace(old, new, 1)
+              text = text[:start] + block + text[end:]
+              path.write_text(text)
+              print('Patch aplicado.')
+
+          # Garantias de segurança: resposta continua dependendo da allowlist.
+          final = path.read_text()
+          required = [
+              "if (!allowed.has(msg.from)) return;",
+              "group_not_training_readable",
+              "app.get('/api/learning/export-history'",
+          ]
+          for needle in required:
+              if needle not in final:
+                  raise SystemExit(f'Garantia ausente após patch: {needle}')
+          PY
+
+      - name: Validar sintaxe e testes operacionais
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          npm ci --ignore-scripts
+          npm run test:operational
+          npm run test:cancellation
+
+      - name: Consolidar correção no main
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          if git diff --cached --quiet; then
+            echo 'Nenhuma alteração pendente.'
+            exit 0
+          fi
+          git commit -m 'Separa leitura de treino da autorização de resposta'
+          git push origin HEAD:main
