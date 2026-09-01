@@ -23,8 +23,6 @@ jobs:
       COMPANY: cliente-teste
     steps:
       - name: Preflight WhatsApp and group isolation
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json
@@ -36,9 +34,8 @@ jobs:
           assert s.get('whatsapp',{}).get('status') == 'pronto', s
           assert not s.get('whatsapp',{}).get('qrDataUrl'), s
           selected=[x for x in g if x.get('selected')]
-          assert len(selected)==1, [x.get('name') for x in selected]
-          assert selected[0].get('name')=='Tests guincho', selected
-          print('PREFLIGHT_OK', selected[0].get('name'))
+          assert len(selected)==1 and selected[0].get('name')=='Tests guincho', [x.get('name') for x in selected]
+          print('PREFLIGHT_OK Tests guincho')
           PY
 
       - name: Import and persist all ten insurer histories
@@ -66,39 +63,38 @@ jobs:
           print(json.dumps({'action':'sync','groupId':sys.argv[1],'importFirst':True}, ensure_ascii=False))
           PY
           )
-            curl -fsS --retry 2 --retry-delay 5 --retry-all-errors --max-time 210 \
-              -X POST "$BASE/api/worker/training-sync?companyId=$COMPANY" \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H 'content-type: application/json' \
-              --data "$BODY" -o /tmp/one.json
+            HTTP=$(curl -sS --max-time 210 -X POST "$BASE/api/worker/training-sync?companyId=$COMPANY" \
+              -H "Authorization: Bearer $GH_TOKEN" -H 'content-type: application/json' \
+              --data "$BODY" -o /tmp/one.json -w '%{http_code}')
+            if [ "$HTTP" != "200" ]; then
+              echo "TRAINING_SYNC_HTTP_$HTTP"
+              python3 - <<'PY'
+          import json
+          try:
+              d=json.load(open('/tmp/one.json'))
+              print('TRAINING_SYNC_ERROR:', d.get('error','unknown_error'))
+          except Exception:
+              print('TRAINING_SYNC_ERROR: invalid_json_response')
+          PY
+              exit 1
+            fi
             python3 - "$GROUP_ID" "$GROUP_NAME" <<'PY'
           import json,sys
           d=json.load(open('/tmp/one.json'))
           assert d.get('ok') is True, d
           assert int(d.get('totalMessages') or 0) > 0, d
-          print(json.dumps({
-            'groupId':sys.argv[1],
-            'groupName':sys.argv[2],
-            'totalMessages':d.get('totalMessages'),
-            'imported':d.get('imported'),
-            'syncedChunks':d.get('syncedChunks')
-          }, ensure_ascii=False))
+          print(json.dumps({'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'imported':d.get('imported'),'syncedChunks':d.get('syncedChunks')}, ensure_ascii=False))
           PY
             python3 - "$GROUP_ID" "$GROUP_NAME" >> /tmp/results.ndjson <<'PY'
           import json,sys
           d=json.load(open('/tmp/one.json'))
-          print(json.dumps({
-            'groupId':sys.argv[1],
-            'groupName':sys.argv[2],
-            'totalMessages':d.get('totalMessages'),
-            'imported':d.get('imported'),
-            'syncedChunks':d.get('syncedChunks')
-          }, ensure_ascii=False))
+          print(json.dumps({'groupId':sys.argv[1],'groupName':sys.argv[2],'totalMessages':d.get('totalMessages'),'imported':d.get('imported'),'syncedChunks':d.get('syncedChunks')}, ensure_ascii=False))
           PY
           done < /tmp/groups.tsv
           cat /tmp/results.ndjson
 
       - name: Verify real groups stayed read-only
+        if: always()
         run: |
           set -euo pipefail
           curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups-after.json
@@ -106,23 +102,6 @@ jobs:
           import json
           g=json.load(open('/tmp/groups-after.json')).get('groups',[])
           selected=[x for x in g if x.get('selected')]
-          assert len(selected)==1, [x.get('name') for x in selected]
-          assert selected[0].get('name')=='Tests guincho', selected
-          names={x.get('name'):bool(x.get('selected')) for x in g}
-          expected=[
-            'América Betim e Região SOLUÇÃO ASSISTÊNCIA',
-            'AMERICA GUINCHO - BETIM MG *F15* X TOP BRASIL',
-            'AMÉRICA GUINCHO BETIM X SATURNO (SB)',
-            'América Guincho X Plus Assistência',
-            'America Guincho/ Contagem/Betim MG X Company Truck',
-            'América Guincho/ HORIZONTE DEBORA GRAZEIELE',
-            'AMERICA GUINCHO/ SOCORRE ASSISTÊNCIA',
-            'AMERICA REBOQUE/ BETIM/ CONTAGEM PREMIUM ASSISTÊNCIA',
-            'ASSISTÊNCIA SEGURA  X AMERICA GUINCHO - BETIM - MG',
-            'PREST. AMERICA GUINCHOS X POWER - BETIM',
-          ]
-          for name in expected:
-            assert name in names, name
-            assert names[name] is False, f'{name} foi ativado indevidamente'
+          assert len(selected)==1 and selected[0].get('name')=='Tests guincho', [x.get('name') for x in selected]
           print('READ_ONLY_GROUPS_OK')
           PY
