@@ -204,6 +204,25 @@ function getAiClient() {
   return new OpenAI({ apiKey: aiCredential, baseURL: 'https://ai-gateway.vercel.sh/v1' });
 }
 
+async function searchPersistentTrainingContext(messageText = '', groupName = '') {
+  if (!adminToken || !String(messageText || '').trim()) return [];
+  try {
+    const base = String(process.env.BOTGUINCHO_APP_URL || 'https://botguincho.vercel.app').replace(/\/$/, '');
+    const response = await fetch(`${base}/api/worker/training-search?companyId=${encodeURIComponent(clientId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-botguincho-token': adminToken },
+      body: JSON.stringify({ query: String(messageText).slice(0, 800), groupName: String(groupName).slice(0, 180), limit: 6 }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!response.ok) return [];
+    const data = await response.json().catch(() => ({}));
+    return Array.isArray(data?.results) ? data.results : [];
+  } catch {
+    return [];
+  }
+}
+
 function logEvent(type, message, meta = {}) {
   const entry = { id: Date.now() + Math.random(), at: new Date().toISOString(), type, message, meta };
   activity.unshift(entry);
@@ -2556,7 +2575,22 @@ async function buildAiReply({ groupId, groupName, author, text, imageDataUrl, me
   const openai = getAiClient();
   if (!openai) throw new Error('Credencial OIDC da IA ainda não sincronizada.');
   const knowledgeEntry = await getGroupKnowledgeEntry(groupId);
-  const learnedContext = learningContextForGroup(groupName, knowledgeEntry);
+  let learnedContext = learningContextForGroup(groupName, knowledgeEntry);
+  const [localHistory, persistentHistory] = await Promise.all([
+    learningStore.searchHistory({ groupId, groupName, query: text, limit: 5 }).catch(() => []),
+    searchPersistentTrainingContext(text, groupName),
+  ]);
+  const historicalCases = [
+    ...localHistory.map((item) => item?.text).filter(Boolean),
+    ...persistentHistory.map((item) => item?.sanitized_content).filter(Boolean),
+  ].map((item) => String(item).slice(0, 4200)).slice(0, 8);
+  if (historicalCases.length) {
+    learnedContext = [
+      learnedContext,
+      'CASOS REAIS SEMELHANTES (referência de linguagem e procedimento; nunca use valores, disponibilidade, ETA ou autorização históricos como verdade atual):',
+      historicalCases.join('\n---\n'),
+    ].filter(Boolean).join('\n\n');
+  }
 
   const memory = memoryOverride ?? groupMemory.get(groupId) ?? [];
   const context = memory
@@ -4878,7 +4912,8 @@ async function importLearningHistory(groupId, requestedLimit = 500) {
   const chat = await waClient.getChatById(groupId);
   const groupName = chat?.name || 'Grupo do WhatsApp';
   await learningStore.syncGroup({ groupId, name: groupName, description: chat?.description || chat?.groupMetadata?.desc || '' });
-  const limit = Math.max(20, Math.min(2000, Number(requestedLimit || 500)));
+  const requested = requestedLimit === 'all' ? 'all' : Number(requestedLimit || 500);
+  const limit = requested === 'all' ? Infinity : Math.max(20, Math.min(10000, requested));
   const messages = await chat.fetchMessages({ limit });
   const index = await learningStore.getIndex();
   let imported = 0;
@@ -4981,10 +5016,29 @@ app.post('/api/group-knowledge', async (req, res) => {
 });
 
 app.post('/api/learning/import-history', async (req, res) => {
-  try { return res.json({ ok: true, ...(await importLearningHistory(String(req.body?.groupId || ''), req.body?.limit || 500)) }); }
+  try { return res.json({ ok: true, ...(await importLearningHistory(String(req.body?.groupId || ''), req.body?.limit ?? 500)) }); }
   catch (error) { return res.status(400).json({ ok: false, error: String(error?.message || error) }); }
 });
 
+app.get('/api/learning/export-history', async (req, res) => {
+  try {
+    const groupId = String(req.query?.groupId || '');
+    if (!groupId?.endsWith('@g.us')) return res.status(400).json({ ok: false, error: 'group_invalid' });
+    const allowed = await getAllowedGroupIds();
+    if (!allowed.has(groupId)) return res.status(403).json({ ok: false, error: 'group_not_authorized' });
+    const offset = Math.max(0, Number(req.query?.offset || 0));
+    const limit = Math.max(1, Math.min(1500, Number(req.query?.limit || 500)));
+    let raw = '';
+    try { raw = await fs.readFile(learningHistoryFile, 'utf8'); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    const rows = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter((row) => row?.groupId === groupId);
+    rows.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+    const page = rows.slice(offset, offset + limit);
+    const knowledge = await getGroupKnowledgeEntry(groupId).catch(() => null);
+    return res.json({ ok: true, groupId, groupName: knowledge?.name || page[0]?.groupName || 'Grupo do WhatsApp', total: rows.length, offset, limit, rows: page });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
 app.get('/api/learning/summary', async (_req, res) => {
   try {
     const allowed = await getAllowedGroupIds();

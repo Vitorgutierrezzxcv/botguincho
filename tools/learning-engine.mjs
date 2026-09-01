@@ -20,8 +20,13 @@ function brNumber(value) {
 
 export function anonymizeLearningText(value = '') {
   return String(value || '')
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[EMAIL]')
     .replace(/\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?9?\d{4}[-\s]?\d{4}\b/g, '[TELEFONE]')
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}\b/g, '[DOCUMENTO]')
+    .replace(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g, '[DOCUMENTO]')
     .replace(/\b[A-Z]{3}[-\s]?\d[A-Z0-9]\d{2}\b/gi, '[PLACA]')
+    .replace(/(\b(?:BENEFICI[AÁ]RIO|SOLICITANTE|ASSOCIADO|RESPONS[AÁ]VEL|CLIENTE)\s*:\s*)[^\n]+/gi, '$1[NOME]')
+    .replace(/(\b(?:ENDERE[CÇ]O\s+)?(?:ORIGEM|DESTINO)\s*:\s*)[^\n]+/gi, '$1[ENDEREÇO]')
     .slice(0, 6000);
 }
 
@@ -197,6 +202,80 @@ export function createLearningStore({ knowledgeFile, historyFile, indexFile }) {
     return all[groupId];
   }
 
+  let historyCache = { mtimeMs: -1, rows: [] };
+
+  async function loadHistoryRows() {
+    try {
+      const stat = await fs.stat(historyFile);
+      if (historyCache.mtimeMs === stat.mtimeMs) return historyCache.rows;
+      const raw = await fs.readFile(historyFile, 'utf8');
+      const rows = raw.split('\n').filter(Boolean).map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      }).filter(Boolean);
+      historyCache = { mtimeMs: stat.mtimeMs, rows };
+      return rows;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  function retrievalTokens(value = '') {
+    const stop = new Set(['a','o','as','os','de','da','do','das','dos','e','em','no','na','nos','nas','um','uma','para','pra','pro','por','com','que','esse','essa','isso','ai','ae','pessoal','amigo']);
+    return normalize(value).replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((token) => token.length > 1 && !stop.has(token));
+  }
+
+  function retrievalCoverage(query, candidate) {
+    const q = new Set(retrievalTokens(query));
+    const c = new Set(retrievalTokens(candidate));
+    if (!q.size || !c.size) return 0;
+    let hits = 0;
+    for (const token of q) if (c.has(token)) hits += 1;
+    return hits / q.size;
+  }
+
+  async function searchHistory({ groupId = '', groupName = '', query = '', limit = 6 } = {}) {
+    const rows = await loadHistoryRows();
+    const q = String(query || '').trim();
+    if (!q || !rows.length) return [];
+    const wanted = Math.max(1, Math.min(8, Number(limit) || 6));
+    const queryIntent = inferLearningIntent(q);
+    const scored = [];
+
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (!row?.text) continue;
+      const sameGroup = Boolean(groupId && row.groupId === groupId);
+      const sameName = Boolean(!sameGroup && groupName && normalize(row.groupName) === normalize(groupName));
+      const lexical = retrievalCoverage(q, row.text);
+      const intentMatch = queryIntent && queryIntent !== 'other' && row.intent === queryIntent;
+      const score = lexical * 0.55 + (intentMatch ? 0.25 : 0) + (sameGroup ? 0.20 : sameName ? 0.12 : 0);
+      if (score < (sameGroup ? 0.20 : 0.34)) continue;
+      scored.push({ i, row, score, sameGroup: sameGroup || sameName });
+    }
+
+    scored.sort((a, b) => Number(b.sameGroup) - Number(a.sameGroup) || b.score - a.score);
+    const selected = [];
+    const used = new Set();
+    for (const hit of scored) {
+      if (selected.length >= wanted) break;
+      const start = Math.max(0, hit.i - 2);
+      const end = Math.min(rows.length - 1, hit.i + 2);
+      const contextRows = [];
+      for (let j = start; j <= end; j += 1) {
+        const row = rows[j];
+        if (!row?.text || row.groupId !== hit.row.groupId) continue;
+        contextRows.push(row);
+      }
+      const context = contextRows.map((row) => `${row.direction === 'outgoing' ? 'PRESTADOR' : 'CENTRAL'}: ${String(row.text).slice(0, 1600)}`).join('\n').slice(0, 5000);
+      const key = context.slice(0, 600);
+      if (!context || used.has(key)) continue;
+      used.add(key);
+      selected.push({ group: hit.row.groupName || groupName, intent: hit.row.intent || 'other', score: Math.round(hit.score * 100) / 100, text: context });
+    }
+    return selected;
+  }
+
   async function getAll() { return readJson(knowledgeFile, {}); }
 
   async function approveCommercial(groupId) {
@@ -224,5 +303,5 @@ export function createLearningStore({ knowledgeFile, historyFile, indexFile }) {
   async function getIndex() { return readJson(indexFile, {}); }
   async function saveIndex(index) { return writeJson(indexFile, index); }
 
-  return { syncGroup, append, addHumanExample, getAll, approveCommercial, getIndex, saveIndex };
+  return { syncGroup, append, addHumanExample, searchHistory, getAll, approveCommercial, getIndex, saveIndex };
 }
