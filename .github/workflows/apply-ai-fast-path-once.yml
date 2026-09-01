@@ -1,0 +1,43 @@
+name: Apply AI fast path once
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: ${{ !contains(github.event.head_commit.message || '', '[ai-fast-path-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Apply fast path
+        run: node tools/apply-ai-fast-path-once.mjs
+      - name: Validate
+        run: |
+          node --check tools/ai-operational-fallback.mjs
+          node tools/test-ai-operational-fallback.mjs
+          node tools/test-address-state-detection.mjs
+          node tools/test-operating-hours.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+      - name: Commit validated optimization
+        run: |
+          rm -f .github/workflows/apply-ai-fast-path-once.yml tools/apply-ai-fast-path-once.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/ai-operational-fallback.mjs tools/test-ai-operational-fallback.mjs .github/workflows/apply-ai-fast-path-once.yml tools/apply-ai-fast-path-once.mjs
+          git commit -m "perf: evita IA em cotacao ja reconhecida [ai-fast-path-applied]"
+          git push origin HEAD:main
