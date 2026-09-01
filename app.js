@@ -173,3 +173,45 @@ window.salvarTabela=async id=>{
   const rules={services:{leve:srv('leve'),moto:srv('moto'),utilitario:srv('utilitario'),pesado:srv('pesado')},workedHour:g('hora'),stoppedHour:g('parada'),invoiceFee:g('nf'),tollAllowed:!!($(p+'-pedagio')||{}).checked};
   try{await api('/api/worker/group-knowledge',{method:'POST',body:JSON.stringify({groupId:id,action:'set-commercial',rules})});alert('Tabela salva. O bot passa a calcular com estes valores agora.');await loadKnowledge()}catch(e){alert('Nao consegui salvar: '+e.message)}
 };
+
+
+// ===== OWNER_RUNTIME_HUB_V1: agenda, capacidade e horário efetivo =====
+(function ownerRuntimeHub(){
+  pageMeta.schedule=['Agenda','Agendamentos e próximos atendimentos.'];
+  const operationsButton=document.querySelector('[data-page="operations"]');
+  if(operationsButton&&!document.querySelector('[data-page="schedule"]')){
+    const button=document.createElement('button');button.dataset.page='schedule';button.innerHTML='<span class="ico">◷</span>Agenda';
+    button.addEventListener('click',()=>{showPage('schedule');loadManagement().catch(()=>{});loadOwnerRuntimeSummary().catch(()=>{})});
+    operationsButton.insertAdjacentElement('afterend',button);
+  }
+  if(!document.getElementById('schedule')){
+    const callsPage=document.getElementById('calls');
+    const section=document.createElement('section');section.id='schedule';section.className='page';section.innerHTML=`<div class="head"><div><h2>Agenda</h2><p>Corridas futuras separadas da operação em andamento.</p></div></div><div class="metrics"><div class="metric-card"><span>Agendados</span><strong id="scheduleCount">0</strong><small>Próximos atendimentos</small></div><div class="metric-card"><span>Confirmados</span><strong id="scheduleConfirmed">0</strong><small>Agenda confirmada</small></div><div class="metric-card"><span>Próximo</span><strong id="scheduleNext">—</strong><small>Horário do atendimento</small></div></div><div class="card section"><div class="head"><div><h3>Próximos atendimentos</h3><p>Agendamento não ocupa uma vaga ativa antes da hora.</p></div></div><div id="scheduleList" class="events section"><div class="empty">Nenhum agendamento.</div></div></div>`;
+    callsPage?.parentNode?.insertBefore(section,callsPage);
+  }
+  if(!document.getElementById('ownerRuntimeHub')){
+    const dash=document.getElementById('dashboard'),metrics=dash?.querySelector('.metrics');
+    metrics?.insertAdjacentHTML('afterend',`<div id="ownerRuntimeHub" class="owner-runtime-hub section"><div class="owner-runtime-card"><span>Horário agora</span><strong id="ownerHoursStatus">Verificando…</strong><small id="ownerHoursDetail">Regra configurada</small></div><div class="owner-runtime-card"><span>Capacidade</span><strong id="ownerCapacityStatus">0/2</strong><small id="ownerCapacityDetail">Corridas ativas</small></div><div class="owner-runtime-card"><span>Próximo agendamento</span><strong id="ownerNextSchedule">—</strong><small id="ownerNextScheduleDetail">Sem agenda futura</small></div></div>`);
+  }
+
+  window.renderOwnerSchedule=function(){
+    const now=Date.now();
+    const scheduled=(mgmt.calls||[]).filter(c=>c.status==='agendado'&&c.scheduledAt&&new Date(c.scheduledAt).getTime()>now-5*60000).sort((a,b)=>new Date(a.scheduledAt)-new Date(b.scheduledAt));
+    const confirmed=scheduled.filter(c=>(c.operationalTimeline||[]).some(e=>e.type==='agendamento_confirmado'));
+    if($('scheduleCount'))$('scheduleCount').textContent=scheduled.length;if($('scheduleConfirmed'))$('scheduleConfirmed').textContent=confirmed.length;
+    if($('scheduleNext'))$('scheduleNext').textContent=scheduled[0]?new Date(scheduled[0].scheduledAt).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+    if($('scheduleList'))$('scheduleList').innerHTML=scheduled.length?scheduled.map(c=>{const conf=(c.operationalTimeline||[]).some(e=>e.type==='agendamento_confirmado');return `<div class="event schedule-event"><div class="head"><div><b>${esc(new Date(c.scheduledAt).toLocaleString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))}</b><p>${esc(c.insurer||c.client||c.groupName||'Atendimento')}</p></div><span class="tag ${conf?'green':'yellow'}">${conf?'Confirmado':'Agendado'}</span></div><div class="small"><b>${esc(c.vehicle||'Veículo não informado')}</b></div><div class="small">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div></div>`}).join(''):'<div class="empty">Nenhum agendamento futuro.</div>';
+    if($('ownerNextSchedule'))$('ownerNextSchedule').textContent=scheduled[0]?new Date(scheduled[0].scheduledAt).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+    if($('ownerNextScheduleDetail'))$('ownerNextScheduleDetail').textContent=scheduled[0]?esc(scheduled[0].vehicle||scheduled[0].insurer||'Atendimento agendado'):'Sem agenda futura';
+  };
+
+  renderOps=function(){const active=(mgmt.calls||[]).filter(x=>['autorizado','a_caminho','em_atendimento','aguardando_fechamento'].includes(String(x.status||'')));$('opsList').innerHTML=active.length?active.map(c=>`<div class="event"><div class="head"><div><b>${esc(c.vehicle||'Chamado')}</b><p>${esc(c.client||c.insurer||'')}</p></div>${tag(c.status||'novo')}</div><div class="small">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div>${c.queued?'<div class="notice warn section">2ª corrida em fila operacional.</div>':''}</div>`).join(''):'<div class="empty">Nenhuma corrida ativa agora. Agendamentos ficam na aba Agenda.</div>'};
+  const originalRenderManagement=renderManagement;
+  renderManagement=function(){originalRenderManagement();renderOwnerSchedule()};
+
+  window.loadOwnerRuntimeSummary=async function(){try{const s=await api('/api/worker/status');const op=s.operatingHours||{},cap=s.capacity||{};if($('ownerHoursStatus')){$('ownerHoursStatus').textContent=op.enabled?(op.open?'ABERTO':'FECHADO'):'24 HORAS';$('ownerHoursStatus').className=op.enabled?(op.open?'owner-ok':'owner-bad'):'owner-ok'}if($('ownerHoursDetail'))$('ownerHoursDetail').textContent=op.enabled?`${op.localTime||''} · ${op.reason==='within_interval'?'dentro do horário':'fora do horário configurado'}`:'Regra de horário desativada';if($('ownerCapacityStatus'))$('ownerCapacityStatus').textContent=`${cap.activeCount||0}/${cap.maxConcurrentCalls||2}`;if($('ownerCapacityDetail'))$('ownerCapacityDetail').textContent=cap.canAccept===false?'Limite atingido · próxima deve ser recusada':`${cap.slotsAvailable??2} vaga(s) disponível(is)`;const box=$('operatingHoursConfig');if(box){let badge=$('effectiveOperatingStatus');if(!badge){badge=document.createElement('div');badge.id='effectiveOperatingStatus';badge.className='notice section';box.querySelector('.head')?.insertAdjacentElement('afterend',badge)}badge.className='notice '+(!op.enabled||op.open?'good':'bad')+' section';badge.textContent=!op.enabled?'Regra efetiva agora: 24 horas.':`Regra efetiva agora: ${op.open?'ABERTO':'FECHADO'} · ${op.localTime||''} · ${op.timeZone||'America/Sao_Paulo'}`}}catch(e){console.error('owner runtime summary',e)}};
+  $('saveOperatingHours')?.addEventListener('click',()=>setTimeout(()=>loadOwnerRuntimeSummary().catch(()=>{}),700));
+  loadOwnerRuntimeSummary().catch(()=>{});loadManagement().catch(()=>{});
+  setInterval(()=>{loadOwnerRuntimeSummary().catch(()=>{});const current=localStorage.getItem('bg-page');if(['dashboard','operations','schedule'].includes(current))loadManagement().catch(()=>{})},15000);
+  if(localStorage.getItem('bg-page')==='schedule'){showPage('schedule');loadManagement().catch(()=>{})}
+})();

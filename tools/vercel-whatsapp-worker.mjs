@@ -27,6 +27,7 @@ import { normalizeAddressInput } from './address-normalization.mjs';
 import { detectBrazilStateFromAddress } from './address-state-detection.mjs';
 import { maybeInterpretOperationalMessage } from './ai-operational-fallback.mjs';
 import { selectRecentUnprocessedMessages } from './whatsapp-recovery.mjs';
+import { scheduledCapacitySnapshot, isFutureScheduledCall, formatScheduledAtBr } from './scheduling-policy.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -108,6 +109,7 @@ const routeProviderState = new Map();
 const processedMessageIds = new Map();
 const lastInboundByGroup = new Map();
 const botReplyFingerprints = new Map();
+const groupProcessingQueues = new Map();
 const learningStore = createLearningStore({ knowledgeFile: groupKnowledgeFile, historyFile: learningHistoryFile, indexFile: learningIndexFile });
 
 const SYSTEM_AI_RULES = `
@@ -3662,6 +3664,19 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
   // antiga. Uma oportunidade ainda aguardando decisao sempre tem prioridade.
   const pendingCall = pendingAuthorizationCallForGroup(context.management?.calls || [], msg.from);
   const call = pendingCall || context.recentCall;
+  if (call?.status === 'agendado' && isFutureScheduledCall(call.scheduledAt, new Date(), 60)) {
+    const settings = await getSettings();
+    const label = formatScheduledAtBr(call.scheduledAt, settings.operatingTimezone || 'America/Sao_Paulo');
+    const saved = await recordDispatchInManagement({
+      groupId: msg.from, groupName, text: readableText,
+      originAddress: call.origin || context.facts.origin || null,
+      destinationAddress: call.destination || context.facts.destination || null,
+      eta: null, status: 'agendado', facts: { ...context.facts, scheduledAt: call.scheduledAt },
+      existingCallId: call.id, eventType: 'agendamento_confirmado', phase: 'agendado',
+    });
+    await replyAndRemember(msg, groupName, readableText, `Agendamento confirmado ✅${label ? `\n${label}` : ''}`, { intent: 'scheduled_confirmation', callId: saved?.id || call.id, scheduledAt: call.scheduledAt });
+    return;
+  }
   if (call && isFlowActiveCall(call)) {
     const repeated = await recordDispatchInManagement({
       groupId: msg.from, groupName, text: readableText, originAddress: call.origin || null,
@@ -3719,19 +3734,59 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
 }
 
 async function handleScheduledRuntime(msg, groupName, readableText, context) {
-  // Follow-up temporal curto (ex.: "AMANHA AS 7") pertence à cotação aberta
-  // mais recente do grupo, e não a uma corrida antiga atualizada pelo rastreador.
   const pendingCall = pendingAuthorizationCallForGroup(context.management?.calls || [], msg.from);
   const call = pendingCall || context.recentCall;
-  await recordDispatchInManagement({
+  const scheduledAt = context.facts.scheduledAt || call?.scheduledAt || null;
+  const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
+  if (!scheduledDate || !Number.isFinite(scheduledDate.getTime())) {
+    await replyAndRemember(msg, groupName, readableText, 'Para agendar, informe o dia e o horário.', { intent: 'scheduled_dispatch_missing_time' });
+    return;
+  }
+  if (scheduledDate.getTime() < Date.now() - 5 * 60000) {
+    await replyAndRemember(msg, groupName, readableText, 'Esse horário já passou. Envie um novo dia e horário para o agendamento.', { intent: 'scheduled_dispatch_past' });
+    return;
+  }
+
+  const settings = await getSettings();
+  const slotCoverage = evaluateOperatingHours(settings, scheduledDate);
+  const label = formatScheduledAtBr(scheduledAt, settings.operatingTimezone || 'America/Sao_Paulo');
+  if (settings.operatingHoursEnabled === true && !slotCoverage.open) {
+    const baseReply = String(settings.outOfHoursReply || 'Atendimento fora do horário configurado.').trim();
+    await replyAndRemember(msg, groupName, readableText, `${baseReply}\nO horário ${label || 'informado'} está fora do funcionamento configurado.`, { intent: 'scheduled_out_of_hours', scheduledAt, reason: slotCoverage.reason });
+    return;
+  }
+
+  const scheduledCapacity = scheduledCapacitySnapshot(context.management?.calls || [], scheduledAt, { maxConcurrentCalls: MAX_CONCURRENT_CALLS, excludeCallId: call?.id || '' });
+  if (!scheduledCapacity.canAccept) {
+    await replyAndRemember(msg, groupName, readableText, `Esse horário já está com ${MAX_CONCURRENT_CALLS} corridas agendadas. Indisponível nesse horário.`, { intent: 'scheduled_capacity_full', scheduledAt, activeCount: scheduledCapacity.activeCount });
+    return;
+  }
+
+  const facts = { ...context.facts, scheduledAt };
+  const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: context.facts.origin || call?.origin || null,
     destinationAddress: context.facts.destination || call?.destination || null,
-    eta: null, status: 'agendado', facts: context.facts,
+    eta: null, status: 'agendado', facts,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call?.id || null,
     eventType: 'agendamento', phase: 'agendado',
   });
-  await replyAndRemember(msg, groupName, readableText, 'Agendamento registrado ✅', { intent: 'scheduled_dispatch', scheduledAt: context.facts.scheduledAt });
+  await replyAndRemember(msg, groupName, readableText, `Agendamento registrado ✅${label ? `\n${label}` : ''}`, { intent: 'scheduled_dispatch', scheduledAt, callId: saved?.id || call?.id || null });
+}
+
+async function handleScheduledDetailsRuntime(msg, groupName, readableText, context, call) {
+  if (!call?.id || call.status !== 'agendado') return false;
+  const facts = { ...context.facts, scheduledAt: call.scheduledAt || context.facts.scheduledAt || null };
+  const saved = await recordDispatchInManagement({
+    groupId: msg.from, groupName, text: readableText,
+    originAddress: context.facts.origin || call.origin || null,
+    destinationAddress: context.facts.destination || call.destination || null,
+    eta: null, status: 'agendado', facts,
+    evidenceChecklist: buildEvidenceChecklist(groupName, readableText), existingCallId: call.id,
+    eventType: 'agendamento_dados_atualizados', phase: 'agendado',
+  });
+  await replyAndRemember(msg, groupName, readableText, 'Dados do agendamento atualizados ✅', { intent: 'scheduled_details', callId: saved?.id || call.id, scheduledAt: call.scheduledAt || null });
+  return true;
 }
 
 async function handleDepartureRuntime(msg, groupName, readableText, context) {
@@ -4081,9 +4136,20 @@ async function handleClosureRuntime(msg, groupName, readableText, context) {
   await replyAndRemember(msg, groupName, readableText, lines.join('\n'), { intent: 'closure_pending_owner', callId: saved?.id, ownerReviewRequired: true });
 }
 
+function enqueueIncomingMessage(msg) {
+  const groupId = String(msg?.from || 'unknown');
+  const previous = groupProcessingQueues.get(groupId) || Promise.resolve();
+  const current = previous.catch(() => undefined).then(() => processIncomingMessage(msg));
+  groupProcessingQueues.set(groupId, current);
+  current.finally(() => {
+    if (groupProcessingQueues.get(groupId) === current) groupProcessingQueues.delete(groupId);
+  }).catch(() => undefined);
+  return current;
+}
+
 async function processIncomingMessage(msg) {
+  const messageId = msg?.id?._serialized || '';
   try {
-    const messageId = msg?.id?._serialized || '';
     if (messageId) {
       const seenAt = processedMessageIds.get(messageId);
       if (seenAt && Date.now() - seenAt < 6 * 60 * 60 * 1000) {
@@ -4091,7 +4157,7 @@ async function processIncomingMessage(msg) {
         return;
       }
       processedMessageIds.set(messageId, Date.now());
-      if (processedMessageIds.size > 1000) {
+      if (processedMessageIds.size > 10000) {
         const cutoff = Date.now() - 6 * 60 * 60 * 1000;
         for (const [id, at] of processedMessageIds) if (at < cutoff) processedMessageIds.delete(id);
       }
@@ -4151,7 +4217,7 @@ async function processIncomingMessage(msg) {
 
     const operating = evaluateOperatingHours(settings);
     const activeFlowIntents = new Set([
-      'cancellation', 'arrival_without_tow', 'arrival', 'departure', 'waiting_customer', 'loaded',
+      'scheduled_dispatch', 'cancellation', 'arrival_without_tow', 'arrival', 'departure', 'waiting_customer', 'loaded',
       'destination_arrival', 'evidence', 'address_update', 'dirt_road_start', 'dirt_road_end',
       'closure', 'value_summary', 'protocol_update',
     ]);
@@ -4229,6 +4295,13 @@ async function processIncomingMessage(msg) {
     }
     if (runtimeIntent === 'dispatch_details') {
       await handleDispatchDetailsRuntime(msg, groupName, readableText, incomingLocation, operationalContext);
+      return;
+    }
+    const scheduledFollowup = operationalContext.recentCall?.status === 'agendado'
+      && operationalContext.recentCall?.scheduledAt
+      && Date.now() - new Date(operationalContext.recentCall.updatedAt || operationalContext.recentCall.createdAt || 0).getTime() < 20 * 60 * 1000;
+    if (scheduledFollowup && ['quote','dispatch','protocol_received','protocol_update','incomplete_dispatch'].includes(runtimeIntent)) {
+      await handleScheduledDetailsRuntime(msg, groupName, readableText, operationalContext, operationalContext.recentCall);
       return;
     }
     if (runtimeIntent === 'protocol_received' || runtimeIntent === 'protocol_update') {
@@ -4351,8 +4424,9 @@ async function processIncomingMessage(msg) {
     remember(msg.from, 'assistant', reply);
     logEvent('reply', `${groupName}: ${reply}`, { groupId: msg.from, intent: 'operational-ai' });
   } catch (error) {
+    if (messageId) processedMessageIds.delete(messageId);
     lastError = error instanceof Error ? error.message : String(error);
-    logEvent('error', 'Erro ao processar mensagem.', { error: lastError });
+    logEvent('error', 'Erro ao processar mensagem; ela poderá ser recuperada e tentada novamente.', { error: lastError, messageId });
   }
 }
 
@@ -4389,10 +4463,13 @@ async function recoverMissedWhatsAppMessages(sinceMs) {
     try {
       const chat = await waClient.getChatById(groupId);
       if (!chat?.isGroup) continue;
-      const recent = await chat.fetchMessages({ limit: 25 });
+      const recent = await chat.fetchMessages({ limit: 500 });
+      const recoveryWindowMs = Math.min(24 * 60 * 60 * 1000, Math.max(15 * 60 * 1000, Date.now() - Number(sinceMs || Date.now()) + 60_000));
       const pending = selectRecentUnprocessedMessages(recent, {
         sinceMs,
         processedIds,
+        maxWindowMs: recoveryWindowMs,
+        startupSkewMs: 60_000,
       });
       for (const message of pending) {
         const messageId = message?.id?._serialized || '';
@@ -4537,7 +4614,7 @@ async function startWhatsApp() {
     scheduleWhatsAppRecovery('disconnected');
   });
 
-  waClient.on('message', processIncomingMessage);
+  waClient.on('message', (msg) => { void enqueueIncomingMessage(msg); });
 
   waClient.initialize().catch((error) => {
     waStatus = 'erro';
@@ -5068,7 +5145,7 @@ app.get('/api/status', async (_req, res) => {
     serviceArea: { state: configuredServiceState, priorityCities: configuredPriorityCities },
     operatingHours: evaluateOperatingHours(settings),
     simpleMode: settings.simpleMode !== false,
-    operation: { available: availability.available, reason: availability.reason || null, until: availability.until || null, truck: availability.truck || null },
+    operation: { available: availability.available && capacity.canAccept, reason: !capacity.canAccept ? `Limite de ${MAX_CONCURRENT_CALLS} corridas ativas atingido.` : (availability.reason || null), until: availability.until || null, truck: availability.truck || null },
     capacity: { feature: 'simple-dispatch-v1', maxConcurrentCalls: MAX_CONCURRENT_CALLS, activeCount: capacity.activeCount, slotsAvailable: capacity.slotsAvailable, canAccept: capacity.canAccept },
   });
 });
