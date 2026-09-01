@@ -18,6 +18,54 @@ function clean(value = '', max = 120) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, max);
 }
 
+export function extractLabeledAddressBlock(text = '', label = '') {
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const target = norm(label);
+  const aliases = target === 'origem'
+    ? ['origem', 'endereco de origem', 'endereco origem', 'local de origem', 'local origem', 'localizacao de origem', 'localizacao origem']
+    : target === 'destino'
+      ? ['destino', 'endereco de destino', 'endereco destino', 'local de destino', 'local destino', 'localizacao de destino', 'localizacao destino']
+      : [target];
+  const stopLabels = [
+    'origem', 'destino', 'veiculo', 'modelo', 'placa', 'servico', 'protocolo', 'sinistro',
+    'cliente', 'associado', 'solicitante', 'telefone', 'contato', 'motivo', 'observacao', 'obs',
+  ];
+
+  let collecting = false;
+  const parts = [];
+
+  for (const originalLine of lines) {
+    const raw = String(originalLine || '').trim();
+    if (!raw) {
+      if (collecting && parts.length) break;
+      continue;
+    }
+
+    const normalized = norm(raw);
+    const matchedAlias = aliases.find((alias) => normalized === alias || normalized.startsWith(`${alias} `));
+
+    if (!collecting) {
+      if (!matchedAlias) continue;
+      collecting = true;
+      const separator = raw.search(/[:=]/);
+      if (separator >= 0) {
+        const inlineValue = raw.slice(separator + 1).trim();
+        if (inlineValue) parts.push(inlineValue);
+      } else {
+        const dashed = raw.match(/^.+?\s+-\s+(.+)$/);
+        if (dashed?.[1]) parts.push(dashed[1].trim());
+      }
+      continue;
+    }
+
+    const isStop = stopLabels.some((stop) => normalized === stop || normalized.startsWith(`${stop} `));
+    if (isStop) break;
+    parts.push(raw);
+  }
+
+  return parts.join(', ').trim();
+}
+
 export function sanitizeExcludedAreas(input = []) {
   if (!Array.isArray(input)) return [];
   const seen = new Set();
