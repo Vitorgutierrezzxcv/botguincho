@@ -118,10 +118,11 @@ async function externalWorkerFetch(path, init = {}) {
 
 async function memoryFetch(payload, timeoutMs = 12000) {
   const oidc = String(process.env.VERCEL_OIDC_TOKEN || '').trim();
-  if (!oidc) throw new Error('vercel_oidc_unavailable');
+  const credential = oidc || EXTERNAL_WORKER_TOKEN;
+  if (!credential) throw new Error('memory_auth_unavailable');
   const response = await fetch(MEMORY_URL, {
     method: 'POST',
-    headers: { authorization: `Bearer ${oidc}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
     body: JSON.stringify(payload),
     cache: 'no-store',
     signal: AbortSignal.timeout(timeoutMs),
@@ -220,6 +221,15 @@ async function syncTrainingGroup(groupId, { importFirst = true } = {}) {
   };
 }
 
+function handleTrainingAuthVerify(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
+  const supplied = String(req.headers['x-botguincho-token'] || '').trim();
+  if (!EXTERNAL_WORKER_TOKEN || !safeEqual(supplied, EXTERNAL_WORKER_TOKEN)) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  return res.status(200).json({ ok: true });
+}
+
 async function handleTrainingSearch(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
   const supplied = String(req.headers['x-botguincho-token'] || '').trim();
@@ -276,6 +286,7 @@ export default async function handler(req, res) {
     return res.status(result.ok ? 200 : 503).json(result);
   }
 
+  if (path === 'training-auth-verify') return handleTrainingAuthVerify(req, res);
   if (path === 'training-search') return handleTrainingSearch(req, res);
   if (path === 'training-sync') return handleTrainingSync(req, res);
 
