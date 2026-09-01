@@ -1,0 +1,48 @@
+name: Validate AI fallback once
+
+on:
+  push:
+    branches:
+      - feat/ai-fallback-20260831
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: ${{ !contains(github.event.head_commit.message || '', '[ai-fallback-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ai-fallback-20260831
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Apply worker integration
+        run: node tools/apply-ai-fallback-to-worker.mjs
+      - name: Validate syntax and fallback rules
+        run: |
+          node --check tools/ai-operational-fallback.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+          node tools/test-ai-operational-fallback.mjs
+          node tools/test-operating-hours.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-worked-time-policy.mjs
+          node tools/test-driver-payroll.mjs
+      - name: Commit validated integration
+        run: |
+          rm -f .github/workflows/validate-ai-fallback-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs .github/workflows/validate-ai-fallback-once.yml
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "feat: fallback IA operacional validado [ai-fallback-applied]"
+            git push origin HEAD:feat/ai-fallback-20260831
+          fi
