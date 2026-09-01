@@ -53,7 +53,7 @@ new_final_message = r'''function finalGroupMessage(call = {}) {
 
 worker, count = re.subn(
     r"function finalGroupMessage\(call = \{\}\) \{.*?\n\}\n\nasync function closeCallFromOwner",
-    new_final_message + "\n\nasync function closeCallFromOwner",
+    lambda _match: new_final_message + "\n\nasync function closeCallFromOwner",
     worker,
     count=1,
     flags=re.S,
@@ -130,7 +130,6 @@ extra = anchor + "assert.equal(classifyRuntimeIntent('COTAÇÃO\\nPROTOCOLO: COT
 test = test.replace(anchor, extra, 1)
 test_path.write_text(test, encoding='utf-8')
 
-# Regression source checks for the detailed close message and protocol-to-quote routing.
 source_test = Path('tools/test-close-summary-and-protocol-policy.mjs')
 source_test.write_text("""import assert from 'node:assert/strict';
 import fs from 'node:fs';
