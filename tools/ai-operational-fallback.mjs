@@ -109,7 +109,17 @@ export function mergeAiOperationalInterpretation({ text = '', facts = {}, intent
   if (!merged.protocol && ai.protocol) merged.protocol = safeText(ai.protocol, 120);
 
   let nextIntent = intent;
-  if ((intent === 'other' || intent === 'incomplete_dispatch') && AI_INTENTS.has(ai.intent)) nextIntent = ai.intent;
+  if (intent === 'other' || intent === 'incomplete_dispatch') {
+    if (AI_INTENTS.has(ai.intent) && ai.intent !== 'other') {
+      nextIntent = ai.intent;
+    } else {
+      // Nao dependemos apenas do rotulo probabilistico do modelo. Se a IA extraiu
+      // uma ficha operacional completa com alta confianca, os proprios campos sao
+      // evidencia deterministica de uma nova cotacao.
+      const hasCompleteQuote = Boolean(merged.origin && merged.destination && (merged.vehicleType || merged.vehicle || merged.service));
+      if (hasCompleteQuote) nextIntent = 'quote';
+    }
+  }
 
   return { facts: merged, intent: nextIntent, used: true };
 }
@@ -148,6 +158,7 @@ async function interpretWithOpenAI({ text, groupName }) {
       'Sua única tarefa é normalizar a mensagem recebida. Nunca calcule preço, distância, ETA ou disponibilidade.',
       'Nunca invente um dado ausente. Se não houver um campo, retorne string vazia.',
       'Em endereços, remova ruído como "nº -", referências, telefone e rótulos repetidos, mas preserve rua, número quando existir, bairro, cidade e UF.',
+      'Uma ficha com origem, destino e veículo/serviço é uma cotação, salvo quando a mensagem contiver uma autorização, cancelamento ou agendamento explícito.',
       'Classifique intenção apenas entre as opções do schema.',
       `Grupo WhatsApp: ${safeText(groupName, 120) || 'não informado'}.`,
     ].join('\n'),
