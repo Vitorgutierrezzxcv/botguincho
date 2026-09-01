@@ -1,0 +1,42 @@
+name: Fix route address and latency once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-route-address-latency-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply fix
+        run: python ops/fix-route-address-latency.py
+      - name: Validate syntax
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/excluded-areas.mjs
+          node --check tools/address-normalization.mjs
+          node --check tools/test-route-address-latency.mjs
+      - name: Run regressions
+        run: |
+          node tools/test-route-address-latency.mjs
+          node tools/test-excluded-areas.mjs
+          node tools/test-protocol-call-matching.mjs
+          node tools/test-operational-knowledge.mjs
+          node tools/test-close-summary-and-protocol-policy.mjs
+          node tools/test-simple-operation.mjs
+          node tools/test-driver-payroll.mjs
+      - name: Commit final fix
+        run: |
+          rm -f .github/workflows/fix-route-address-latency-once.yml ops/fix-route-address-latency.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Corrige endereço do WebPrestador e limita latência de rota'
+          git push origin main
