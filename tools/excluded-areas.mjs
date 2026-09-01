@@ -29,6 +29,7 @@ export function extractLabeledAddressBlock(text = '', label = '') {
   const stopLabels = [
     'origem', 'destino', 'veiculo', 'modelo', 'placa', 'servico', 'protocolo', 'sinistro',
     'cliente', 'associado', 'solicitante', 'telefone', 'contato', 'motivo', 'observacao', 'obs',
+    'referencia', 'ref', 'link', 'link do webprestador',
   ];
 
   let collecting = false;
@@ -63,7 +64,14 @@ export function extractLabeledAddressBlock(text = '', label = '') {
     parts.push(raw);
   }
 
-  return parts.join(', ').trim();
+  return parts.join(', ')
+    // Algumas centrais colam a referencia sem espaco depois da UF: "CONTAGEM - MGref. Mateus".
+    // Referencia, telefone e instrucoes nao fazem parte do endereco enviado ao geocoder.
+    .replace(/\b([A-Z]{2})\s*ref\.?\s*:?.*$/i, '$1')
+    .replace(/\bref\.?\s*:?.*$/i, '')
+    .replace(/\b(?:refer[eê]ncia|telefone|contato)\s*:.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function sanitizeExcludedAreas(input = []) {

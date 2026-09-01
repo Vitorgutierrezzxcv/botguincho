@@ -3413,58 +3413,85 @@ async function currentOperationalContext(groupId, groupName, text) {
 // herdar o que ja foi recebido, senao a previsao cai numa localizacao antiga
 // do grupo e sai um numero diferente do que ja tinha sido informado.
 async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null, pending = null, options = {}) {
-  const originAddress = extractLabeledAddressBlock(text, 'Origem') || facts.origin || extractLabeledField(text, 'Origem') || enderecoEmTextoLivre(text) || pending?.origin || null;
-  const destinationAddress = extractLabeledAddressBlock(text, 'Destino') || facts.destination || extractLabeledField(text, 'Destino') || pending?.destination || null;
+  const rawOriginAddress = extractLabeledAddressBlock(text, 'Origem') || facts.origin || extractLabeledField(text, 'Origem') || enderecoEmTextoLivre(text) || pending?.origin || null;
+  const rawDestinationAddress = extractLabeledAddressBlock(text, 'Destino') || facts.destination || extractLabeledField(text, 'Destino') || pending?.destination || null;
+  // Nao envia observacao, referencia, telefone ou markup da ficha para o geocoder.
+  const originAddress = rawOriginAddress ? normalizeAddressForLookup(rawOriginAddress) : null;
+  const destinationAddress = rawDestinationAddress ? normalizeAddressForLookup(rawDestinationAddress) : null;
   const shared = await getRecentSharedLocation(groupId);
   const originCoordinates = incomingLocation
     || (!originAddress ? (pending?.originCoordinates || shared?.coordinates || null) : null);
 
   const fast = options?.fast === true;
-  let eta = null;
-  let secondLeg = null;
-  let fullRoute = null;
+  const calculate = async () => {
+    let eta = null;
+    let secondLeg = null;
+    let fullRoute = null;
 
-  if (fast) {
-    if (originAddress || originCoordinates) {
+    if (fast) {
+      if (originAddress || originCoordinates) {
+        eta = await computeEtaWithRetry(
+          { targetAddress: originAddress, targetCoordinates: originCoordinates },
+          { attempts: 1, retryDelayMs: 0 },
+        ).catch(() => null);
+      }
+      return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, fullRoute, estimatedTotalKm: null, timedOut: false };
+    }
+
+    if ((originAddress || originCoordinates) && destinationAddress) {
+      fullRoute = await computeFullServiceRoute({ originAddress, destinationAddress, originCoordinates }).catch(() => null);
+      if (fullRoute) {
+        eta = {
+          minutes: fullRoute.legToOrigin?.minutes ?? null,
+          rawMinutes: fullRoute.legToOrigin?.minutes ?? null,
+          distanceKm: fullRoute.legToOrigin?.km ?? null,
+          approximate: Boolean(fullRoute.origin?.approximate),
+          approximateLevel: fullRoute.origin?.approximateLevel || null,
+        };
+        secondLeg = {
+          minutes: fullRoute.serviceLeg?.minutes ?? null,
+          distanceKm: fullRoute.serviceLeg?.km ?? null,
+        };
+      }
+    }
+
+    if (!eta && (originAddress || originCoordinates)) {
       eta = await computeEtaWithRetry(
         { targetAddress: originAddress, targetCoordinates: originCoordinates },
-        { attempts: 2, retryDelayMs: 150 },
+        { attempts: 1, retryDelayMs: 0 },
       ).catch(() => null);
     }
-    return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, fullRoute, estimatedTotalKm: null };
-  }
-
-  if ((originAddress || originCoordinates) && destinationAddress) {
-    fullRoute = await computeFullServiceRoute({ originAddress, destinationAddress, originCoordinates }).catch(() => null);
-    if (fullRoute) {
-      eta = {
-        minutes: fullRoute.legToOrigin?.minutes ?? null,
-        rawMinutes: fullRoute.legToOrigin?.minutes ?? null,
-        distanceKm: fullRoute.legToOrigin?.km ?? null,
-        approximate: Boolean(fullRoute.origin?.approximate),
-        approximateLevel: fullRoute.origin?.approximateLevel || null,
-      };
-      secondLeg = {
-        minutes: fullRoute.serviceLeg?.minutes ?? null,
-        distanceKm: fullRoute.serviceLeg?.km ?? null,
-      };
+    if (!secondLeg && originAddress && destinationAddress) {
+      const [from, to] = await Promise.all([geocodeAddress(originAddress), geocodeAddress(destinationAddress)]);
+      if (from && to) secondLeg = await routeBetween(from, to).catch(() => null);
     }
-  }
+    const estimatedTotalKm = fullRoute?.totalKm ?? (eta?.distanceKm != null && secondLeg?.distanceKm != null
+      ? Math.round((Number(eta.distanceKm) + Number(secondLeg.distanceKm)) * 10) / 10
+      : null);
+    return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, fullRoute, estimatedTotalKm, timedOut: false };
+  };
 
-  if (!eta && (originAddress || originCoordinates)) {
-    eta = await computeEtaWithRetry(
-      { targetAddress: originAddress, targetCoordinates: originCoordinates },
-      { attempts: 2, retryDelayMs: 200 },
-    ).catch(() => null);
+  // Uma consulta de rota jamais pode bloquear a fila do WhatsApp por dezenas de segundos.
+  // 8s para ficha completa e 5s para consulta incompleta; depois responde com fallback seguro.
+  const budgetMs = Math.max(2000, Math.min(10000, Number(options?.budgetMs ?? (fast ? 5000 : 8000))));
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({
+      originAddress,
+      destinationAddress,
+      originCoordinates,
+      eta: null,
+      secondLeg: null,
+      fullRoute: null,
+      estimatedTotalKm: null,
+      timedOut: true,
+    }), budgetMs);
+  });
+  try {
+    return await Promise.race([calculate(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  if (!secondLeg && originAddress && destinationAddress) {
-    const [from, to] = await Promise.all([geocodeAddress(originAddress), geocodeAddress(destinationAddress)]);
-    if (from && to) secondLeg = await routeBetween(from, to).catch(() => null);
-  }
-  const estimatedTotalKm = fullRoute?.totalKm ?? (eta?.distanceKm != null && secondLeg?.distanceKm != null
-    ? Math.round((Number(eta.distanceKm) + Number(secondLeg.distanceKm)) * 10) / 10
-    : null);
-  return { originAddress, destinationAddress, originCoordinates, eta, secondLeg, fullRoute, estimatedTotalKm };
 }
 
 async function handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, context) {
@@ -3583,8 +3610,10 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
     const currentTrackerAge = trackerAgeSeconds(currentTracker);
     if (!currentTracker || currentTrackerAge === null || currentTrackerAge > 120) {
       lines.push('Rastreador do guincho sem atualização recente. Não consigo calcular a previsão de chegada com segurança agora.');
+    } else if (route.timedOut) {
+      lines.push('Previsão temporariamente indisponível. O endereço foi recebido corretamente, mas o cálculo da rota excedeu o tempo de resposta.');
     } else {
-      lines.push('Não consegui calcular a rota até a origem informada. Se possível, envie a localização do WhatsApp.');
+      lines.push('Não consegui calcular a rota com segurança agora. O endereço foi recebido; uma localização do WhatsApp pode ser usada como alternativa.');
     }
   }
   if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`${route.eta?.approximate ? 'Distância aproximada até a origem' : 'Distância até a origem'}: ${route.eta.distanceKm} km.`);
@@ -3752,8 +3781,8 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
     protocol: context.facts?.protocol || readableText.match(/\bprotocolo\s*[:#-]?\s*([A-Z0-9.-]+)/i)?.[1] || '',
     plate: context.facts?.plate || readableText.match(/\bplaca\s*[:#-]?\s*([A-Z]{3}[0-9A-Z]{4})/i)?.[1] || '',
     vehicle: context.facts?.vehicle || readableText.match(/(?:modelo\s*\/\s*montadora|modelo|ve[ií]culo)\s*:\s*([^\n]+)/i)?.[1] || '',
-    origin: extractLabeledAddressBlock(readableText, 'Origem') || context.facts?.origin || '',
-    destination: extractLabeledAddressBlock(readableText, 'Destino') || context.facts?.destination || '',
+    origin: normalizeAddressForLookup(extractLabeledAddressBlock(readableText, 'Origem') || context.facts?.origin || ''),
+    destination: normalizeAddressForLookup(extractLabeledAddressBlock(readableText, 'Destino') || context.facts?.destination || ''),
   };
   const call = selectProtocolTargetCall({
     calls: context.management?.calls || [],
