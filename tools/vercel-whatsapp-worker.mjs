@@ -24,6 +24,7 @@ import { ensureInsurerForGroup, sanitizeInsurer, upsertInsurer, buildQuoteFunnel
 import { buildPeriodReport, buildPeriodWorkbook } from './reporting-engine.mjs';
 import { historicalTrainingStats } from './training-runtime-index.mjs';
 import { normalizeAddressInput } from './address-normalization.mjs';
+import { detectBrazilStateFromAddress } from './address-state-detection.mjs';
 import { maybeInterpretOperationalMessage } from './ai-operational-fallback.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
@@ -2023,7 +2024,7 @@ async function geocodeAddress(address) {
   }
 
   const parts = parseBrazilAddress(query);
-  const explicitState = detectBrazilState(query);
+  const explicitState = detectBrazilStateFromAddress(query);
   if (explicitState && explicitState !== configuredServiceState) {
     logEvent('coverage', `Endereço fora da cobertura: ${query}`, { explicitState });
     return null;
