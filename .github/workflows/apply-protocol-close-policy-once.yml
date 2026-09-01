@@ -1,5 +1,6 @@
 name: Apply protocol and close summary policy once
 
+# rerun with corrected patcher
 on:
   push:
     paths:
