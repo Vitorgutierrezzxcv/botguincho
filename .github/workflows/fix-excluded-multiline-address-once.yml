@@ -1,0 +1,39 @@
+name: Fix excluded multiline address once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/fix-excluded-multiline-address.py'
+      - '.github/workflows/fix-excluded-multiline-address-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply worker patch
+        run: python ops/fix-excluded-multiline-address.py
+      - name: Validate excluded area regression
+        run: node tools/test-excluded-areas.mjs
+      - name: Syntax check
+        run: |
+          node --check tools/excluded-areas.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+      - name: Commit worker fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Corrige bloqueio de bairros em endereços multilinha'
+          git push
