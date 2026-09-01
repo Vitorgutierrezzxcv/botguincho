@@ -4907,9 +4907,11 @@ app.post('/api/management', async (req, res) => {
 async function importLearningHistory(groupId, requestedLimit = 500) {
   if (!waClient || waStatus !== 'pronto') throw new Error('whatsapp_not_ready');
   if (!groupId?.endsWith('@g.us')) throw new Error('group_invalid');
-  const allowed = await getAllowedGroupIds();
-  if (!allowed.has(groupId)) throw new Error('group_not_authorized');
-  const chat = await waClient.getChatById(groupId);
+  // Treinamento e resposta são permissões separadas: importar histórico não ativa o bot no grupo.
+  // Só permitimos leitura de grupos que realmente existem na sessão atual do WhatsApp.
+  const visibleChats = await waClient.getChats();
+  const chat = visibleChats.find((item) => item?.isGroup && item?.id?._serialized === groupId);
+  if (!chat) throw new Error('group_not_found');
   const groupName = chat?.name || 'Grupo do WhatsApp';
   await learningStore.syncGroup({ groupId, name: groupName, description: chat?.description || chat?.groupMetadata?.desc || '' });
   const requested = requestedLimit === 'all' ? 'all' : Number(requestedLimit || 500);
