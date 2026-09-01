@@ -25,14 +25,25 @@ jobs:
           path = Path('tools/vercel-whatsapp-worker.mjs')
           text = path.read_text(encoding='utf-8')
 
-          old = """  const facts = context.facts;
-          const pending = pendingForIncomingFacts(context.recentCall, facts);
-          """
+          marker = 'async function handleAvailabilityRuntime(msg, groupName, readableText, incomingLocation, context) {'
+          start = text.find(marker)
+          if start < 0:
+              raise SystemExit('availability handler not found; refusing to change anything')
 
-          new = """  const facts = context.facts;
-          // DISPONIBILIDADE_PURA: uma pergunta sem dados de atendimento deve responder
-          // somente a disponibilidade. Nao cria previa comercial, nao herda cotacao
-          // anterior e nao informa valor-base sem origem/destino/veiculo.
+          next_handler = text.find('\nasync function ', start + len(marker))
+          section_end = next_handler if next_handler >= 0 else len(text)
+          section = text[start:section_end]
+          if 'bareAvailabilityOnly' in section:
+              raise SystemExit('fix already present; refusing duplicate change')
+
+          anchor = '  const facts = context.facts;\n'
+          relative = section.find(anchor)
+          if relative < 0:
+              raise SystemExit('facts anchor not found inside availability handler')
+          insert_at = start + relative + len(anchor)
+
+          addition = """  // DISPONIBILIDADE_PURA: uma pergunta sem dados de atendimento responde somente disponibilidade.
+          // Nao cria previa comercial nem informa valor-base sem dados da solicitacao.
           const bareAvailabilityOnly = asksAvailability(readableText)
             && !facts?.origin
             && !facts?.destination
@@ -53,19 +64,13 @@ jobs:
             return;
           }
 
-          const pending = pendingForIncomingFacts(context.recentCall, facts);
           """
 
-          if old not in text:
-              raise SystemExit('anchor not found; refusing to change anything')
-          if text.count(old) != 1:
-              raise SystemExit(f'anchor count={text.count(old)}; refusing ambiguous change')
-
-          text = text.replace(old, new, 1)
+          text = text[:insert_at] + addition + text[insert_at:]
           path.write_text(text, encoding='utf-8')
           PY
 
-      - name: Validate only affected worker and existing regressions
+      - name: Validate affected worker and existing regressions
         run: |
           node --check tools/vercel-whatsapp-worker.mjs
           node tools/test-route-address-latency.mjs
