@@ -1,0 +1,128 @@
+name: Sync full training memory once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/trigger-full-training-sync-run.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: botguincho-full-training-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BASE: https://botguincho.vercel.app
+      COMPANY: cliente-teste
+    steps:
+      - name: Preflight WhatsApp and group isolation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups.json
+          python3 - <<'PY'
+          import json
+          s=json.load(open('/tmp/status.json'))
+          g=json.load(open('/tmp/groups.json')).get('groups',[])
+          assert s.get('whatsapp',{}).get('status') == 'pronto', s
+          assert not s.get('whatsapp',{}).get('qrDataUrl'), s
+          selected=[x for x in g if x.get('selected')]
+          assert len(selected)==1, [x.get('name') for x in selected]
+          assert selected[0].get('name')=='Tests guincho', selected
+          print('PREFLIGHT_OK', selected[0].get('name'))
+          PY
+
+      - name: Import and persist all ten insurer histories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/groups.tsv <<'EOF'
+          120363423676050159@g.us	América Betim e Região SOLUÇÃO ASSISTÊNCIA
+          120363426217873172@g.us	AMERICA GUINCHO - BETIM MG *F15* X TOP BRASIL
+          120363425466768635@g.us	AMÉRICA GUINCHO BETIM X SATURNO (SB)
+          120363423146395442@g.us	América Guincho X Plus Assistência
+          120363425275300094@g.us	America Guincho/ Contagem/Betim MG X Company Truck
+          120363407693831862@g.us	América Guincho/ HORIZONTE DEBORA GRAZEIELE
+          120363422517323048@g.us	AMERICA GUINCHO/ SOCORRE ASSISTÊNCIA
+          120363425180918070@g.us	AMERICA REBOQUE/ BETIM/ CONTAGEM PREMIUM ASSISTÊNCIA
+          120363426146393894@g.us	ASSISTÊNCIA SEGURA  X AMERICA GUINCHO - BETIM - MG
+          120363405025654368@g.us	PREST. AMERICA GUINCHOS X POWER - BETIM
+          EOF
+          : > /tmp/results.ndjson
+          while IFS=$'\t' read -r GROUP_ID GROUP_NAME; do
+            echo "Sincronizando: $GROUP_NAME"
+            BODY=$(python3 - "$GROUP_ID" <<'PY'
+          import json,sys
+          print(json.dumps({'action':'sync','groupId':sys.argv[1],'importFirst':True}, ensure_ascii=False))
+          PY
+          )
+            curl -fsS --retry 2 --retry-delay 5 --retry-all-errors --max-time 210 \
+              -X POST "$BASE/api/worker/training-sync?companyId=$COMPANY" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'content-type: application/json' \
+              --data "$BODY" -o /tmp/one.json
+            python3 - "$GROUP_ID" "$GROUP_NAME" <<'PY'
+          import json,sys
+          d=json.load(open('/tmp/one.json'))
+          assert d.get('ok') is True, d
+          assert int(d.get('totalMessages') or 0) > 0, d
+          print(json.dumps({
+            'groupId':sys.argv[1],
+            'groupName':sys.argv[2],
+            'totalMessages':d.get('totalMessages'),
+            'imported':d.get('imported'),
+            'syncedChunks':d.get('syncedChunks')
+          }, ensure_ascii=False))
+          PY
+            python3 - "$GROUP_ID" "$GROUP_NAME" >> /tmp/results.ndjson <<'PY'
+          import json,sys
+          d=json.load(open('/tmp/one.json'))
+          print(json.dumps({
+            'groupId':sys.argv[1],
+            'groupName':sys.argv[2],
+            'totalMessages':d.get('totalMessages'),
+            'imported':d.get('imported'),
+            'syncedChunks':d.get('syncedChunks')
+          }, ensure_ascii=False))
+          PY
+          done < /tmp/groups.tsv
+          cat /tmp/results.ndjson
+
+      - name: Verify real groups stayed read-only
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 3 --max-time 60 "$BASE/api/worker/groups?companyId=$COMPANY" -o /tmp/groups-after.json
+          python3 - <<'PY'
+          import json
+          g=json.load(open('/tmp/groups-after.json')).get('groups',[])
+          selected=[x for x in g if x.get('selected')]
+          assert len(selected)==1, [x.get('name') for x in selected]
+          assert selected[0].get('name')=='Tests guincho', selected
+          names={x.get('name'):bool(x.get('selected')) for x in g}
+          expected=[
+            'América Betim e Região SOLUÇÃO ASSISTÊNCIA',
+            'AMERICA GUINCHO - BETIM MG *F15* X TOP BRASIL',
+            'AMÉRICA GUINCHO BETIM X SATURNO (SB)',
+            'América Guincho X Plus Assistência',
+            'America Guincho/ Contagem/Betim MG X Company Truck',
+            'América Guincho/ HORIZONTE DEBORA GRAZEIELE',
+            'AMERICA GUINCHO/ SOCORRE ASSISTÊNCIA',
+            'AMERICA REBOQUE/ BETIM/ CONTAGEM PREMIUM ASSISTÊNCIA',
+            'ASSISTÊNCIA SEGURA  X AMERICA GUINCHO - BETIM - MG',
+            'PREST. AMERICA GUINCHOS X POWER - BETIM',
+          ]
+          for name in expected:
+            assert name in names, name
+            assert names[name] is False, f'{name} foi ativado indevidamente'
+          print('READ_ONLY_GROUPS_OK')
+          PY
