@@ -3452,7 +3452,15 @@ async function handleQuoteRuntime(msg, groupName, readableText, incomingLocation
   const lines = [];
   if (asksAvailability(readableText)) lines.push('Disponível ✅');
   if (route.eta && formatEtaReply(route.eta, false)) lines.push(formatEtaReply(route.eta, false));
-  else if (route.originAddress || route.originCoordinates) lines.push('Não consegui localizar a origem com precisão suficiente para calcular a prévia. Envie a localização do WhatsApp ou confirme a cidade/UF.');
+  else if (route.originAddress || route.originCoordinates) {
+    const currentTracker = await getTrackerReading().catch(() => null);
+    const currentTrackerAge = trackerAgeSeconds(currentTracker);
+    if (!currentTracker || currentTrackerAge === null || currentTrackerAge > 120) {
+      lines.push('Rastreador do guincho sem atualização recente. Não consigo calcular a previsão de chegada com segurança agora.');
+    } else {
+      lines.push('Não consegui calcular a rota até a origem informada. Se possível, envie a localização do WhatsApp.');
+    }
+  }
   if (!route.eta?.queued && route.eta?.distanceKm != null) lines.push(`${route.eta?.approximate ? 'Distância aproximada até a origem' : 'Distância até a origem'}: ${route.eta.distanceKm} km.`);
   if (route.estimatedTotalKm != null) {
     const approximateRoute = Boolean(route.fullRoute?.origin?.approximate || route.fullRoute?.destination?.approximate);
