@@ -1,0 +1,155 @@
+from pathlib import Path
+
+
+def replace_once(text, old, new, label):
+    if new in text:
+        return text
+    if old not in text:
+        raise SystemExit(f"Bloco não encontrado: {label}")
+    return text.replace(old, new, 1)
+
+
+# Worker: criar financeiro de teste isolado e permitir resumo somente no grupo Tests guincho.
+worker = Path("tools/vercel-whatsapp-worker.mjs")
+text = worker.read_text()
+
+finance_marker = "function ensureConfirmedFinanceTracking(state, item, { finalized = false } = {}) {\n"
+helper = r'''function ensureTestFinanceTracking(state, item, { finalized = false } = {}) {
+  if (!item || !isTestCall(item)) return null;
+  if (!Array.isArray(state.finance)) state.finance = [];
+  const amount = confirmedFinanceAmount(item);
+  const now = new Date().toISOString();
+  let entry = state.finance.find((candidate) => candidate.sourceCallId === item.id && candidate.type === 'receita' && candidate.testMode === true);
+  const effectiveFinal = finalized === true || isOwnerFinalizedCall(item) || entry?.isFinal === true;
+  const patch = {
+    description: `[TESTE] Corrida ${effectiveFinal ? 'fechada' : 'aberta'} · ${item.groupName || item.insurer || item.client || 'Tests guincho'} · ${item.vehicle || 'Veículo'}`,
+    category: 'Financeiro de teste',
+    amount,
+    type: 'receita',
+    status: 'pendente',
+    financialStage: effectiveFinal ? 'faturado' : 'previsto',
+    isFinal: effectiveFinal,
+    needsValueReview: !(amount > 0),
+    dueDate: null,
+    client: item.client || item.insurer || item.groupName || 'Tests guincho',
+    insurer: item.insurer || item.client || item.groupName || 'Tests guincho',
+    insurerId: item.insurerId || '',
+    groupId: item.sourceGroupId || '',
+    groupName: item.groupName || 'Tests guincho',
+    protocol: item.protocol || '',
+    sourceCallId: item.id,
+    billableKm: Number(item.billableKm ?? item.totalKm ?? item.estimatedTotalKm ?? 0),
+    source: 'test_close',
+    testMode: true,
+    updatedAt: now,
+  };
+  if (entry) Object.assign(entry, patch);
+  else {
+    entry = { id: crypto.randomUUID(), ...patch, createdAt: now };
+    state.finance.unshift(entry);
+  }
+  return entry;
+}
+
+'''
+if "function ensureTestFinanceTracking(" not in text:
+    if finance_marker not in text:
+        raise SystemExit("Ponto de inserção do financeiro de teste não encontrado")
+    text = text.replace(finance_marker, helper + finance_marker, 1)
+
+text = replace_once(
+    text,
+    "  state.calls[index] = next;\n  ensureConfirmedFinanceTracking(state, next, { finalized: true });\n  syncDriverPayrolls(state);",
+    "  state.calls[index] = next;\n  if (isTestCall(next)) ensureTestFinanceTracking(state, next, { finalized: true });\n  else ensureConfirmedFinanceTracking(state, next, { finalized: true });\n  syncDriverPayrolls(state);",
+    "financeiro no close_call",
+)
+
+text = replace_once(
+    text,
+    "  let noticeSent = false;\n  if (waClient && waStatus === 'pronto' && next.sourceGroupId && !isTestCall(next)) {",
+    "  let noticeSent = false;\n  const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');\n  if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {",
+    "liberação do resumo WhatsApp de teste",
+)
+
+text = replace_once(
+    text,
+    "      noticeSent = true;\n      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm });",
+    "      noticeSent = true;\n      next.ownerCloseNoticeSentAt = new Date().toISOString();\n      await saveManagement(state);\n      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });",
+    "registro do envio do resumo",
+)
+
+text = replace_once(
+    text,
+    "    const allCalls = data.calls || [];\n    const calls = allCalls.filter((item) => !isTestCall(item));\n    const testCalls = allCalls.filter((item) => isTestCall(item));\n    const filters =",
+    "    const allCalls = data.calls || [];\n    const calls = allCalls.filter((item) => !isTestCall(item));\n    const testCalls = allCalls.filter((item) => isTestCall(item));\n    const allFinance = data.finance || [];\n    const finance = allFinance.filter((item) => item?.testMode !== true);\n    const testFinance = allFinance.filter((item) => item?.testMode === true);\n    const filters =",
+    "separação de financeiro de teste na gestão",
+)
+
+text = replace_once(
+    text,
+    "      data: { ...data, calls, testCalls },\n      quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),\n      periodReport: buildPeriodReport({ ...data, calls }, filters),",
+    "      data: { ...data, calls, testCalls, finance, testFinance },\n      quoteFunnel: buildQuoteFunnel(calls, data.insurers || [], filters),\n      periodReport: buildPeriodReport({ ...data, calls, finance }, filters),",
+    "retorno da gestão isolado",
+)
+
+text = replace_once(
+    text,
+    "      finance: saved.finance,\n      calls: saved.calls,",
+    "      finance: (saved.finance || []).filter((entry) => entry?.testMode !== true),\n      calls: (saved.calls || []).filter((call) => !isTestCall(call)),",
+    "isolamento do billing oficial",
+)
+
+worker.write_text(text)
+
+
+# Tela Operação: impedir duplo clique, fechar modal e mostrar resultado correto.
+for filename in ["operation-command-center.js", "public/operation-command-center.js"]:
+    path = Path(filename)
+    js = path.read_text()
+    js = replace_once(
+        js,
+        "      const { data, item } = readCommandForm(call);\n      const response = await api('/api/worker/management',",
+        "      const { data, item } = readCommandForm(call);\n      const saveButton = document.getElementById('modalSave');\n      if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Concluindo...'; }\n      try {\n        const response = await api('/api/worker/management',",
+        f"início fechamento {filename}",
+    )
+    js = replace_once(
+        js,
+        "      const sent = response?.data?.closeResult?.noticeSent;\n      alert(sent ? 'Corrida concluída. Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. Confira o grupo do WhatsApp para confirmar o envio do resumo.');",
+        "        const sent = response?.data?.closeResult?.noticeSent;\n        closeModal();\n        alert(isTestCall(call)\n          ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o envio do resumo. Confira o grupo.')\n          : (sent ? 'Corrida concluída ✅ Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. O WhatsApp não confirmou o resumo; confira o grupo.'));\n      } catch (error) {\n        if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }\n        throw error;\n      }",
+        f"fim fechamento {filename}",
+    )
+    path.write_text(js)
+
+
+# Financeiro de teste: mostrar cada corrida concluída individualmente.
+for filename in ["test-mode-visibility.js", "public/test-mode-visibility.js"]:
+    path = Path(filename)
+    js = path.read_text()
+    if "test-finance-detail-list" not in js:
+        lines = js.splitlines()
+        idx = next((i for i, line in enumerate(lines) if line.lstrip().startswith("financeCard.innerHTML = `")), None)
+        if idx is None:
+            raise SystemExit(f"Painel financeiro de teste não encontrado: {filename}")
+        insertion = [
+            "      const persistedTestFinance = Array.isArray(mgmt?.testFinance) ? mgmt.testFinance : [];",
+            "      const financeByCall = new Map();",
+            "      for (const c of calls.filter((item) => item?.ownerClosedAt || item?.status === 'concluido')) financeByCall.set(c.id, { sourceCallId:c.id, description:`[TESTE] ${c.vehicle || 'Corrida'} · ${c.groupName || c.insurer || 'Tests guincho'}`, amount:simulatedRevenueForCall(c), billableKm:num(c.billableKm ?? c.totalKm), updatedAt:c.ownerClosedAt || c.completedAt || c.updatedAt, testMode:true });",
+            "      for (const entry of persistedTestFinance) financeByCall.set(entry.sourceCallId || entry.id, entry);",
+            "      const testFinanceRows = [...financeByCall.values()].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0));",
+            "      if (testFinanceRows.length) financeCard.insertAdjacentHTML('beforeend', `<div class=\"test-mode-list test-finance-detail-list\">${testFinanceRows.slice(0,20).map(f=>`<div class=\"test-mode-row\"><div><b>${esc(f.description || '[TESTE] Corrida concluída')}</b><small>Fechado em ${stamp(f.updatedAt)}</small><div class=\"test-mode-route\">${num(f.billableKm).toLocaleString('pt-BR',{maximumFractionDigits:1})} km · ${money(f.amount)}</div></div><span class=\"test-mode-status\">TESTE · FECHADO</span></div>`).join('')}</div>`);",
+        ]
+        lines[idx + 1:idx + 1] = insertion
+        js = "\n".join(lines) + ("\n" if js.endswith("\n") else "")
+    path.write_text(js)
+
+
+# Outro botão de fechamento do painel: mensagem coerente para teste.
+for filename in ["owner-dashboard.js", "public/owner-dashboard.js"]:
+    path = Path(filename)
+    js = path.read_text()
+    old = "        alert(testClosure ? 'Corrida de teste concluída ✅ Os dados foram processados e ela saiu dos atendimentos em aberto.' : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));"
+    new = "        alert(testClosure ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o resumo. Confira o grupo.') : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));"
+    js = replace_once(js, old, new, f"mensagem {filename}")
+    path.write_text(js)
+
+print("PATCH_TEST_CLOSE_FULL_OK")
