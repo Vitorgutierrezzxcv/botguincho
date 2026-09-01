@@ -24,6 +24,7 @@ import { ensureInsurerForGroup, sanitizeInsurer, upsertInsurer, buildQuoteFunnel
 import { buildPeriodReport, buildPeriodWorkbook } from './reporting-engine.mjs';
 import { historicalTrainingStats } from './training-runtime-index.mjs';
 import { normalizeAddressInput } from './address-normalization.mjs';
+import { maybeInterpretOperationalMessage } from './ai-operational-fallback.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -3213,13 +3214,33 @@ async function currentOperationalContext(groupId, groupName, text) {
   const knowledge = commercialResolution.knowledge;
   const approvedRules = commercialResolution.rules;
   const billingProfile = ensureBillingProfile(management, groupId, groupName);
-  const facts = extractOperationalFacts(text);
+  const deterministicFacts = extractOperationalFacts(text);
   const provisionalIntent = classifyRuntimeIntent(text, groupName, provisionalRecentCall);
   const recentCall = provisionalIntent === 'closure'
     ? (oldestActiveManagementCallForGroup(management, groupId) || provisionalRecentCall)
     : provisionalRecentCall;
-  const intent = classifyRuntimeIntent(text, groupName, recentCall);
-  return { management, recentCall, knowledge, approvedRules, commercialRuleSource: commercialResolution.source, billingProfile, facts, intent, profile: resolveGroupProfile(groupName) };
+  const deterministicIntent = classifyRuntimeIntent(text, groupName, recentCall);
+  const aiInterpretation = await maybeInterpretOperationalMessage({
+    text,
+    groupName,
+    facts: deterministicFacts,
+    intent: deterministicIntent,
+  });
+  const facts = aiInterpretation?.facts || deterministicFacts;
+  const intent = aiInterpretation?.intent || deterministicIntent;
+  if (aiInterpretation?.meta?.used) {
+    logEvent('ai_fallback', 'Mensagem operacional normalizada pela IA', {
+      groupId,
+      groupName,
+      model: aiInterpretation.meta.model,
+      confidence: aiInterpretation.meta.confidence,
+      dailyCall: aiInterpretation.meta.dailyCall,
+      dailyLimit: aiInterpretation.meta.dailyLimit,
+      inputTokens: aiInterpretation.meta.inputTokens,
+      outputTokens: aiInterpretation.meta.outputTokens,
+    });
+  }
+  return { management, recentCall, knowledge, approvedRules, commercialRuleSource: commercialResolution.source, billingProfile, facts, intent, profile: resolveGroupProfile(groupName), aiFallback: aiInterpretation?.meta || null };
 }
 
 // FICHA_PICADA: 12,6% das mensagens das centrais chegam em pedaco - o destino
