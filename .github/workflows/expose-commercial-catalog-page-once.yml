@@ -1,0 +1,72 @@
+name: Expose Commercial Catalog Page Once
+on:
+  push:
+    paths:
+      - '.github/workflows/expose-commercial-catalog-page-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expor tabelas comerciais no menu principal
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch_index(path):
+              p = Path(path)
+              s = p.read_text()
+              old_nav = '<button data-page="clients"><span class="ico">◌</span>Clientes</button><button data-page="finance"><span class="ico">$</span>Financeiro</button>'
+              new_nav = '<button data-page="clients"><span class="ico">◌</span>Clientes</button><button data-page="pricing"><span class="ico">≡</span>Tabelas de valores</button><button data-page="finance"><span class="ico">$</span>Financeiro</button>'
+              if old_nav not in s:
+                  raise SystemExit(f'nav marker not found in {path}')
+              s = s.replace(old_nav, new_nav, 1)
+              marker = '<section id="finance" class="page">'
+              pricing = '<section id="pricing" class="page"><div class="head"><div><h2>Tabelas de valores</h2><p>Valores comerciais por grupo e transportadora, importados das conversas reais.</p></div></div><div class="notice good">As tabelas abaixo são as referências usadas pelo BotGuincho quando o grupo é identificado. Exceções e valores não confirmados aparecem sinalizados.</div><div id="pricingCatalogList" class="section"><div class="empty">Carregando tabelas...</div></div></section>\n'
+              if marker not in s:
+                  raise SystemExit(f'finance marker not found in {path}')
+              s = s.replace(marker, pricing + marker, 1)
+              p.write_text(s)
+
+          def patch_app(path):
+              p = Path(path)
+              s = p.read_text()
+              old_meta = "clients:['Clientes e seguradoras','Cadastre e acompanhe parceiros e clientes.'],finance:['Financeiro'"
+              new_meta = "clients:['Clientes e seguradoras','Cadastre e acompanhe parceiros e clientes.'],pricing:['Tabelas de valores','Valores comerciais por grupo e transportadora.'],finance:['Financeiro'"
+              if old_meta not in s:
+                  raise SystemExit(f'pageMeta marker not found in {path}')
+              s = s.replace(old_meta, new_meta, 1)
+              old_show = "if(name==='finance')loadBillingFinance();if(name==='tests')"
+              new_show = "if(name==='finance')loadBillingFinance();if(name==='pricing')loadCommercialCatalog();if(name==='tests')"
+              if old_show not in s:
+                  raise SystemExit(f'showPage marker not found in {path}')
+              s = s.replace(old_show, new_show, 1)
+              old_loader = "async function loadCommercialCatalog(){\n  const list=$('knowledgeList');if(!list)return;\n  let panel=$('verifiedCommercialCatalog');\n  if(!panel){panel=document.createElement('div');panel.id='verifiedCommercialCatalog';panel.className='section';list.parentElement?.appendChild(panel)}"
+              new_loader = "async function loadCommercialCatalog(){\n  const panel=$('pricingCatalogList');if(!panel)return;"
+              if old_loader not in s:
+                  raise SystemExit(f'catalog loader marker not found in {path}')
+              s = s.replace(old_loader, new_loader, 1)
+              p.write_text(s)
+
+          patch_index('index.html')
+          if Path('public/index.html').exists():
+              patch_index('public/index.html')
+          patch_app('app.js')
+          patch_app('public/app.js')
+          PY
+
+          node --check app.js
+          node --check public/app.js
+          grep -q 'data-page="pricing"' index.html
+          grep -q 'id="pricingCatalogList"' index.html
+          grep -q "name==='pricing'" app.js
+
+          rm -f .github/workflows/expose-commercial-catalog-page-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html public/index.html app.js public/app.js .github/workflows/expose-commercial-catalog-page-once.yml
+          git commit -m 'Exibe tabelas de valores no menu principal'
+          git push
