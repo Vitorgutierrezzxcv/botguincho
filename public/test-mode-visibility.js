@@ -1,126 +1,196 @@
 (() => {
   'use strict';
-  const statusLabel = { cotacao:'Cotação aberta', aguardando_dados:'Aguardando dados', aguardando_aprovacao:'Aguardando aprovação', autorizado:'Aceita', agendado:'Agendada', a_caminho:'A caminho', em_atendimento:'Em atendimento', aguardando_fechamento:'Aguardando fechamento', concluido:'Concluída', cancelado:'Cancelada' };
-  const accepted = new Set(['autorizado','a_caminho','em_atendimento','aguardando_fechamento','concluido']);
-  const quoteTimelineTypes = new Set(['consulta_registrada','consulta_disponibilidade','cotacao','solicitacao_recebida','dados_incompletos','dados_do_atendimento','aguardando_autorizacao']);
-  const isQuote = (c) => c?.quoteTracked === true || ['cotacao','aguardando_dados','aguardando_aprovacao','agendado'].includes(c?.status) || ['open','won','lost'].includes(c?.quoteOutcome) || (Array.isArray(c?.operationalTimeline) && c.operationalTimeline.some((event) => quoteTimelineTypes.has(event?.type)));
-  const outcome = (c) => c?.quoteOutcome === 'won' || accepted.has(c?.status) || c?.authorizedAt ? 'Ganha' : c?.quoteOutcome === 'lost' || (c?.status === 'cancelado' && !c?.authorizedAt) ? 'Perdida' : 'Em aberto';
-  const stamp = (value) => { try { return new Date(value).toLocaleString('pt-BR'); } catch { return '—'; } };
-  const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
-  const isAccepted = (c) => accepted.has(c?.status) || Boolean(c?.authorizedAt) || (c?.status === 'cancelado' && c?.cancellationChargeRequired === true);
-  const simulatedRevenueForCall = (c) => isAccepted(c) ? num(c?.value || c?.calculatedValue || c?.quoteCalculatedValue) : 0;
-  const simulatedDriverForCall = (c) => {
-    if (!isAccepted(c)) return 0;
-    const km = Math.max(0, num(c?.serviceOutcome === 'deslocamento_sem_reboque'
-      ? (c?.displacementBillableKm ?? c?.billableKm)
-      : c?.cancellationChargeRequired
-        ? (c?.cancellationBillableKm ?? c?.billableKm ?? c?.totalKm)
-        : (c?.billableKm ?? c?.totalKm)));
-    const route = 40 + Math.max(0, km - 50) * 0.70;
-    const worked = c?.workedTimeChargeRequired ? num(c?.workedTimeAmount) : 0;
-    return Math.round((route + worked) * 100) / 100;
-  };
 
-  function styles() {
-    if (document.getElementById('testModeStyles')) return;
-    const style = document.createElement('style');
-    style.id = 'testModeStyles';
-    style.textContent = `
-      .test-mode-card{border:1px solid #93c5fd;background:linear-gradient(135deg,#eff6ff,#f8fbff);box-shadow:0 10px 30px rgba(37,99,235,.08)}
-      .test-mode-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
-      .test-mode-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
-      .test-mode-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:800;letter-spacing:.04em}
-      .test-mode-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin-top:14px}
-      .test-mode-metric{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:12px}.test-mode-metric span{display:block;color:#64748b;font-size:12px}.test-mode-metric b{display:block;color:#0f172a;font-size:24px;margin-top:4px}
-      .test-mode-list{display:grid;gap:8px;margin-top:14px}.test-mode-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:12px}.test-mode-row small{display:block;color:#64748b;margin-top:5px}.test-mode-status{align-self:start;padding:5px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:800}.test-mode-route{margin-top:5px;font-size:13px;color:#334155}
-      .test-mode-actions{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;justify-content:flex-end}.test-mode-actions .btn{min-height:30px}.test-mode-delete{color:#b91c1c!important;border-color:#fecaca!important;background:#fff!important}.test-mode-delete:hover{background:#fef2f2!important;border-color:#fca5a5!important}.test-mode-delete-all{color:#fff!important;border-color:#b91c1c!important;background:#b91c1c!important}.test-mode-delete-all:hover{background:#991b1b!important;border-color:#991b1b!important}.test-mode-delete-all:disabled{opacity:.65;cursor:wait}
-      @media(max-width:720px){.test-mode-metrics{grid-template-columns:1fr 1fr}.test-mode-head{display:block}.test-mode-head-actions{justify-content:flex-start;margin-top:10px}.test-mode-badge{margin-top:0}.test-mode-row{grid-template-columns:1fr}.test-mode-status{justify-self:start}.test-mode-actions{justify-content:flex-start}}
-    `;
-    document.head.appendChild(style);
+  function loadUiLayer() {
+    if (!document.querySelector('link[data-tratto-ui]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/tratto-ui.css?v=1';
+      link.dataset.trattoUi = '1';
+      document.head.appendChild(link);
+    }
+    document.body.classList.add('tratto-ui');
   }
 
-  function renderTestMode() {
-    styles();
-    const calls = Array.isArray(mgmt?.testCalls) ? mgmt.testCalls : [];
-    const quotes = calls.filter(isQuote);
-    const won = quotes.filter((c) => outcome(c) === 'Ganha');
-    const lost = quotes.filter((c) => outcome(c) === 'Perdida');
-    const open = quotes.filter((c) => outcome(c) === 'Em aberto');
-    const acceptedCalls = calls.filter(isAccepted);
-    const simulatedRevenue = acceptedCalls.reduce((sum, c) => sum + simulatedRevenueForCall(c), 0);
-    const simulatedDriver = acceptedCalls.reduce((sum, c) => sum + simulatedDriverForCall(c), 0);
-    const dashboard = document.getElementById('dashboard');
-    if (dashboard) {
-      let card = document.getElementById('testModeDashboard');
-      if (!card) {
-        card = document.createElement('div'); card.id = 'testModeDashboard'; card.className = 'card section test-mode-card';
-        const anchor = dashboard.querySelector('.owner-kpis') || dashboard.firstElementChild;
-        if (anchor?.parentNode) anchor.parentNode.insertBefore(card, anchor); else dashboard.prepend(card);
-      }
-      card.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">AMBIENTE DE TESTE</div><h3>Testes do WhatsApp</h3><p>Estes dados servem só para validação. Não entram em faturamento, recebíveis ou pagamento real do motorista.</p></div><span class="test-mode-badge">TESTE · ${calls.length} registro(s)</span></div><div class="test-mode-metrics"><div class="test-mode-metric"><span>Cotações</span><b>${quotes.length}</b></div><div class="test-mode-metric"><span>Em aberto</span><b>${open.length}</b></div><div class="test-mode-metric"><span>Ganhas</span><b>${won.length}</b></div><div class="test-mode-metric"><span>Perdidas</span><b>${lost.length}</b></div><div class="test-mode-metric"><span>Corridas aceitas</span><b>${acceptedCalls.length}</b></div><div class="test-mode-metric"><span>Faturamento simulado</span><b>${money(simulatedRevenue)}</b></div><div class="test-mode-metric"><span>Mauro simulado</span><b>${money(simulatedDriver)}</b></div></div><div class="test-mode-list">${calls.length ? [...calls].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0)).slice(0,5).map(c=>`<div class="test-mode-row"><div><b>${esc(c.vehicle||'Cotação de teste')}</b><small>${esc(c.groupName||c.insurer||'Tests guincho')} · ${stamp(c.updatedAt||c.createdAt)}</small><div class="test-mode-route">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div></div><span class="test-mode-status">${esc(statusLabel[c.status]||c.status||'Teste')}</span></div>`).join('') : '<div class="empty">Nenhum teste registrado ainda.</div>'}</div>`;
+  function changeButtonText(button, text) {
+    if (!button) return;
+    [...button.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).forEach((node) => { node.textContent = text; });
+  }
+
+  function normalizeNavigation() {
+    const dashboard = document.querySelector('.sidebar [data-page="dashboard"]');
+    const calls = document.querySelector('.sidebar [data-page="calls"]');
+    const fleet = document.querySelector('.sidebar [data-page="fleet"]');
+    const pricing = document.querySelector('.sidebar [data-page="pricing"]');
+    const config = document.querySelector('.sidebar [data-page="automations"]');
+    changeButtonText(dashboard, 'Início');
+    changeButtonText(calls, 'Corridas');
+    changeButtonText(fleet, 'Motoristas e frota');
+    changeButtonText(pricing, 'Valores por cliente');
+    changeButtonText(config, 'Configurações');
+
+    const advanced = document.querySelector('.advanced-menu');
+    const advancedNav = advanced?.querySelector('.nav');
+    const summary = advanced?.querySelector('summary');
+    if (summary) summary.textContent = 'Configurações avançadas';
+    if (advancedNav) {
+      [fleet, pricing].forEach((button) => { if (button && button.parentElement !== advancedNav) advancedNav.prepend(button); });
     }
-    const financePage = document.getElementById('finance');
-    if (financePage) {
-      let financeCard = document.getElementById('testModeFinancePanel');
-      if (!financeCard) { financeCard = document.createElement('div'); financeCard.id = 'testModeFinancePanel'; financeCard.className = 'card section test-mode-card'; financePage.prepend(financeCard); }
-      financeCard.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">FINANCEIRO DE TESTE</div><h3>Simulação das corridas do Tests guincho</h3><p>Calculado com as mesmas regras da operação, mas isolado do financeiro oficial.</p></div><span class="test-mode-badge">NÃO É COBRANÇA REAL</span></div><div class="test-mode-metrics"><div class="test-mode-metric"><span>Corridas aceitas</span><b>${acceptedCalls.length}</b></div><div class="test-mode-metric"><span>Faturamento simulado</span><b>${money(simulatedRevenue)}</b></div><div class="test-mode-metric"><span>Pagamento Mauro</span><b>${money(simulatedDriver)}</b></div></div>`;
-      const persistedTestFinance = Array.isArray(mgmt?.testFinance) ? mgmt.testFinance : [];
-      const financeByCall = new Map();
-      for (const c of calls.filter((item) => item?.ownerClosedAt || item?.status === 'concluido')) financeByCall.set(c.id, { sourceCallId:c.id, description:`[TESTE] ${c.vehicle || 'Corrida'} · ${c.groupName || c.insurer || 'Tests guincho'}`, amount:simulatedRevenueForCall(c), billableKm:num(c.billableKm ?? c.totalKm), updatedAt:c.ownerClosedAt || c.completedAt || c.updatedAt, testMode:true });
-      for (const entry of persistedTestFinance) financeByCall.set(entry.sourceCallId || entry.id, entry);
-      const testFinanceRows = [...financeByCall.values()].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0));
-      if (testFinanceRows.length) financeCard.insertAdjacentHTML('beforeend', `<div class="test-mode-list test-finance-detail-list">${testFinanceRows.slice(0,20).map(f=>`<div class="test-mode-row"><div><b>${esc(f.description || '[TESTE] Corrida concluída')}</b><small>Fechado em ${stamp(f.updatedAt)}</small><div class="test-mode-route">${num(f.billableKm).toLocaleString('pt-BR',{maximumFractionDigits:1})} km · ${money(f.amount)}</div></div><span class="test-mode-status">TESTE · FECHADO</span></div>`).join('')}</div>`);
+
+    document.querySelectorAll('[data-page="tests"]').forEach((node) => node.remove());
+    document.querySelectorAll('.nav button').forEach((button) => {
+      if ((button.textContent || '').toLowerCase().includes('central de testes')) button.remove();
+    });
+  }
+
+  function settingsCard(icon, title, description, action) {
+    return `<button type="button" class="tratto-settings-card" data-settings-action="${action}"><span class="tratto-settings-icon">${icon}</span><span><b>${title}</b><small>${description}</small></span></button>`;
+  }
+
+  function openSettingsTarget(action) {
+    const map = {
+      driver: 'fleet', vehicle: 'fleet', pricing: 'pricing', groups: 'groups', whatsapp: 'whatsapp', tracker: 'tracker', ai: 'ai', clients: 'clients'
+    };
+    if (map[action] && typeof showPage === 'function') {
+      showPage(map[action]);
+      return;
     }
+    if (action === 'install') {
+      document.getElementById('installBtn')?.click();
+      return;
+    }
+    if (action === 'areas' || action === 'hours') {
+      if (typeof showPage === 'function') showPage('automations');
+      requestAnimationFrame(() => {
+        const target = action === 'hours'
+          ? document.getElementById('operatingHoursConfig')
+          : document.getElementById('excludedAreaList')?.closest('.card');
+        target?.scrollIntoView({ behavior:'smooth', block:'start' });
+      });
+    }
+  }
+
+  function ensureSettingsHub() {
+    const page = document.getElementById('automations');
+    if (!page) return;
+    const head = page.querySelector(':scope > .head');
+    const h2 = head?.querySelector('h2');
+    const p = head?.querySelector('p');
+    if (h2) h2.textContent = 'Configurações';
+    if (p) p.textContent = 'Tudo o que muda o funcionamento da operação, separado por assunto.';
+
+    let hub = document.getElementById('trattoSettingsHub');
+    if (!hub) {
+      hub = document.createElement('div');
+      hub.id = 'trattoSettingsHub';
+      hub.className = 'tratto-settings-hub';
+      hub.innerHTML = `
+        <h3>O que você quer configurar?</h3>
+        <p>Escolha uma área. As regras continuam ligadas ao Financeiro e ao WhatsApp automaticamente.</p>
+        <div class="tratto-settings-grid">
+          ${settingsCard('👤','Motorista e pagamentos','Fechamento, repasse e dados do motorista.','driver')}
+          ${settingsCard('▰','Veículo e custos','Placa, guincho e dados usados na operação.','vehicle')}
+          ${settingsCard('R$','Valores por cliente','Tabelas por grupo, transportadora e tipo de reboque.','pricing')}
+          ${settingsCard('⌖','Cidades e bairros','Locais que o motorista não atende.','areas')}
+          ${settingsCard('◷','Horários','Dias, horários e resposta fora do expediente.','hours')}
+          ${settingsCard('◎','Grupos do WhatsApp','Onde o sistema pode responder.','groups')}
+          ${settingsCard('◍','WhatsApp','Conexão e QR Code da sessão.','whatsapp')}
+          ${settingsCard('⌖','Rastreador','Localização do caminhão usada nas previsões.','tracker')}
+          ${settingsCard('✦','Automação','Comportamento das respostas automáticas.','ai')}
+          ${settingsCard('↗','Instalar aplicativo','Adicionar o BotGuincho à tela inicial.','install')}
+        </div>`;
+      head?.insertAdjacentElement('afterend', hub);
+      hub.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-settings-action]');
+        if (button) openSettingsTarget(button.dataset.settingsAction);
+      });
+    }
+
+    const directChildren = [...page.children].filter((node) => node !== head && node !== hub);
+    directChildren.forEach((node) => node.classList.add('settings-content-block'));
+    const automationList = document.getElementById('automationList');
+    const automationBlock = automationList?.closest('.grid2');
+    if (automationBlock && !automationBlock.previousElementSibling?.classList?.contains('tratto-section-title')) {
+      automationBlock.insertAdjacentHTML('beforebegin','<div class="tratto-section-title">Regras automáticas</div>');
+    }
+    const areasCard = document.getElementById('excludedAreaList')?.closest('.card');
+    if (areasCard && !areasCard.previousElementSibling?.classList?.contains('tratto-section-title')) {
+      areasCard.insertAdjacentHTML('beforebegin','<div class="tratto-section-title">Regiões atendidas</div>');
+    }
+    const hoursCard = document.getElementById('operatingHoursConfig');
+    if (hoursCard && !hoursCard.previousElementSibling?.classList?.contains('tratto-section-title')) {
+      hoursCard.insertAdjacentHTML('beforebegin','<div class="tratto-section-title">Horário de funcionamento</div>');
+    }
+  }
+
+  function simplifyAvailability() {
+    const operations = document.getElementById('operations');
+    if (!operations) return;
+    const cards = [...operations.querySelectorAll('.card')];
+    const card = cards.find((item) => /disponibilidade do guincho/i.test(item.textContent || ''));
+    if (!card || card.classList.contains('availability-compact')) return;
+    card.classList.add('availability-compact');
+    const h3 = card.querySelector('h3');
+    const intro = h3?.parentElement?.querySelector('p');
+    if (h3) h3.textContent = 'Disponibilidade';
+    if (intro) intro.textContent = 'Defina rapidamente se o guincho pode receber novos atendimentos.';
+
+    const secondaryLabels = ['nome do motorista','whatsapp do motorista','placa'];
+    card.querySelectorAll('.field').forEach((field) => {
+      const label = (field.querySelector('label')?.textContent || '').trim().toLowerCase();
+      if (secondaryLabels.includes(label)) field.classList.add('availability-secondary');
+    });
+
+    const details = document.createElement('button');
+    details.type = 'button';
+    details.className = 'btn secondary small availability-details-toggle';
+    details.textContent = 'Ver dados do motorista e veículo';
+    details.addEventListener('click', () => {
+      const opened = card.classList.toggle('show-details');
+      details.textContent = opened ? 'Ocultar detalhes' : 'Ver dados do motorista e veículo';
+    });
+    const actions = card.querySelector('.actions') || card.lastElementChild;
+    actions?.insertAdjacentElement('afterend', details);
+  }
+
+  function simplifyCopies() {
     const callsPage = document.getElementById('calls');
-    if (callsPage) {
-      let panel = document.getElementById('testModeCallsPanel');
-      if (!panel) { panel = document.createElement('div'); panel.id = 'testModeCallsPanel'; panel.className = 'card section test-mode-card'; callsPage.prepend(panel); }
-      panel.innerHTML = `<div class="test-mode-head"><div><div class="eyebrow">MODO DE TESTE</div><h3>Cotações e corridas do Tests guincho</h3><p>Visíveis para conferência, isoladas dos números oficiais.</p></div><div class="test-mode-head-actions"><span class="test-mode-badge">${calls.length} registro(s)</span>${calls.length ? '<button type="button" class="btn small test-mode-delete-all" onclick="deleteAllTestCalls(this)">Apagar todos</button>' : ''}</div></div><div class="test-mode-list">${calls.length ? [...calls].sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0)).map(c=>`<div class="test-mode-row"><div><b>${esc(c.vehicle||'Atendimento de teste')}</b><small>${esc(outcome(c))} · ${stamp(c.updatedAt||c.createdAt)}</small><div class="test-mode-route">${esc(c.origin||'Origem não informada')} → ${esc(c.destination||'Destino não informado')}</div>${c.lastOperationalText?`<small>“${esc(c.lastOperationalText).slice(0,150)}”</small>`:''}</div><div class="test-mode-actions"><span class="test-mode-status">${esc(statusLabel[c.status]||c.status||'Teste')}</span><button type="button" class="btn small ghost test-mode-delete" onclick="deleteTestCall('${esc(c.id)}')">Excluir</button></div></div>`).join('') : '<div class="empty">Nenhum atendimento de teste registrado.</div>'}</div>`;
-    }
+    const callHead = callsPage?.querySelector(':scope > .head');
+    if (callHead?.querySelector('h2')) callHead.querySelector('h2').textContent = 'Corridas';
+    if (callHead?.querySelector('p')) callHead.querySelector('p').textContent = 'Cotações, autorizações e corridas em um só lugar.';
+
+    const finance = document.getElementById('finance');
+    const financeHead = finance?.querySelector(':scope > .head');
+    if (financeHead?.querySelector('p')) financeHead.querySelector('p').textContent = 'Entradas, valores a receber e pagamentos da operação.';
+
+    const fleet = document.getElementById('fleet');
+    const fleetHead = fleet?.querySelector(':scope > .head');
+    if (fleetHead?.querySelector('h2')) fleetHead.querySelector('h2').textContent = 'Motorista e frota';
+    if (fleetHead?.querySelector('p')) fleetHead.querySelector('p').textContent = 'Pagamento do motorista e dados do caminhão.';
   }
 
-  window.deleteTestCall = async (id) => {
-    const call = (Array.isArray(mgmt?.testCalls) ? mgmt.testCalls : []).find((item) => item?.id === id);
-    if (!call) return alert('Corrida de teste não encontrada. Atualize a tela.');
-    if (!confirm('Excluir definitivamente esta corrida de TESTE? Ela também será removida do Financeiro de teste.')) return;
-    try {
-      await api('/api/worker/management', { method:'POST', body:JSON.stringify({ action:'delete_call', callId:id, ownerName:'Thiago' }) });
-      await loadManagement();
-      if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
-      alert('Corrida de teste excluída.');
-    } catch (error) {
-      alert('Não foi possível excluir: ' + (error?.message || error));
-    }
-  };
+  function removeTestPresentation() {
+    ['testModeDashboard','testModeCallsPanel','testModeFinancePanel'].forEach((id) => document.getElementById(id)?.remove());
+    document.querySelectorAll('.test-mode-card').forEach((node) => node.remove());
+  }
 
-  window.deleteAllTestCalls = async (button) => {
-    const calls = Array.isArray(mgmt?.testCalls) ? [...mgmt.testCalls] : [];
-    if (!calls.length) return alert('Não há corridas de teste para excluir.');
-    if (!confirm(`APAGAR TODOS OS ${calls.length} REGISTROS DE TESTE?\n\nIsso remove definitivamente todas as cotações/corridas do Tests guincho e o Financeiro de teste vinculado.\n\nAs corridas e o financeiro REAIS não serão alterados. Essa ação não pode ser desfeita.`)) return;
-    const originalText = button?.textContent || 'Apagar todos';
-    if (button) button.disabled = true;
-    let deleted = 0;
-    const failures = [];
-    for (const call of calls) {
-      if (button) button.textContent = `Apagando ${deleted + 1}/${calls.length}...`;
-      try {
-        await api('/api/worker/management', { method:'POST', body:JSON.stringify({ action:'delete_call', callId:call.id, ownerName:'Thiago' }) });
-        deleted += 1;
-      } catch (error) {
-        failures.push({ id:call.id, error:error?.message || String(error) });
-      }
-    }
-    try {
-      await loadManagement();
-      if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
-    } finally {
-      if (button) { button.disabled = false; button.textContent = originalText; }
-    }
-    if (failures.length) alert(`${deleted} registro(s) apagado(s). ${failures.length} não puderam ser excluídos; atualize a tela e tente novamente.`);
-    else alert(`Pronto. ${deleted} registro(s) de teste foram apagados.`);
-  };
+  function refreshPresentation() {
+    normalizeNavigation();
+    simplifyCopies();
+    ensureSettingsHub();
+    simplifyAvailability();
+    removeTestPresentation();
+  }
 
-  const previousRenderManagement = renderManagement;
-  renderManagement = function(){ previousRenderManagement(); renderTestMode(); };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderTestMode); else renderTestMode();
+  loadUiLayer();
+  const previousRenderManagement = typeof renderManagement === 'function' ? renderManagement : null;
+  if (previousRenderManagement) {
+    renderManagement = function trattoRenderManagement() {
+      previousRenderManagement();
+      refreshPresentation();
+    };
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refreshPresentation);
+  else refreshPresentation();
+  window.addEventListener('load', () => setTimeout(refreshPresentation, 50));
 })();
