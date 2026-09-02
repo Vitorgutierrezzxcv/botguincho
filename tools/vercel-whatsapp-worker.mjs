@@ -29,6 +29,7 @@ import { detectBrazilStateFromAddress } from './address-state-detection.mjs';
 import { maybeInterpretOperationalMessage } from './ai-operational-fallback.mjs';
 import { selectRecentUnprocessedMessages } from './whatsapp-recovery.mjs';
 import { scheduledCapacitySnapshot, isFutureScheduledCall, formatScheduledAtBr } from './scheduling-policy.mjs';
+import { verifiedCommercialEntryForGroup, verifiedCommercialResolution } from './verified-commercial-catalog.mjs';
 
 const { Client, LocalAuth } = whatsappWebJs;
 
@@ -167,21 +168,32 @@ function isFlowActiveCall(call = {}) {
   return FLOW_ACTIVE_STATUSES.has(String(call?.status || '').toLowerCase());
 }
 
-function commercialRulesForGroup(knowledge = null, groupName = '') {
+function commercialRulesForGroup(knowledge = null, groupName = '', association = '') {
+  // Uma edição manual aprovada no painel sempre tem prioridade.
   if (knowledge?.commercialStatus === 'approved' && knowledge?.approvedCommercialRules) {
     return { rules: knowledge.approvedCommercialRules, source: 'approved' };
   }
-  // Regra observada/histórica nunca vira preço automaticamente. Para produção,
-  // somente tabela explicitamente aprovada no app pode precificar.
+  // Estas dez tabelas foram revisadas a partir das conversas reais fornecidas pelo
+  // proprietário. Quando a descrição atual do grupo contém uma tabela, ela é
+  // mesclada ao catálogo para preservar reajustes recentes sem perder campos
+  // ausentes (por exemplo, os 40 km inclusos da Solução Assistência).
+  const verified = verifiedCommercialResolution(groupName, knowledge?.draftCommercialRules || null, association);
+  if (verified?.rules) {
+    return {
+      rules: verified.rules,
+      source: verified.associationOverride ? `verified_catalog:${verified.associationOverride.key}` : 'verified_catalog',
+      catalog: verified,
+    };
+  }
   if (isTestGroupName(groupName)) {
     return { rules: DEFAULT_TEST_COMMERCIAL_RULES, source: 'test_default' };
   }
   return { rules: null, source: 'missing' };
 }
 
-async function resolveCommercialRulesForOperationalGroup(state = {}, groupId = '', groupName = '') {
+async function resolveCommercialRulesForOperationalGroup(state = {}, groupId = '', groupName = '', association = '') {
   const knowledge = await getGroupKnowledgeEntry(groupId);
-  const direct = commercialRulesForGroup(knowledge, groupName);
+  const direct = commercialRulesForGroup(knowledge, groupName, association);
   if (direct.rules) return { ...direct, knowledge, sourceGroupId: groupId };
 
   const insurer = (state.insurers || []).find((item) => Array.isArray(item.groupIds) && item.groupIds.includes(groupId));
@@ -978,7 +990,7 @@ async function closeCallFromOwner(state, body = {}) {
   const toll = closingNumber(final.toll, call.finalTollAmount || 0);
   const invoiceExtra = closingNumber(final.invoiceExtra, 0);
   const otherExtras = closingNumber(final.otherExtras, call.finalOtherExtras || 0);
-  const resolution = await resolveCommercialRulesForOperationalGroup(state, call.sourceGroupId, call.groupName || call.insurer || call.client || '');
+  const resolution = await resolveCommercialRulesForOperationalGroup(state, call.sourceGroupId, call.groupName || call.insurer || call.client || '', call.association || '');
   let commercial = reconcileCommercial({
     approvedRules: resolution.rules,
     facts: {
@@ -3375,11 +3387,11 @@ async function currentOperationalContext(groupId, groupName, text) {
   const evidenceOrProtocol = /\[imagem recebida\]|\b(fotos?|checklist|v[ií]deo|evid[eê]ncias?|protocolo)\b/i.test(String(text || ''));
   const provisionalRecentCall = recentManagementCall(management, groupId)
     || (evidenceOrProtocol ? recentManagementRecord(management, groupId) : null);
-  const commercialResolution = await resolveCommercialRulesForOperationalGroup(management, groupId, groupName);
+  const deterministicFacts = extractOperationalFacts(text);
+  const commercialResolution = await resolveCommercialRulesForOperationalGroup(management, groupId, groupName, deterministicFacts.association || '');
   const knowledge = commercialResolution.knowledge;
   const approvedRules = commercialResolution.rules;
   const billingProfile = ensureBillingProfile(management, groupId, groupName);
-  const deterministicFacts = extractOperationalFacts(text);
   const provisionalIntent = classifyRuntimeIntent(text, groupName, provisionalRecentCall);
   const recentCall = provisionalIntent === 'closure'
     ? (oldestActiveManagementCallForGroup(management, groupId) || provisionalRecentCall)
@@ -5249,6 +5261,36 @@ async function importLearningHistory(groupId, requestedLimit = 500) {
   logEvent('learning', `${groupName}: ${imported} mensagens históricas importadas.`, { groupId, intentCounts });
   return { groupId, groupName, available: messages?.length || 0, imported, intentCounts };
 }
+
+app.get('/api/commercial-catalog', async (_req, res) => {
+  try {
+    const registry = await readJson(registryFile, {});
+    const knowledge = await learningStore.getAll();
+    const allowed = await getAllowedGroupIds();
+    const groups = Object.values(registry)
+      .map((group) => {
+        const entry = verifiedCommercialEntryForGroup(group?.name || '');
+        if (!entry) return null;
+        const resolution = verifiedCommercialResolution(group?.name || '', knowledge[group.id]?.draftCommercialRules || null, '');
+        return {
+          groupId: group.id,
+          name: group.name,
+          selected: allowed.has(group.id),
+          key: entry.key,
+          sourceFile: entry.sourceFile,
+          sourceLabel: entry.sourceLabel,
+          notes: resolution?.notes || entry.notes || [],
+          displayOnly: resolution?.displayOnly || entry.displayOnly || [],
+          rules: resolution?.rules || entry.rules,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    return res.json({ ok: true, groups });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: String(error?.message || error) });
+  }
+});
 
 app.get('/api/group-knowledge', async (_req, res) => {
   try {

@@ -15,6 +15,7 @@ const ROUTES = {
   'billing/driver-export': { methods: ['GET'], target: '/api/billing/driver-export' },
   'billing/export': { methods: ['GET'], target: '/api/billing/export' },
   capacity: { methods: ['GET'], target: '/api/capacity' },
+  'commercial-catalog': { methods: ['GET'], target: '/api/commercial-catalog' },
   'group-knowledge': { methods: ['GET', 'POST'], target: '/api/group-knowledge' },
   groups: { methods: ['GET', 'POST'], target: '/api/groups' },
   health: { methods: ['GET'], target: '/api/health' },

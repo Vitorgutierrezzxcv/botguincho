@@ -439,9 +439,11 @@ export function calculateApprovedCommercial({ approvedRules = null, vehicleType 
   const dirtRoadKm = Math.max(0, Number(reportedExtras.dirtRoadKm || 0));
   const asphaltKm = Math.max(0, Number(totalKm) - dirtRoadKm);
   const excessKm = Math.max(0, asphaltKm - includedKm);
-  let amount = base + excessKm * perKm + dirtRoadKm * 3.8;
+  const configuredDirtRate = Number(selected.rule.dirtRoadPricePerKm);
+  const dirtRoadRate = Number.isFinite(configuredDirtRate) && configuredDirtRate > 0 ? configuredDirtRate : 3.8;
+  let amount = base + excessKm * perKm + dirtRoadKm * dirtRoadRate;
   const extras = [];
-  if (dirtRoadKm > 0) extras.push({ type: 'estrada_terra', km: dirtRoadKm, ratePerKm: 3.8, amount: Math.round(dirtRoadKm * 3.8 * 100) / 100 });
+  if (dirtRoadKm > 0) extras.push({ type: 'estrada_terra', km: dirtRoadKm, ratePerKm: dirtRoadRate, amount: Math.round(dirtRoadKm * dirtRoadRate * 100) / 100 });
 
   if (Number(reportedExtras.toll) > 0 && approvedRules.tollAllowed === true) {
     amount += Number(reportedExtras.toll); extras.push({ type: 'pedagio', amount: Number(reportedExtras.toll) });
@@ -460,7 +462,7 @@ export function calculateApprovedCommercial({ approvedRules = null, vehicleType 
     excessKm: Math.round(excessKm * 10) / 10,
     pricePerKm: perKm,
     dirtRoadKm,
-    dirtRoadRatePerKm: 3.8,
+    dirtRoadRatePerKm: dirtRoadRate,
     extras,
   };
 }
