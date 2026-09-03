@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics } from '../../lib/sandbox-runtime.js';
-import { authorizeTenantRequest } from '../../lib/control-plane.js';
+import { authorizeTenantRequest, requireMaster } from '../../lib/control-plane.js';
+import { assetDataUrl, getPlatformBranding, publicBrandingPayload, updatePlatformBranding } from '../../lib/platform-branding.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
 const MEMORY_URL = 'https://pribndywguacekafhuyk.supabase.co/functions/v1/training-memory';
@@ -272,9 +273,68 @@ async function handleTrainingSync(req, res) {
   }
 }
 
+
+function sendPlatformBrandAsset(res, dataUrl) {
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
+  if (!match) return false;
+  res.setHeader('content-type', match[1]);
+  res.setHeader('cache-control', 'public, max-age=300, stale-while-revalidate=3600');
+  res.status(200).send(Buffer.from(match[2].replace(/\s/g, ''), 'base64'));
+  return true;
+}
+
+async function handlePlatformBranding(req, res) {
+  const mode = String(req.query?.mode || 'public');
+  try {
+    if (mode === 'admin') {
+      const session = await requireMaster(req);
+      if (req.method === 'GET') {
+        const row = await getPlatformBranding({ includeAssets: true });
+        return res.status(200).json({ branding: row, public: publicBrandingPayload(row) });
+      }
+      if (!['PUT','PATCH','POST'].includes(req.method)) return res.status(405).json({ error: 'method_not_allowed' });
+      const row = await updatePlatformBranding(req.body || {}, session);
+      return res.status(200).json({ branding: row, public: publicBrandingPayload(row) });
+    }
+    if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
+    const row = await getPlatformBranding({ includeAssets: true });
+    const b = publicBrandingPayload(row);
+    if (mode === 'asset') {
+      const kind = String(req.query?.kind || 'app_icon');
+      if (!['logo','app_icon','favicon'].includes(kind)) return res.status(400).json({ error: 'invalid_kind' });
+      if (sendPlatformBrandAsset(res, assetDataUrl(row, kind))) return;
+      res.writeHead(302, { location: '/icon.svg' });
+      return res.end();
+    }
+    if (mode === 'manifest') {
+      const manifest = {
+        id: '/', name: b.platform_name, short_name: b.short_name, description: b.pwa_description,
+        start_url: '/?source=pwa', scope: '/', display: 'standalone', display_override: ['standalone','minimal-ui'], orientation: 'any',
+        background_color: '#ffffff', theme_color: b.primary_color, lang: 'pt-BR', dir: 'ltr', categories: ['business','productivity'],
+        icons: [{ src: `/api/worker/branding?mode=asset&kind=app_icon&v=${encodeURIComponent(String(b.updated_at || ''))}`, sizes: 'any', purpose: 'any maskable' }],
+        prefer_related_applications: false,
+      };
+      res.setHeader('content-type', 'application/manifest+json; charset=utf-8');
+      return res.status(200).send(JSON.stringify(manifest));
+    }
+    const stamp = encodeURIComponent(String(b.updated_at || ''));
+    return res.status(200).json({
+      ...b,
+      logo_url: `/api/worker/branding?mode=asset&kind=logo&v=${stamp}`,
+      app_icon_url: `/api/worker/branding?mode=asset&kind=app_icon&v=${stamp}`,
+      favicon_url: `/api/worker/branding?mode=asset&kind=favicon&v=${stamp}`,
+      manifest_url: `/api/worker/branding?mode=manifest&v=${stamp}`,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message || 'branding_failed' });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('cache-control', 'no-store');
   const path = requestedPath(req);
+
+  if (path === 'branding') return handlePlatformBranding(req, res);
 
   if (path === 'runtime-version') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
