@@ -1,0 +1,34 @@
+name: Apply Branding Function Limit Fix Once
+on:
+  push:
+    branches:
+      - branding-function-limit-fix
+    paths:
+      - 'tools/apply_branding_function_limit_fix_tmp.py'
+      - '.github/workflows/apply-branding-function-limit-fix-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: branding-function-limit-fix
+      - run: python3 tools/apply_branding_function_limit_fix_tmp.py
+      - name: Validate
+        run: |
+          node --check 'api/worker/[...path].js'
+          node --check public/branding.js
+          node --check public/branding-admin.js
+          test ! -e api/branding.js
+          test ! -e api/control/branding.js
+          grep -q "path === 'branding'" 'api/worker/[...path].js'
+          grep -q 'mode=admin' public/branding-admin.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A api public index.html qr.html
+          git diff --cached --quiet || git commit -m 'Consolida branding para respeitar limite da Vercel'
+          git push origin HEAD:branding-function-limit-fix
