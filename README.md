@@ -1,4 +1,4 @@
-# Bot Guincho
+# Acionador.ai
 
 MVP de automação operacional para empresas de guincho que recebem solicitações de seguradoras via WhatsApp.
 
