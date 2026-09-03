@@ -36,4 +36,6 @@ begin
   if v_row.id is null then insert into public.platform_branding(id) values('default') returning * into v_row; end if;
   return v_row;
 end;$$;
+revoke all on function public.master_update_platform_branding(jsonb) from public;
+revoke all on function public.master_update_platform_branding(jsonb) from anon;
 grant execute on function public.master_update_platform_branding(jsonb) to authenticated;
