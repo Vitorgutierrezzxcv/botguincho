@@ -80,3 +80,4 @@ if p.exists():
     p.write_text(s, encoding='utf-8')
 
 print('Rebrand Acionador.ai aplicado.')
+# trigger rebrand workflow
