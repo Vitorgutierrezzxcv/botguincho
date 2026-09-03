@@ -1,0 +1,36 @@
+name: Rebrand Acionador AI Once
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'tools/rebrand_acionador_tmp.py'
+      - '.github/workflows/rebrand-acionador-ai-once.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply branding
+        run: python3 tools/rebrand_acionador_tmp.py
+      - name: Validate branding
+        run: |
+          grep -q 'Acionador.ai' index.html
+          grep -q 'Acionador.ai' public/index.html
+          grep -q 'Acionador.ai' public/login.html
+          grep -q 'Acionador.ai' public/master.html
+          grep -q 'Acionador.ai' public/manifest.webmanifest
+          grep -q 'flatbed truck' icon.svg
+          grep -q 'flatbed truck' public/icon.svg
+          node --check app.js
+          node --check public/app.js
+      - name: Commit branding
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html public/index.html qr.html public/*.html app.css public/app.css app.js public/app.js manifest.webmanifest public/manifest.webmanifest icon.svg public/icon.svg README.md
+          git diff --cached --quiet || git commit -m 'Rebrand Bot Guincho para Acionador.ai'
+          git push
