@@ -1,0 +1,36 @@
+name: Apply Branding Admin Once
+on:
+  push:
+    branches:
+      - branding-admin-20260903
+    paths:
+      - 'tools/apply_branding_admin_tmp.py'
+      - '.github/workflows/apply-branding-admin-once.yml'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: branding-admin-20260903
+      - run: python3 tools/apply_branding_admin_tmp.py
+      - name: Validate
+        run: |
+          node --check public/branding.js
+          node --check public/branding-admin.js
+          node --check lib/platform-branding.js
+          node --check api/branding.js
+          node --check api/branding/asset.js
+          node --check api/branding/manifest.js
+          node --check api/control/branding.js
+          grep -q 'branding-admin.js' public/master.html
+          grep -q '/api/branding/manifest' public/index.html
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html qr.html public/*.html sw.js public/sw.js
+          git diff --cached --quiet || git commit -m 'Integra central de personalização da marca'
+          git push origin HEAD:branding-admin-20260903
