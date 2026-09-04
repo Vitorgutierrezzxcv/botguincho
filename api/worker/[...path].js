@@ -301,17 +301,20 @@ async function handlePlatformBranding(req, res) {
     const b = publicBrandingPayload(row);
     if (mode === 'asset') {
       const kind = String(req.query?.kind || 'app_icon');
-      if (!['logo','app_icon','favicon'].includes(kind)) return res.status(400).json({ error: 'invalid_kind' });
+      if (!['logo','app_icon','favicon','pwa_180','pwa_192','pwa_512'].includes(kind)) return res.status(400).json({ error: 'invalid_kind' });
       if (sendPlatformBrandAsset(res, assetDataUrl(row, kind))) return;
       res.writeHead(302, { location: '/icon.svg' });
       return res.end();
     }
     if (mode === 'manifest') {
       const manifest = {
-        id: '/', name: b.platform_name, short_name: b.short_name, description: b.pwa_description,
+        id: '/', name: b.platform_name || 'Acionador.ai', short_name: b.short_name || b.platform_name || 'Acionador.ai', description: b.pwa_description,
         start_url: '/?source=pwa', scope: '/', display: 'standalone', display_override: ['standalone','minimal-ui'], orientation: 'any',
         background_color: '#ffffff', theme_color: b.primary_color, lang: 'pt-BR', dir: 'ltr', categories: ['business','productivity'],
-        icons: [{ src: `/api/worker/branding?mode=asset&kind=app_icon&v=${encodeURIComponent(String(b.updated_at || ''))}`, sizes: 'any', purpose: 'any maskable' }],
+        icons: [
+          { src: b.app_icon_192_url || b.app_icon_url, sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: b.app_icon_512_url || b.app_icon_url, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        ],
         prefer_related_applications: false,
       };
       res.setHeader('content-type', 'application/manifest+json; charset=utf-8');
