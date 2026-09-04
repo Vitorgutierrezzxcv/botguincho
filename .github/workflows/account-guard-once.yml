@@ -1,5 +1,6 @@
 name: Account guard once
 
+# One-shot de segurança para o painel multiempresa.
 on:
   push:
     branches: [main]
