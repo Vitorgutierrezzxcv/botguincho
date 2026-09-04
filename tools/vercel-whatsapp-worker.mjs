@@ -1270,6 +1270,24 @@ async function applyManagementAction(body = {}) {
     delete state.company.id; delete state.company.createdAt; delete state.company.updatedAt;
     return saveManagement(state);
   }
+  if (action === 'convert_quote') {
+    const callId = String(body.callId || '');
+    const call = (state.calls || []).find((item) => item.id === callId && !item.deletedAt);
+    if (!call) throw new Error('call_not_found');
+    const now = new Date().toISOString();
+    call.status = 'autorizado';
+    call.authorizedAt = call.authorizedAt || now;
+    call.quoteOutcome = 'won';
+    call.quoteTracked = true;
+    call.ownerCloseRequired = true;
+    call.updatedAt = now;
+    call.operationalTimeline = appendOperationalTimeline(call.operationalTimeline || [], {
+      at: now, type: 'autorizacao_manual', fromStatus: call.status, toStatus: 'autorizado', source: 'owner_app'
+    });
+    await saveManagement(state);
+    logEvent('management', 'Cotação convertida manualmente em corrida.', { callId });
+    return state;
+  }
   if (!allowed.has(collection)) throw new Error('collection_invalid');
   if (action === 'upsert') {
     const item = cleanManagementItem(body.item || {});
@@ -4072,12 +4090,19 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
     origin: normalizeAddressForLookup(extractLabeledAddressBlock(readableText, 'Origem') || context.facts?.origin || ''),
     destination: normalizeAddressForLookup(extractLabeledAddressBlock(readableText, 'Destino') || context.facts?.destination || ''),
   };
-  const call = selectProtocolTargetCall({
+  let call = selectProtocolTargetCall({
     calls: context.management?.calls || [],
     groupId: msg.from,
     identity: protocolIdentity,
     fallbackCall: context.recentCall,
   });
+  // Se a central manda o protocolo depois da cotação, vincula ao atendimento pendente
+  // do mesmo grupo. Só bloqueia o fallback quando há placa explicitamente conflitante.
+  if (!call && context.recentCall && ['cotacao','aguardando_aprovacao','aguardando_dados','agendado'].includes(context.recentCall.status)) {
+    const recentPlate = String(context.recentCall.plate || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const incomingPlate = String(protocolIdentity.plate || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (!recentPlate || !incomingPlate || recentPlate === incomingPlate) call = context.recentCall;
+  }
   const protocolIsNewRequest = protocolHasStrongIdentity(protocolIdentity) && !call;
   if (protocolIsNewRequest) {
     const capacity = capacitySnapshot(context.management);

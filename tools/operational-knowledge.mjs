@@ -133,6 +133,12 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   // antes caiam em "other", ou seja, silencio. Extraidas de 4.828 pares reais.
   const administrativeContext = /\b(nota fiscal|nfe?|pagamento|faturamento|cadastro|email|tabela)\b/.test(value);
 
+  // Aceites curtos usados pelas centrais. Só valem quando já existe uma cotação
+  // aguardando decisão no mesmo grupo, evitando transformar um "ok" solto em corrida.
+  const pendingAuthorizationContext = ['cotacao','aguardando_aprovacao','aguardando_dados','agendado'].includes(recentCall?.status) && !recentCall?.authorizedAt;
+  const shortAuthorizationSignal = /^(?:ok(?:ay)?|certo|fechado|enviado|enviada|manda|pode mandar|pode enviar|segue|seguimos|blz|beleza|confirmado|confirmada|autorizado|autorizada)[.! ]*$/.test(value);
+  if (pendingAuthorizationContext && shortAuthorizationSignal && !administrativeContext) return 'authorization';
+
   // "60?" logo depois de uma oportunidade e "consegue chegar em 60 minutos?".
   // Os valores comerciais praticados nao sao multiplos de 5 nessa faixa, entao
   // o multiplo de 5 separa a pergunta de tempo de uma proposta de preco.
@@ -168,7 +174,11 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
     || /\bnao\s+(?:vai|ira|sera)\s+(?:mais\s+)?(?:precisa\w*|necessari\w*)\b/.test(value)
     || /\b(?:vai|ira)\s+precisar\s+mais\s+nao\b/.test(value)
     || /\bnao\s+(?:e|sera)\s+mais\s+necessari\w*\b/.test(value)
-    || /\bnao\s+precisa\s+(?:mais|nao)\b/.test(value);
+    || /\bnao\s+precisa\s+(?:mais|nao)\b/.test(value)
+    || /\b(?:pode\s+)?(?:desconsidera|desconsiderar|retira|retirar)\b/.test(value)
+    || /\bcliente\s+(?:resolveu|solucionou|desistiu)\b/.test(value)
+    || /\bsem\s+(?:necessidade|atendimento|saida)\b/.test(value)
+    || /\bpode\s+deixar\b/.test(value);
   if (dropSignal && !administrativeContext) return 'cancellation';
 
   const dirtRoadEndSignal = /\b(saiu|saimos|saindo|fim|terminou|acabou)\b.{0,28}\b(estrada|rua|trecho)\s+de\s+terra\b|\bvoltou\s+(o\s+)?asfalto\b/.test(value);
@@ -187,7 +197,8 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   if (activeService && /\b(chegou|chegamos|entregue|entregamos)\b.{0,28}\b(destino|oficina|patio)\b/.test(value)) return 'destination_arrival';
   if (activeService && /\b(saindo|saiu|a caminho|em deslocamento|iniciando deslocamento)\b/.test(value)) return 'departure';
   if (evidenceContext && (/\b(fotos?|checklist|video|evidencias?)\b.{0,30}\b(enviad\w*|anexad\w*|realizad\w*|concluid\w*|feito|pronto)\b/.test(value) || value === '[imagem recebida]')) return 'evidence';
-  if (evidenceContext && /\bprotocolo\b/.test(value) && !hasQuoteSignals(text)) return 'protocol_update';
+  const protocolLinkContext = evidenceContext || ['cotacao','aguardando_aprovacao','aguardando_dados','agendado'].includes(recentCall?.status);
+  if (protocolLinkContext && /\bprotocolo\b/.test(value) && !hasQuoteSignals(text)) return 'protocol_update';
 
   if (base === 'cancellation') return 'cancellation';
   if (base === 'pending_approval') return 'pending_approval';

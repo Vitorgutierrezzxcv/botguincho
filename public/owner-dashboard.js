@@ -183,7 +183,7 @@
         <div class="owner-row-main"><div class="owner-row-title"><b>${esc(call.insurer || call.client || 'Seguradora')}</b>${outcomeTag(call)}${ownerTag(sourceText(call), call.source === 'whatsapp' ? 'source' : '')}</div>
         <div class="owner-route">${esc(call.origin || 'Origem não informada')} <span>→</span> ${esc(call.destination || 'Destino não informado')}</div>
         ${call.lastOperationalText ? `<div class="owner-message">“${esc(call.lastOperationalText).slice(0, 150)}”</div>` : ''}</div>
-        <div class="owner-row-side"><b>${n(call.value) > 0 ? money(call.value) : '—'}</b><button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button><button class="btn ghost small" onclick="ownerDeleteCall('${esc(call.id)}')">Excluir</button></div>
+        <div class="owner-row-side"><b>${n(call.value) > 0 ? money(call.value) : '—'}</b>${quoteOutcome(call) === 'open' ? `<button class="btn small" onclick="ownerConvertQuote('${esc(call.id)}')">Converter em corrida</button>` : ''}<button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button><button class="btn ghost small" onclick="ownerDeleteCall('${esc(call.id)}')">Excluir</button></div>
       </div>`).join('') : '<div class="empty">Nenhuma cotação registrada neste período.</div>';
   }
 
@@ -362,6 +362,19 @@
       await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'upsert_insurer', insurer: data }) });
       await refreshOwner();
     });
+  };
+
+  window.ownerConvertQuote = async (id) => {
+    const call = (mgmt.calls || []).find((x) => x.id === id);
+    if (!call) return alert('Cotação não encontrada. Atualize a tela.');
+    if (!confirm('Converter esta cotação em corrida aceita? Ela passará a aparecer na Operação e no cálculo do motorista.')) return;
+    try {
+      await api('/api/worker/management', { method:'POST', body: JSON.stringify({ action:'convert_quote', callId:id, ownerName:'Thiago' }) });
+      await refreshOwner();
+      alert('Cotação convertida em corrida ✅');
+    } catch (error) {
+      alert(`Não foi possível converter a cotação: ${error?.message || error}`);
+    }
   };
 
   window.ownerDeleteCall = async (id) => {
