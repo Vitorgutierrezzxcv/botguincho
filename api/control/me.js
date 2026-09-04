@@ -7,7 +7,13 @@ export default async function handler(req, res) {
   try {
     const session = await requireSession(req);
     return res.status(200).json({
-      user: { id: session.user.id, email: session.user.email || null },
+      user: {
+        id: session.user.id,
+        email: session.user.email || null,
+        phone: session.user.phone || session.profile?.phone || null,
+        name: session.profile?.full_name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || null,
+      },
+      profile: session.profile || null,
       master: isMaster(session),
       memberships: session.memberships,
     });
