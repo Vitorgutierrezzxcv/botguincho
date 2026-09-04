@@ -1,0 +1,41 @@
+name: Fix test call context now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/fix-test-call-context-tmp.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply test call context fix
+        run: python tools/fix-test-call-context-tmp.py
+      - name: Validate worker
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node tools/test-authorization-pending-selection.mjs
+          grep -q "if (isTestCall(call)) return true" tools/vercel-whatsapp-worker.mjs
+          grep -q "freshManagement = await getManagement" tools/vercel-whatsapp-worker.mjs
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m "Preserva cotação de teste até a autorização"
+          git push origin main
