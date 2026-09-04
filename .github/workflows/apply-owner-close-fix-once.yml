@@ -1,0 +1,38 @@
+name: Apply owner close fix once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-owner-close-fix.py'
+      - '.github/workflows/apply-owner-close-fix-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/apply-owner-close-fix.py
+      - name: Validate worker syntax
+        run: node --check tools/vercel-whatsapp-worker.mjs && node --check public/operation-command-center.js
+      - name: Commit applied fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs public/operation-command-center.js
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Corrige fechamento definitivo de corrida no app'
+          git push origin main
