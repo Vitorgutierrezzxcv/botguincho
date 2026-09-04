@@ -1,7 +1,7 @@
 import { controlPlaneConfigured, loginWithPassword, loginWithPhonePassword, recoverPassword, signupWithPassword } from '../../../lib/control-plane.js';
 
-const SUPABASE_URL = String(process.env.SUPABASE_URL || 'https://pribndywguacekafhuyk.supabase.co').replace(/\/$/, '');
-const SUPABASE_ANON_KEY = String(process.env.SUPABASE_ANON_KEY || '');
+const SUPABASE_URL = 'https://pribndywguacekafhuyk.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_8oyE5F7QZCjwnZyDJg2G7Q_WdD8Qo0J';
 
 function normalizePhone(v='') {
   let digits = String(v).replace(/\D/g, '');
