@@ -396,9 +396,14 @@
       try {
         const d = await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'close_call', callId: id, ownerName: data.ownerName || 'Thiago', final: data }) });
         const sent = d.data?.closeResult?.noticeSent;
+        const pending = d.data?.closeResult?.noticePending === true;
         await refreshOwner();
         closeModal();
-        alert(testClosure ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o resumo. Confira o grupo.') : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));
+        alert(pending
+          ? 'Corrida concluída ✅ Financeiro e repasse atualizados. O resumo do WhatsApp será enviado em segundo plano.'
+          : testClosure
+            ? (sent ? 'Corrida de teste concluída ✅ Resumo enviado ao grupo.' : 'Corrida de teste concluída ✅')
+            : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅'));
       } catch (error) {
         if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }
         throw error;

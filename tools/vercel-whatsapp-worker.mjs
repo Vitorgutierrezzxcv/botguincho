@@ -1190,23 +1190,39 @@ async function closeCallFromOwner(state, body = {}) {
   if (!persisted || persisted.status !== (next.status === 'cancelado' ? 'cancelado' : 'concluido') || !persisted.ownerClosedAt) {
     throw new Error('close_not_persisted');
   }
-  await promoteQueuedCallAfter(next.id);
-  let noticeSent = false;
+  // O fechamento crítico já foi persistido acima. As ações externas abaixo
+  // (liberar fila e enviar WhatsApp) não podem bloquear a resposta do painel.
+  // Em produção o whatsapp-web.js pode ficar pendurado por vários segundos e fazia
+  // o botão "Concluir corrida" parecer travado mesmo com os dados já salvos.
   const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');
-  if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {
+  void (async () => {
     try {
-      const message = finalGroupMessage(next);
-      botReplyFingerprints.set(`${next.sourceGroupId}|${normalizeForIntent(message)}`, Date.now());
-      await waClient.sendMessage(next.sourceGroupId, message);
-      noticeSent = true;
-      next.ownerCloseNoticeSentAt = new Date().toISOString();
-      await saveManagement(state);
-      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });
+      await Promise.race([
+        promoteQueuedCallAfter(next.id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('promote_queue_timeout')), 5000)),
+      ]);
     } catch (error) {
-      logEvent('warning', 'Corrida fechada, mas não foi possível enviar o resumo final ao grupo.', { callId: next.id, error: String(error) });
+      logEvent('warning', 'Corrida fechada, mas a liberação da próxima fila não concluiu a tempo.', { callId: next.id, error: String(error) });
     }
-  }
-  return { call: next, noticeSent, driverPay: driverPayForCall(next) };
+
+    if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {
+      try {
+        const message = finalGroupMessage(next);
+        botReplyFingerprints.set(`${next.sourceGroupId}|${normalizeForIntent(message)}`, Date.now());
+        await Promise.race([
+          waClient.sendMessage(next.sourceGroupId, message),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('close_notice_timeout')), 8000)),
+        ]);
+        next.ownerCloseNoticeSentAt = new Date().toISOString();
+        await saveManagement(state);
+        logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });
+      } catch (error) {
+        logEvent('warning', 'Corrida fechada, mas não foi possível enviar o resumo final ao grupo.', { callId: next.id, error: String(error) });
+      }
+    }
+  })();
+
+  return { call: next, noticeSent: null, noticePending: true, driverPay: driverPayForCall(next) };
 }
 
 async function deleteCallFromOwner(state, body = {}) {
