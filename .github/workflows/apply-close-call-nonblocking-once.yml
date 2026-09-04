@@ -1,0 +1,40 @@
+name: Apply nonblocking close call once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-close-call-nonblocking.py'
+      - '.github/workflows/apply-close-call-nonblocking-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/apply-close-call-nonblocking.py
+      - name: Validate JavaScript
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check public/owner-dashboard.js
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs public/owner-dashboard.js
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Evita travamento ao concluir corrida'
+          git push origin main
