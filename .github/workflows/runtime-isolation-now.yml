@@ -1,5 +1,6 @@
 name: Runtime isolation now
 
+# One-shot acionado após a camada de contas estar pronta.
 on:
   push:
     branches: [main]
