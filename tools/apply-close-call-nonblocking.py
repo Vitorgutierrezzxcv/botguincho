@@ -1,0 +1,23 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+worker = ROOT / 'tools/vercel-whatsapp-worker.mjs'
+owner = ROOT / 'public/owner-dashboard.js'
+
+w = worker.read_text(encoding='utf-8')
+old = """  await promoteQueuedCallAfter(next.id);\n  let noticeSent = false;\n  const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');\n  if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {\n    try {\n      const message = finalGroupMessage(next);\n      botReplyFingerprints.set(`${next.sourceGroupId}|${normalizeForIntent(message)}`, Date.now());\n      await waClient.sendMessage(next.sourceGroupId, message);\n      noticeSent = true;\n      next.ownerCloseNoticeSentAt = new Date().toISOString();\n      await saveManagement(state);\n      logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });\n    } catch (error) {\n      logEvent('warning', 'Corrida fechada, mas não foi possível enviar o resumo final ao grupo.', { callId: next.id, error: String(error) });\n    }\n  }\n  return { call: next, noticeSent, driverPay: driverPayForCall(next) };\n"""
+new = """  // O fechamento crítico já foi persistido acima. As ações externas abaixo\n  // (liberar fila e enviar WhatsApp) não podem bloquear a resposta do painel.\n  // Em produção o whatsapp-web.js pode ficar pendurado por vários segundos e fazia\n  // o botão \"Concluir corrida\" parecer travado mesmo com os dados já salvos.\n  const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');\n  void (async () => {\n    try {\n      await Promise.race([\n        promoteQueuedCallAfter(next.id),\n        new Promise((_, reject) => setTimeout(() => reject(new Error('promote_queue_timeout')), 5000)),\n      ]);\n    } catch (error) {\n      logEvent('warning', 'Corrida fechada, mas a liberação da próxima fila não concluiu a tempo.', { callId: next.id, error: String(error) });\n    }\n\n    if (waClient && waStatus === 'pronto' && next.sourceGroupId && allowCloseNotice) {\n      try {\n        const message = finalGroupMessage(next);\n        botReplyFingerprints.set(`${next.sourceGroupId}|${normalizeForIntent(message)}`, Date.now());\n        await Promise.race([\n          waClient.sendMessage(next.sourceGroupId, message),\n          new Promise((_, reject) => setTimeout(() => reject(new Error('close_notice_timeout')), 8000)),\n        ]);\n        next.ownerCloseNoticeSentAt = new Date().toISOString();\n        await saveManagement(state);\n        logEvent('owner-close', `${next.groupName || next.insurer}: fechamento final enviado ao grupo.`, { callId: next.id, value: next.value, billableKm: next.billableKm, testMode: isTestCall(next) });\n      } catch (error) {\n        logEvent('warning', 'Corrida fechada, mas não foi possível enviar o resumo final ao grupo.', { callId: next.id, error: String(error) });\n      }\n    }\n  })();\n\n  return { call: next, noticeSent: null, noticePending: true, driverPay: driverPayForCall(next) };\n"""
+if old not in w:
+    raise SystemExit('close post-persist block not found')
+w = w.replace(old, new, 1)
+worker.write_text(w, encoding='utf-8')
+
+o = owner.read_text(encoding='utf-8')
+old_ui = """        const sent = d.data?.closeResult?.noticeSent;\n        await refreshOwner();\n        closeModal();\n        alert(testClosure ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o resumo. Confira o grupo.') : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅ O fechamento foi salvo. O WhatsApp não confirmou o resumo; confira o grupo.'));\n"""
+new_ui = """        const sent = d.data?.closeResult?.noticeSent;\n        const pending = d.data?.closeResult?.noticePending === true;\n        await refreshOwner();\n        closeModal();\n        alert(pending\n          ? 'Corrida concluída ✅ Financeiro e repasse atualizados. O resumo do WhatsApp será enviado em segundo plano.'\n          : testClosure\n            ? (sent ? 'Corrida de teste concluída ✅ Resumo enviado ao grupo.' : 'Corrida de teste concluída ✅')\n            : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅'));\n"""
+if old_ui not in o:
+    raise SystemExit('owner close result block not found')
+o = o.replace(old_ui, new_ui, 1)
+owner.write_text(o, encoding='utf-8')
+
+print('Non-blocking close-call patch applied.')
