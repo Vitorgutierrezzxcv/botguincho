@@ -39,3 +39,5 @@ jobs:
           fi
           git commit -m 'Corrige aceite curto cancelamento protocolo e conversão manual'
           git push origin main
+
+# trigger: 2026-09-04T17:55-03:00
