@@ -96,3 +96,5 @@ if old not in text:
 
 path.write_text(text.replace(old, new, 1), encoding='utf-8')
 print('Learning JSON recovery and atomic persistence patch applied.')
+
+# Trigger workflow after the workflow file exists.
