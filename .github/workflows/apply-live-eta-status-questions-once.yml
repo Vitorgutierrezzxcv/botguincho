@@ -1,0 +1,40 @@
+name: Apply live ETA status questions once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-live-eta-status-questions.py'
+      - '.github/workflows/apply-live-eta-status-questions-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/apply-live-eta-status-questions.py
+      - name: Validate JavaScript
+        run: |
+          node --check tools/operational-knowledge.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/operational-knowledge.mjs tools/vercel-whatsapp-worker.mjs
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Melhora perguntas de rastreio e ETA em tempo real'
+          git push origin main
