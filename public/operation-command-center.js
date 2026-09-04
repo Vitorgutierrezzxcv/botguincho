@@ -9,7 +9,7 @@
   const isOpenCall = (call) => OPEN_STATUSES.has(call?.status) || (Boolean(call?.authorizedAt) && !['concluido','cancelado'].includes(call?.status));
   const currentValue = (call) => num(call?.value || call?.calculatedValue || call?.quoteCalculatedValue);
   const currentKm = (call) => num(call?.billableKm ?? call?.totalKm ?? call?.estimatedTotalKm);
-  const isTestCall = (call) => call?.testMode === true || String(call?.groupName || '').toLowerCase().includes('tests guincho');
+  const isTestCall = (call) => call?.testMode === true;
 
   function ensureStyles() {
     if (document.getElementById('operationCommandStyles')) return;

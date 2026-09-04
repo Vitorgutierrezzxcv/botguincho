@@ -323,6 +323,12 @@ async function getManagement() {
     return resolveGroupProfile(groupName).key !== 'generic';
   };
   let dirty = false;
+  for (const call of state.calls || []) {
+    if (call?.testMode === true && !call?.testRunId && isTestGroupName(call?.groupName || call?.insurer || call?.client || '')) {
+      call.testMode = false;
+      dirty = true;
+    }
+  }
 
   const beforeCalls = state.calls.length;
   state.calls = state.calls.filter((call) => {
@@ -772,7 +778,7 @@ async function recordDispatchInManagement({ groupId, groupName, text, originAddr
       valueSource: displacementWithoutTow && Number(commercial?.calculatedAmount) > 0 ? 'deslocamento_ate_origem' : (isBillableCancellation && Number(commercial?.calculatedAmount) > 0 ? 'politica_cancelamento_km_total' : (status === 'autorizado' && Number(commercial?.calculatedAmount) > 0 ? 'estimativa_na_confirmacao' : (existing?.valueSource || null))),
       createdAt: existing?.createdAt || transitionAt,
       updatedAt: transitionAt,
-      testMode: existing?.testMode === true || isTestGroupName(groupName) || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId),
+      testMode: Boolean(existing?.testRunId || (testCenterRuntime.currentRun?.status === 'running' && testCenterRuntime.targetGroupId === groupId)),
       testRunId: existing?.testRunId || (testCenterRuntime.targetGroupId === groupId ? testCenterRuntime.currentRun?.id || null : null),
     };
 

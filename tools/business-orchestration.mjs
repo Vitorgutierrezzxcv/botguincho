@@ -109,15 +109,21 @@ const PENDING_AUTHORIZATION_STATUSES = new Set(['cotacao','aguardando_dados','ag
 
 export function pendingAuthorizationCallForGroup(calls = [], groupId = '') {
   const id = String(groupId || '');
-  return (Array.isArray(calls) ? calls : [])
-    .filter((call) => call?.sourceGroupId === id && PENDING_AUTHORIZATION_STATUSES.has(String(call?.status || '')))
-    .sort((a, b) => {
-      // quoteRequestedAt/createdAt representam a oportunidade. updatedAt pode mudar
-      // por telemetria e nao deve definir qual cotacao recebeu a autorizacao humana.
-      const aTime = new Date(a?.quoteRequestedAt || a?.createdAt || a?.updatedAt || 0).getTime();
-      const bTime = new Date(b?.quoteRequestedAt || b?.createdAt || b?.updatedAt || 0).getTime();
-      return bTime - aTime;
-    })[0] || null;
+  const all = (Array.isArray(calls) ? calls : []).filter((call) => call?.sourceGroupId === id && !call?.deletedAt && call?.status !== 'excluido');
+  const byTime = (a, b) => {
+    const aTime = new Date(a?.quoteRequestedAt || a?.createdAt || a?.updatedAt || 0).getTime();
+    const bTime = new Date(b?.quoteRequestedAt || b?.createdAt || b?.updatedAt || 0).getTime();
+    return bTime - aTime;
+  };
+  const primary = all.filter((call) => PENDING_AUTHORIZATION_STATUSES.has(String(call?.status || ''))).sort(byTime)[0];
+  if (primary) return primary;
+  return all.filter((call) =>
+    !call?.authorizedAt
+    && !['autorizado','a_caminho','em_atendimento','aguardando_fechamento','concluido','cancelado'].includes(String(call?.status || ''))
+    && Boolean(call?.origin) && Boolean(call?.destination)
+    && Boolean(call?.vehicle || call?.vehicleType || call?.plate)
+    && (call?.quoteTracked === true || Boolean(call?.quoteRequestedAt) || Number(call?.quoteCalculatedValue || call?.calculatedValue || 0) > 0)
+  ).sort(byTime)[0] || null;
 }
 
 export function isTrackedQuote(call = {}) {
