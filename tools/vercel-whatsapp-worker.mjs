@@ -267,9 +267,16 @@ async function writeJson(file, value, mode) {
   if (mode) await fs.chmod(file, mode).catch(() => undefined);
 }
 
+const LEGACY_AMERICA_BASE_ADDRESS = 'Rua Andre Luiz Pereira, 263, Residencial Lagoa, Betim - MG, CEP 32606-235';
+
 async function getSettings() {
   const saved = await readJson(settingsFile, {});
-  return { ...DEFAULT_SETTINGS, ...saved };
+  const next = { ...DEFAULT_SETTINGS, ...saved };
+  if (clientId === 'cliente-teste' && !String(next.operationalBaseAddress || '').trim()) {
+    next.operationalBaseAddress = LEGACY_AMERICA_BASE_ADDRESS;
+    await writeJson(settingsFile, next).catch(() => undefined);
+  }
+  return next;
 }
 
 async function saveSettings(patch) {
@@ -2513,43 +2520,57 @@ async function computeEtaWithRetry(input = {}, options = {}) {
 async function computeFullServiceRoute({ originAddress = null, destinationAddress = null, originCoordinates = null, baseAddressOverride = '' } = {}) {
   const settings = await getSettings();
   const baseAddress = String(baseAddressOverride || settings.operationalBaseAddress || '').trim();
-  if ((!originAddress && !originCoordinates) || !destinationAddress) return null;
+  if (!baseAddress || ((!originAddress && !originCoordinates) || !destinationAddress)) return null;
 
-  const reading = await getFreshTrackerReading();
-  if (!reading) return null;
-  const start = await trackerCoordinates(reading);
-  if (!start) return null;
+  // REGRA COMERCIAL: Base -> Origem -> Destino -> Base.
+  // O rastreador NÃO participa da quilometragem cobrada; ele serve apenas para ETA.
+  const reading = await getFreshTrackerReading().catch(() => null);
+  const trackerStart = reading ? await trackerCoordinates(reading).catch(() => null) : null;
+
   const originPromise = originCoordinates && validCoordinates(originCoordinates.latitude, originCoordinates.longitude)
-    ? Promise.resolve({ latitude: Number(originCoordinates.latitude), longitude: Number(originCoordinates.longitude), displayName: originAddress || 'Localização compartilhada' })
+    ? Promise.resolve({ latitude: Number(originCoordinates.latitude), longitude: Number(originCoordinates.longitude), displayName: originAddress || 'Localização compartilhada', approximate: false })
     : geocodeAddress(originAddress);
   const destinationPromise = geocodeAddress(destinationAddress);
-  // Sem uma base configurada, fecha o circuito no ponto real de saída do
-  // caminhão. Assim o cálculo continua completo e auditável, sem inventar um
-  // endereço de retorno.
-  const basePromise = baseAddress
-    ? geocodeAddress(baseAddress)
-    : Promise.resolve({ ...start, displayName: reading.address || 'Ponto de saída do caminhão' });
+  const basePromise = geocodeAddress(baseAddress);
   const [origin, destination, base] = await Promise.all([originPromise, destinationPromise, basePromise]);
   if (!origin || !destination || !base) return null;
 
-  const [legToOrigin, serviceLeg, returnToBase] = await Promise.all([
-    routeBetween(start, origin),
+  // Para cobrança, não aceita fallback de bairro/cidade: isso pode distorcer dezenas de km.
+  if (origin.approximate || destination.approximate || base.approximate) {
+    logEvent('safety', 'KM comercial suspenso por geocodificação aproximada.', {
+      origin: { address: originAddress, approximate: origin.approximate, level: origin.approximateLevel },
+      destination: { address: destinationAddress, approximate: destination.approximate, level: destination.approximateLevel },
+      base: { address: baseAddress, approximate: base.approximate, level: base.approximateLevel },
+    });
+    return null;
+  }
+
+  const [baseToOrigin, serviceLeg, returnToBase, trackerToOrigin] = await Promise.all([
+    routeBetween(base, origin),
     routeBetween(origin, destination),
     routeBetween(destination, base),
+    trackerStart ? routeBetween(trackerStart, origin).catch(() => null) : Promise.resolve(null),
   ]);
-  if (!legToOrigin || !serviceLeg || !returnToBase) return null;
-  const totalKm = Math.round((Number(legToOrigin.distanceKm || 0) + Number(serviceLeg.distanceKm || 0) + Number(returnToBase.distanceKm || 0)) * 10) / 10;
-  const totalMinutes = Number(legToOrigin.minutes || 0) + Number(serviceLeg.minutes || 0) + Number(returnToBase.minutes || 0);
+  if (!baseToOrigin || !serviceLeg || !returnToBase) return null;
+
+  const totalKm = Math.round((
+    Number(baseToOrigin.distanceKm || 0)
+    + Number(serviceLeg.distanceKm || 0)
+    + Number(returnToBase.distanceKm || 0)
+  ) * 10) / 10;
+  const totalMinutes = Number(baseToOrigin.minutes || 0) + Number(serviceLeg.minutes || 0) + Number(returnToBase.minutes || 0);
+
   return {
     capturedAt: new Date().toISOString(),
-    basis: baseAddress ? 'truck_origin_destination_base' : 'truck_origin_destination_start',
-    start: { address: reading.address || '', latitude: start.latitude, longitude: start.longitude },
-    origin: { address: originAddress || origin.displayName || '', latitude: origin.latitude, longitude: origin.longitude, approximate: Boolean(origin.approximate), approximateLevel: origin.approximateLevel || null },
-    destination: { address: destinationAddress, latitude: destination.latitude, longitude: destination.longitude, approximate: Boolean(destination.approximate), approximateLevel: destination.approximateLevel || null },
-    base: { address: baseAddress || reading.address || 'Ponto de saída do caminhão', latitude: base.latitude, longitude: base.longitude },
-    legToOrigin: { km: legToOrigin.distanceKm, minutes: legToOrigin.minutes },
+    basis: 'base_origin_destination_base',
+    start: trackerStart ? { address: reading?.address || '', latitude: trackerStart.latitude, longitude: trackerStart.longitude } : null,
+    origin: { address: originAddress || origin.displayName || '', latitude: origin.latitude, longitude: origin.longitude, approximate: false, approximateLevel: null },
+    destination: { address: destinationAddress, latitude: destination.latitude, longitude: destination.longitude, approximate: false, approximateLevel: null },
+    base: { address: baseAddress, latitude: base.latitude, longitude: base.longitude, approximate: false, approximateLevel: null },
+    legToOrigin: { km: baseToOrigin.distanceKm, minutes: baseToOrigin.minutes },
     serviceLeg: { km: serviceLeg.distanceKm, minutes: serviceLeg.minutes },
     returnToBase: { km: returnToBase.distanceKm, minutes: returnToBase.minutes },
+    trackerToOrigin: trackerToOrigin ? { km: trackerToOrigin.distanceKm, minutes: trackerToOrigin.minutes } : null,
     totalKm,
     totalMinutes,
     routing: 'osrm_with_fallback',
@@ -3494,9 +3515,9 @@ async function estimateQuoteRoute(groupId, text, facts, incomingLocation = null,
       fullRoute = await computeFullServiceRoute({ originAddress, destinationAddress, originCoordinates }).catch(() => null);
       if (fullRoute) {
         eta = {
-          minutes: fullRoute.legToOrigin?.minutes ?? null,
-          rawMinutes: fullRoute.legToOrigin?.minutes ?? null,
-          distanceKm: fullRoute.legToOrigin?.km ?? null,
+          minutes: fullRoute.trackerToOrigin?.minutes ?? fullRoute.legToOrigin?.minutes ?? null,
+          rawMinutes: fullRoute.trackerToOrigin?.minutes ?? fullRoute.legToOrigin?.minutes ?? null,
+          distanceKm: fullRoute.trackerToOrigin?.km ?? fullRoute.legToOrigin?.km ?? null,
           approximate: Boolean(fullRoute.origin?.approximate),
           approximateLevel: fullRoute.origin?.approximateLevel || null,
         };
