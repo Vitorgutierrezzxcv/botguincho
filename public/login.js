@@ -69,6 +69,9 @@ async function updateProfile(token,fullName,phone=''){
 async function passwordGrant(email,password){
   return supabase('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});
 }
+async function phonePasswordGrant(phone,password){
+  return supabase('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({phone,password})});
+}
 async function createPhoneAccount(phone,password,fullName='',invitedOnly=false){
   const rpc=invitedOnly?'activate_invited_phone_password_user':'create_phone_password_user';
   return supabase(`/rest/v1/rpc/${rpc}`,{method:'POST',body:JSON.stringify({p_phone:phone,p_password:password,p_full_name:fullName||null})});
@@ -100,11 +103,15 @@ async function phoneSubmit(){
     await createPhoneAccount(phone,password,fullName,false);const d=await passwordGrant(internalEmail,password);storeSession(d);await updateProfile(d.access_token,fullName,phone);return routeAfterAuth(d.access_token);
   }
   try{
-    const d=await passwordGrant(internalEmail,password);storeSession(d);return routeAfterAuth(d.access_token);
-  }catch(firstError){
+    const d=await phonePasswordGrant(phone,password);storeSession(d);return routeAfterAuth(d.access_token);
+  }catch(nativePhoneError){
     try{
-      await createPhoneAccount(phone,password,'',true);const d=await passwordGrant(internalEmail,password);storeSession(d);return routeAfterAuth(d.access_token);
-    }catch{throw firstError}
+      const d=await passwordGrant(internalEmail,password);storeSession(d);return routeAfterAuth(d.access_token);
+    }catch(internalError){
+      try{
+        await createPhoneAccount(phone,password,'',true);const d=await passwordGrant(internalEmail,password);storeSession(d);return routeAfterAuth(d.access_token);
+      }catch{throw nativePhoneError}
+    }
   }
 }
 async function submit(){
@@ -113,7 +120,7 @@ async function submit(){
 }
 async function forgot(){
   const email=$('email').value.trim().toLowerCase();if(!email.includes('@'))return show('notice','Informe seu e-mail primeiro.','bad');
-  try{await supabase('/auth/v1/recover',{method:'POST',body:JSON.stringify({email,redirect_to:`${location.origin}/login.html?recovery=1`})});show('notice','Enviamos um link de recuperação para seu e-mail.','good')}catch(e){show('notice',friendly(e.message),'bad')}
+  try{await supabase('/auth/v1/recover',{method:'POST',body:JSON.stringify({email,redirect_to:`${location.origin}/login.html?recovery=1`})});show('notice','Enviamos um link para você definir a senha. Isso só precisa ser feito uma vez.','good')}catch(e){show('notice',friendly(e.message),'bad')}
 }
 async function saveNewPassword(){
   const password=$('newPassword').value;if(password.length<8)return show('recoveryNotice','A senha precisa ter pelo menos 8 caracteres.','bad');
