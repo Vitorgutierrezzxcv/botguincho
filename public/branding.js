@@ -28,7 +28,45 @@
   function bindInstallUX(){const button=document.getElementById('installBtn');if(!button)return;button.onclick=handleInstallClick;if(isStandalone()){button.textContent='Aplicativo instalado';button.disabled=true}else if(isIOS()){button.textContent='Como instalar no iPhone'}else{button.textContent='Instalar aplicativo'}}
   async function load(){try{const response=await fetch('/api/worker/branding',{cache:'no-store'});if(!response.ok)return null;return await response.json()}catch{return null}}
   async function refresh(){const b=await load();if(!b)return current;current=b;applyText(b);applyLogo(b);applyLinks(b);bindInstallUX();window.dispatchEvent(new CustomEvent('platform-branding',{detail:b}));return b}
+
+  function markTestCalls(){
+    document.querySelectorAll('.op-card').forEach(card=>{
+      const testBadge=[...card.querySelectorAll('.op-badge')].find(el=>(el.textContent||'').trim()==='TESTE');
+      if(!testBadge||card.querySelector('.test-finance-warning'))return;
+      const note=document.createElement('div');
+      note.className='test-finance-warning';
+      note.style.cssText='margin-top:10px;padding:9px 11px;border-radius:10px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:12px;font-weight:700';
+      note.textContent='TESTE — não altera Financeiro, Dashboard nem pagamento real do motorista.';
+      const route=card.querySelector('.op-route');
+      (route||card).insertAdjacentElement(route?'beforebegin':'beforeend',note);
+    });
+  }
+
+  async function syncOperationalViews(){
+    if(document.hidden)return;
+    try{
+      if(typeof window.refreshOwner==='function')await window.refreshOwner();
+      else if(typeof window.loadManagement==='function')await window.loadManagement();
+      if(typeof window.refreshBillingOnly==='function')await window.refreshBillingOnly();
+      markTestCalls();
+      const status=document.getElementById('topStatus');
+      const dot=document.getElementById('topDot');
+      if(status&&status.textContent==='Erro de conexão'){
+        try{
+          const companyId=localStorage.getItem('bg-company-id')||'cliente-teste';
+          const token=localStorage.getItem('bg-access-token')||localStorage.getItem('bg-master-token')||'';
+          const response=await fetch(`/api/worker/health?companyId=${encodeURIComponent(companyId)}`,{cache:'no-store',headers:{'x-botguincho-company-id':companyId,...(token?{authorization:`Bearer ${token}`}:{})}});
+          if(response.ok){status.textContent='Operação online';if(dot)dot.className='dot ok'}
+        }catch{}
+      }
+    }catch{}
+  }
+
   window.refreshPlatformBranding=refresh;window.getPlatformBranding=()=>current;
   window.addEventListener('appinstalled',()=>{const b=document.getElementById('installBtn');if(b){b.textContent='Aplicativo instalado';b.disabled=true}});
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',refresh,{once:true});else refresh();
+  window.addEventListener('focus',()=>{void syncOperationalViews()});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void syncOperationalViews()});
+  setInterval(()=>{void syncOperationalViews()},10000);
+  const observer=new MutationObserver(markTestCalls);observer.observe(document.documentElement,{subtree:true,childList:true});
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{refresh();setTimeout(()=>void syncOperationalViews(),1200)},{once:true});else{refresh();setTimeout(()=>void syncOperationalViews(),1200)}
 })();
