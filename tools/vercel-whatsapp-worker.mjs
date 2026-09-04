@@ -354,6 +354,31 @@ async function getManagement() {
     dirty = true;
   }
 
+  // Derived-state reconciliation. A corrida fechada pelo dono é a fonte da verdade;
+  // Financeiro, lotes e repasse do motorista são reconstruídos a partir dela.
+  // Além de manter os módulos sincronizados, isso repara fechamentos antigos feitos
+  // por uma versão do worker que não tenha persistido todos os derivados.
+  const derivedBefore = JSON.stringify({
+    finance: state.finance,
+    billingBatches: state.billingBatches,
+    driverPayrolls: state.driverPayrolls,
+  });
+  for (const call of state.calls) {
+    if (!call || call.deletedAt || call.status === 'excluido') continue;
+    const finalized = isOwnerFinalizedCall(call);
+    const billableCancellation = call.status === 'cancelado' && call.cancellationChargeRequired === true;
+    if (!finalized || !(isConfirmedCall(call) || billableCancellation)) continue;
+    if (isTestCall(call)) ensureTestFinanceTracking(state, call, { finalized: true });
+    else ensureConfirmedFinanceTracking(state, call, { finalized: true });
+  }
+  syncDriverPayrolls(state);
+  const derivedAfter = JSON.stringify({
+    finance: state.finance,
+    billingBatches: state.billingBatches,
+    driverPayrolls: state.driverPayrolls,
+  });
+  if (derivedBefore !== derivedAfter) dirty = true;
+
   return dirty ? saveManagement(state) : state;
 }
 

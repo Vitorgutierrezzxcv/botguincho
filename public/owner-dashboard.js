@@ -95,7 +95,8 @@
   }
 
   function currentPayroll() {
-    const payrolls = ownerState.billing.driverPayrolls || [];
+    const billingPayrolls = Array.isArray(ownerState.billing?.driverPayrolls) ? ownerState.billing.driverPayrolls : [];
+    const payrolls = billingPayrolls.length ? billingPayrolls : (Array.isArray(mgmt.driverPayrolls) ? mgmt.driverPayrolls : []);
     return payrolls.find((p) => p.status !== 'paid') || payrolls[0] || null;
   }
 
@@ -412,12 +413,26 @@
   }
 
   async function refreshBillingOnly() {
-    try { ownerState.billing = await api('/api/worker/billing'); billingCache = ownerState.billing; } catch (error) { console.error('owner billing', error); }
+    try {
+      const response = await api('/api/worker/billing');
+      const next = response?.data && typeof response.data === 'object' ? response.data : response;
+      if (next && typeof next === 'object') ownerState.billing = next;
+      billingCache = ownerState.billing;
+      return ownerState.billing;
+    } catch (error) { console.error('owner billing', error); return ownerState.billing; }
   }
 
   async function refreshOwner() {
-    try { const [, , groups] = await Promise.all([loadManagement(), refreshBillingOnly(), api('/api/worker/groups').catch(()=>({groups:[]}))]); ownerState.groups = groups?.groups || []; renderOwnerViews(); } catch (error) { console.error('owner dashboard', error); }
+    try {
+      const [, , groups] = await Promise.all([loadManagement(), refreshBillingOnly(), api('/api/worker/groups').catch(()=>({groups:[]}))]);
+      ownerState.groups = (groups?.data || groups)?.groups || [];
+      renderOwnerViews();
+      return { management: mgmt, billing: ownerState.billing };
+    } catch (error) { console.error('owner dashboard', error); return null; }
   }
+
+  window.refreshBillingOnly = refreshBillingOnly;
+  window.refreshOwner = refreshOwner;
 
   window.ownerEditCall = (id = null, preset = '') => {
     const item = (mgmt.calls || []).find((call) => call.id === id) || {};

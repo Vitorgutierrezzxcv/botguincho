@@ -146,9 +146,14 @@
           notes:item.ownerClosingNotes, vehicle:item.vehicle, plate:item.plate, protocol:item.protocol, origin:item.origin, destination:item.destination, driverName:item.driverName
         }
       }) });
-      await loadManagement();
-      if (typeof refreshBillingOnly === 'function') await refreshBillingOnly();
-      renderManagement();
+      const closedState = response?.data && typeof response.data === 'object' ? response.data : response;
+      if (closedState && Array.isArray(closedState.calls)) mgmt = { ...mgmt, ...closedState };
+      if (typeof window.refreshOwner === 'function') await window.refreshOwner();
+      else {
+        await loadManagement();
+        if (typeof window.refreshBillingOnly === 'function') await window.refreshBillingOnly();
+        renderManagement();
+      }
         const sent = response?.data?.closeResult?.noticeSent;
         closeModal();
         alert(isTestCall(call)
