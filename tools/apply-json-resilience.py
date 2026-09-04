@@ -50,8 +50,6 @@ function extractTopLevelJsonValues(raw = '') {
 async function repairCorruptedJson(file, raw, fallback, originalError) {
   const candidates = extractTopLevelJsonValues(raw);
   if (!candidates.length) throw originalError;
-  // Em corrupção por duas gravações concorrentes, o último documento completo
-  // representa o estado mais novo. Preserva o original antes de reparar.
   const recovered = candidates[candidates.length - 1];
   const backup = `${file}.corrupt-${Date.now()}.bak`;
   await fs.copyFile(file, backup).catch(() => undefined);
@@ -110,3 +108,5 @@ if old not in s:
 s = s.replace(old, new, 1)
 WORKER.write_text(s, encoding='utf-8')
 print('Persistent JSON recovery + atomic serialized writes applied.')
+
+# trigger workflow after workflow creation
