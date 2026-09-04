@@ -63,3 +63,5 @@ for p in [INDEX, ROOT_INDEX]:
 for p in [APP, ROOT_APP]:
     if p.exists(): patch_app(p)
 print('Operational base + roundtrip commercial routing patch applied.')
+
+# trigger workflow after workflow creation
