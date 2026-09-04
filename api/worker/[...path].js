@@ -273,12 +273,12 @@ async function handleTrainingSync(req, res) {
   }
 }
 
-
 function sendPlatformBrandAsset(res, dataUrl) {
   const match = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
   if (!match) return false;
   res.setHeader('content-type', match[1]);
-  res.setHeader('cache-control', 'public, max-age=300, stale-while-revalidate=3600');
+  res.setHeader('cache-control', 'no-store, max-age=0, must-revalidate');
+  res.setHeader('x-content-type-options', 'nosniff');
   res.status(200).send(Buffer.from(match[2].replace(/\s/g, ''), 'base64'));
   return true;
 }
@@ -299,6 +299,7 @@ async function handlePlatformBranding(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
     const row = await getPlatformBranding({ includeAssets: true });
     const b = publicBrandingPayload(row);
+    const stamp = encodeURIComponent(String(b.updated_at || Date.now()));
     if (mode === 'asset') {
       const kind = String(req.query?.kind || 'app_icon');
       if (!['logo','app_icon','favicon','pwa_180','pwa_192','pwa_512'].includes(kind)) return res.status(400).json({ error: 'invalid_kind' });
@@ -308,25 +309,40 @@ async function handlePlatformBranding(req, res) {
     }
     if (mode === 'manifest') {
       const manifest = {
-        id: '/', name: b.platform_name || 'Acionador.ai', short_name: b.short_name || b.platform_name || 'Acionador.ai', description: b.pwa_description,
-        start_url: '/?source=pwa', scope: '/', display: 'standalone', display_override: ['standalone','minimal-ui'], orientation: 'any',
-        background_color: '#ffffff', theme_color: b.primary_color, lang: 'pt-BR', dir: 'ltr', categories: ['business','productivity'],
+        id: '/',
+        name: b.platform_name || 'Acionador.ai',
+        short_name: b.short_name || b.platform_name || 'Acionador.ai',
+        description: b.pwa_description,
+        start_url: '/?source=pwa',
+        scope: '/',
+        display: 'standalone',
+        display_override: ['standalone','minimal-ui'],
+        orientation: 'any',
+        background_color: '#ffffff',
+        theme_color: b.primary_color,
+        lang: 'pt-BR',
+        dir: 'ltr',
+        categories: ['business','productivity'],
         icons: [
-          { src: b.app_icon_192_url || b.app_icon_url, sizes: '192x192', type: 'image/png', purpose: 'any' },
-          { src: b.app_icon_512_url || b.app_icon_url, sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: `/icons/icon-192.png?v=${stamp}`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: `/icons/icon-512.png?v=${stamp}`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: `/icons/icon-512.png?v=${stamp}`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
         prefer_related_applications: false,
       };
       res.setHeader('content-type', 'application/manifest+json; charset=utf-8');
+      res.setHeader('cache-control', 'no-store, max-age=0, must-revalidate');
       return res.status(200).send(JSON.stringify(manifest));
     }
-    const stamp = encodeURIComponent(String(b.updated_at || ''));
     return res.status(200).json({
       ...b,
       logo_url: `/api/worker/branding?mode=asset&kind=logo&v=${stamp}`,
-      app_icon_url: `/api/worker/branding?mode=asset&kind=app_icon&v=${stamp}`,
-      favicon_url: `/api/worker/branding?mode=asset&kind=favicon&v=${stamp}`,
-      manifest_url: `/api/worker/branding?mode=manifest&v=${stamp}`,
+      app_icon_url: `/icons/icon-512.png?v=${stamp}`,
+      apple_icon_url: `/apple-touch-icon.png?v=${stamp}`,
+      app_icon_192_url: `/icons/icon-192.png?v=${stamp}`,
+      app_icon_512_url: `/icons/icon-512.png?v=${stamp}`,
+      favicon_url: `/favicon.png?v=${stamp}`,
+      manifest_url: `/manifest.webmanifest?v=${stamp}`,
     });
   } catch (error) {
     return res.status(error.status || 500).json({ error: error.message || 'branding_failed' });
