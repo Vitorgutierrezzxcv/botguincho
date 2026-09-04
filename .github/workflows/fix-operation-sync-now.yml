@@ -1,0 +1,35 @@
+name: Fix operation sync now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/fix-operation-sync-tmp.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply sync fix
+        run: python tools/fix-operation-sync-tmp.py
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js public/app.js owner-dashboard.js public/owner-dashboard.js operation-command-center.js public/operation-command-center.js tools/vercel-whatsapp-worker.mjs
+          git commit -m "Corrige sincronização entre operação financeiro e motorista"
+          git push origin main
