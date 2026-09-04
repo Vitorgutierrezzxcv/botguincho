@@ -1,0 +1,40 @@
+name: Apply Trattor V2 UI once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-tratto-v2-ui.py'
+      - '.github/workflows/apply-tratto-v2-ui-once.yml'
+      - 'public/acionador-tratto-v2.css'
+      - 'public/acionador-tratto-v2.js'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/apply-tratto-v2-ui.py
+      - name: Validate JavaScript
+        run: node --check public/acionador-tratto-v2.js && node --check public/operation-command-center.js && node --check public/owner-dashboard.js
+      - name: Commit UI activation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/index.html
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Ativa nova interface Trattor V2 no Acionador'
+          git push origin main
