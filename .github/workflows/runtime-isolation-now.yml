@@ -1,0 +1,61 @@
+name: Runtime isolation now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/runtime-isolation-now.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Preserve America Guinchos on legacy worker and isolate new companies
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('lib/sandbox-runtime.js')
+          s=p.read_text()
+          pairs=[
+            ("""export async function getWorkerStatus(credential = '', tenant = DEFAULT_CLIENT_ID) {
+  const id = sanitizeTenant(tenant);
+  rememberCredential(credential, id);
+  if (externalWorkerConfigured()) {""",
+             """export async function getWorkerStatus(credential = '', tenant = DEFAULT_CLIENT_ID) {
+  const id = sanitizeTenant(tenant);
+  rememberCredential(credential, id);
+  if (externalWorkerConfigured() && id === DEFAULT_CLIENT_ID) {"""),
+            ("""    if (externalWorkerConfigured()) {
+      const response = await fetchExternalWorker(internalPath, {""",
+             """    if (externalWorkerConfigured() && tenant === DEFAULT_CLIENT_ID) {
+      const response = await fetchExternalWorker(internalPath, {"""),
+            ("""export async function sandboxDiagnostics(credential = '', tenant = DEFAULT_CLIENT_ID) {
+  const id = sanitizeTenant(tenant);
+  rememberCredential(credential, id);
+  if (externalWorkerConfigured()) {""",
+             """export async function sandboxDiagnostics(credential = '', tenant = DEFAULT_CLIENT_ID) {
+  const id = sanitizeTenant(tenant);
+  rememberCredential(credential, id);
+  if (externalWorkerConfigured() && id === DEFAULT_CLIENT_ID) {""")
+          ]
+          for old,new in pairs:
+            if old in s:
+              s=s.replace(old,new,1)
+            elif new not in s:
+              raise SystemExit('expected runtime pattern not found')
+          p.write_text(s)
+          PY
+      - name: Commit runtime isolation
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/sandbox-runtime.js
+          git commit -m "Isola novos clientes e preserva America Guinchos"
+          git push origin HEAD:main
