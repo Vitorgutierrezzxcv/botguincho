@@ -1,5 +1,6 @@
 name: Isolate new tenants once
 
+# One-shot: mantém cliente-teste na VPS e usa sandbox isolado nos novos tenants.
 on:
   push:
     branches: [main]
