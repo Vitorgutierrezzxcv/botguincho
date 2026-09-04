@@ -325,7 +325,16 @@ async function getManagement() {
   let dirty = false;
 
   const beforeCalls = state.calls.length;
-  state.calls = state.calls.filter((call) => operationalGroup(call?.sourceGroupId || '', call?.insurer || call?.client || ''));
+  state.calls = state.calls.filter((call) => {
+    // Corridas do grupo de testes precisam sobreviver mesmo quando o grupo não
+    // está selecionado para operação real. Caso contrário a cotação é salva,
+    // mas some antes do próximo "pode seguir" e a autorização perde o vínculo.
+    if (isTestCall(call)) return true;
+    return operationalGroup(
+      call?.sourceGroupId || '',
+      call?.groupName || call?.insurer || call?.client || ''
+    );
+  });
   if (state.calls.length !== beforeCalls) dirty = true;
 
   for (const call of state.calls) {
@@ -3930,8 +3939,16 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
   // AUTORIZACAO_DA_COTACAO_PENDENTE: leituras do rastreador atualizam `updatedAt`
   // de corridas antigas. Isso nao pode fazer um novo "pode seguir" cair na corrida
   // antiga. Uma oportunidade ainda aguardando decisao sempre tem prioridade.
-  const pendingCall = pendingAuthorizationCallForGroup(context.management?.calls || [], msg.from);
-  const call = pendingCall || context.recentCall;
+  let pendingCall = pendingAuthorizationCallForGroup(context.management?.calls || [], msg.from);
+  let call = pendingCall || context.recentCall;
+  // Proteção contra snapshot antigo: a cotação pode ter acabado de ser persistida
+  // pela mensagem anterior. Antes de dizer que faltam dados, releia a gestão uma vez.
+  if (!call) {
+    const freshManagement = await getManagement().catch(() => context.management || { calls: [] });
+    pendingCall = pendingAuthorizationCallForGroup(freshManagement?.calls || [], msg.from);
+    call = pendingCall || recentManagementCall(freshManagement, msg.from);
+    if (call) context.management = freshManagement;
+  }
   if (call?.status === 'agendado' && isFutureScheduledCall(call.scheduledAt, new Date(), 60)) {
     const settings = await getSettings();
     const label = formatScheduledAtBr(call.scheduledAt, settings.operatingTimezone || 'America/Sao_Paulo');
