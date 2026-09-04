@@ -147,12 +147,21 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
     const minutes = Number(shortMinutes[1]);
     if (minutes >= 10 && minutes <= 180 && minutes % 5 === 0) return 'eta';
   }
-  // "chegando?", "chegou?", "achou?", "proximo?" sao perguntas de status, nunca
-  // o relato de chegada do proprio motorista.
-  if (/^(?:ja\s+)?(?:chegou|chegando|chegaram)\s*\?+$/.test(value)
+  // Perguntas de acompanhamento do deslocamento precisam sempre recalcular o ETA
+  // usando a leitura atual do rastreador, nunca repetir a previsao antiga.
+  const liveEtaQuestion = /^(?:ja\s+)?(?:chegou|chegando|chegaram)\s*\?+$/.test(value)
     || /^(?:achou|localizou|encontrou)\s*\?+$/.test(value)
     || /^proximos?\s*\?+$/.test(value)
-    || /^\S{4,10}\s+chegando\s*\?*$/.test(value)) return 'eta';
+    || /^\S{4,10}\s+chegando\s*\?*$/.test(value)
+    || /\b(?:ta|esta|estao)\s+(?:chegando|a caminho|proximo|perto)\b/.test(value)
+    || /\b(?:qual|tem)\s+(?:a\s+)?(?:previa|previsao)(?:\s+(?:de|pra|para))?\s*(?:chegar|chegada)?\b/.test(value)
+    || /\b(?:previa|previsao)\s+(?:pra|para)\s+chegar\b/.test(value)
+    || /\b(?:quanto|qto)\s+(?:tempo\s+)?(?:falta|demora)\b/.test(value)
+    || /\bfalta\s+quanto\b/.test(value)
+    || /\bdemora\s+(?:muito|quanto)\b/.test(value)
+    || /\b(?:onde|aonde)\s+(?:esta|ta)\s+(?:o\s+)?(?:guincho|prestador|motorista)\b/.test(value)
+    || /\b(?:guincho|prestador|motorista)\s+(?:esta|ta)\s+(?:onde|chegando|perto|proximo)\b/.test(value);
+  if (liveEtaQuestion) return 'eta';
 
   const baseFareQuestion = /^(?:qual\s+)?(?:[ao]\s+)?saida\s*(?:amigo|pessoal|ai|ae)?\s*\?+$/.test(value)
     || /\bvalor\s+d[ae]\s+saida\b/.test(value)

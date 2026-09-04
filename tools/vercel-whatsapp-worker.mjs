@@ -1634,6 +1634,16 @@ function greetingReply(text = '') {
 
 function asksEta(text = '') {
   const value = normalizeForIntent(text);
+  // Perguntas naturais das centrais durante uma corrida. O handler abaixo sempre
+  // recalcula a rota a partir da leitura atual do rastreador ate a origem da corrida.
+  if (/\b(?:ta|esta|estao)\s+(?:chegando|a caminho|proximo|perto)\b/.test(value)
+    || /\b(?:qual|tem)\s+(?:a\s+)?(?:previa|previsao)(?:\s+(?:de|pra|para))?\s*(?:chegar|chegada)?\b/.test(value)
+    || /\b(?:previa|previsao)\s+(?:pra|para)\s+chegar\b/.test(value)
+    || /\b(?:quanto|qto)\s+(?:tempo\s+)?(?:falta|demora)\b/.test(value)
+    || /\bfalta\s+quanto\b/.test(value)
+    || /\bdemora\s+(?:muito|quanto)\b/.test(value)
+    || /\b(?:onde|aonde)\s+(?:esta|ta)\s+(?:o\s+)?(?:guincho|prestador|motorista)\b/.test(value)
+    || /\b(?:guincho|prestador|motorista)\s+(?:esta|ta)\s+(?:onde|chegando|perto|proximo)\b/.test(value)) return true;
   // ATALHOS_FALLBACK: "60?", "chegando?", "proximo?" tambem sao perguntas de tempo.
   const shortMinutes = value.match(/^(\d{2,3})\s*\?+$/);
   if (shortMinutes) {
@@ -3546,8 +3556,10 @@ async function handleDistanceQuestion(msg, groupName, readableText, quotedText =
       : {}),
   });
   const distance = Number.isFinite(Number(eta.distanceKm)) ? `${eta.distanceKm} km` : 'indisponível';
-  const reply = `Distância até o cliente: ${distance}.
-Previsão de chegada: ${eta.minutes} min.`;
+  const activeCall = context?.recentCall && ['autorizado','a_caminho','em_atendimento'].includes(context.recentCall.status);
+  const reply = activeCall
+    ? `Guincho em deslocamento ✅\nPrevisão atual de chegada: ${eta.minutes} min.\nDistância até o cliente: ${distance}.`
+    : `Distância até o cliente: ${distance}.\nPrevisão de chegada: ${eta.minutes} min.`;
   await replyAndRemember(msg, groupName, readableText, reply, {
     intent: 'distance',
     etaMinutes: eta.minutes,
