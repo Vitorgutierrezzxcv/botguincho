@@ -1,0 +1,33 @@
+name: Apply live Tests guincho behavior
+on:
+  push:
+    paths:
+      - tools/apply-live-test-finance.py
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply patch
+        run: python3 tools/apply-live-test-finance.py
+      - name: Validate JavaScript modules
+        run: |
+          node --check tools/test-center.mjs
+          node --check tools/business-orchestration.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check public/operation-command-center.js
+          node --check public/owner-dashboard.js
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/test-center.mjs tools/business-orchestration.mjs tools/vercel-whatsapp-worker.mjs public/operation-command-center.js public/owner-dashboard.js operation-command-center.js owner-dashboard.js 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Trata Tests guincho manual como operação real e reforça autorização"
+            git push
+          fi
