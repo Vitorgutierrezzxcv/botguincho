@@ -148,13 +148,16 @@
       }) });
       const closedState = response?.data && typeof response.data === 'object' ? response.data : response;
       if (closedState && Array.isArray(closedState.calls)) mgmt = { ...mgmt, ...closedState };
+      // Sempre refaz a leitura completa após concluir; não deixa a tela presa em snapshot antigo.
+      await loadManagement();
+      if (typeof window.refreshBillingOnly === 'function') await window.refreshBillingOnly();
       if (typeof window.refreshOwner === 'function') await window.refreshOwner();
-      else {
-        await loadManagement();
-        if (typeof window.refreshBillingOnly === 'function') await window.refreshBillingOnly();
-        renderManagement();
+      renderManagement();
+      const persisted = (mgmt.calls || []).find((entry) => entry.id === id);
+      if (persisted && persisted.status !== 'concluido' && persisted.status !== 'cancelado') {
+        throw new Error('O servidor não confirmou o fechamento da corrida.');
       }
-        const sent = response?.data?.closeResult?.noticeSent;
+      const sent = response?.data?.closeResult?.noticeSent ?? response?.closeResult?.noticeSent;
         closeModal();
         alert(isTestCall(call)
           ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o envio do resumo. Confira o grupo.')

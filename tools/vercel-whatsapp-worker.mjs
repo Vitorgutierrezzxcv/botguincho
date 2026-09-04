@@ -1098,15 +1098,21 @@ async function closeCallFromOwner(state, body = {}) {
   const callId = String(body.callId || body.id || body.item?.id || '');
   const index = state.calls.findIndex((item) => item.id === callId);
   if (index < 0) throw new Error('call_not_found');
-  const call = state.calls[index];
+  let call = state.calls[index];
   if (call.deletedAt || call.status === 'excluido') throw new Error('call_deleted');
+  // Corridas manuais antigas do grupo Tests guincho não são testes automáticos.
+  // Só um testRunId da Central de Testes mantém o fechamento isolado.
+  if (call.testMode === true && !call.testRunId) {
+    call = { ...call, testMode: false };
+    state.calls[index] = call;
+  }
   // Fechamento idempotente: clique repetido não duplica timeline, financeiro ou repasse.
   if (call.ownerClosedAt) {
     return { call, noticeSent: false, driverPay: driverPayForCall(call), alreadyClosed: true };
   }
   // Corridas do grupo de testes também podem ser fechadas pelo dono para validar o fluxo completo.
   // A proteção de envio ao WhatsApp continua abaixo com !isTestCall(next).
-  if (!(call.authorizedAt || isConfirmedCall(call) || call.cancellationChargeRequired === true)) throw new Error('call_not_authorized');
+  if (!(call.authorizedAt || isConfirmedCall(call) || ['autorizado','a_caminho','em_atendimento','aguardando_fechamento'].includes(String(call.status || '')) || call.cancellationChargeRequired === true)) throw new Error('call_not_authorized');
   const final = body.final || body.item || {};
   const billableKm = closingNumber(final.billableKm, closingNumber(call.billableKm, closingNumber(call.totalKm, call.estimatedTotalKm)));
   const workedHours = closingNumber(final.workedTimeChargedHours, call.workedTimeChargedHours || 0);
@@ -1140,9 +1146,14 @@ async function closeCallFromOwner(state, body = {}) {
     ...call,
     status: call.status === 'cancelado' ? 'cancelado' : 'concluido',
     operationalPhase: 'concluido',
-    ownerCloseRequired: true,
+    ownerCloseRequired: false,
     ownerReviewRequired: false,
     ownerClosedAt: now,
+    completedAt: call.completedAt || now,
+    financeReviewRequired: false,
+    financeReviewReason: '',
+    financeReviewResolvedAt: now,
+    testMode: Boolean(call.testRunId),
     ownerClosedBy: String(body.ownerName || final.ownerName || 'Thiago').trim().slice(0, 120) || 'Thiago',
     ownerClosingNotes: String(final.notes || '').trim().slice(0, 1200),
     completedAt: call.status === 'cancelado' ? (call.completedAt || null) : now,
@@ -1174,7 +1185,11 @@ async function closeCallFromOwner(state, body = {}) {
   if (isTestCall(next)) ensureTestFinanceTracking(state, next, { finalized: true });
   else ensureConfirmedFinanceTracking(state, next, { finalized: true });
   syncDriverPayrolls(state);
-  await saveManagement(state);
+  const savedAfterClose = await saveManagement(state);
+  const persisted = (savedAfterClose.calls || []).find((item) => item.id === next.id);
+  if (!persisted || persisted.status !== (next.status === 'cancelado' ? 'cancelado' : 'concluido') || !persisted.ownerClosedAt) {
+    throw new Error('close_not_persisted');
+  }
   await promoteQueuedCallAfter(next.id);
   let noticeSent = false;
   const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');
