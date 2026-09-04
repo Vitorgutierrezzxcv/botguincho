@@ -18,12 +18,56 @@
       "headers": [
         { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
       ]
+    },
+    {
+      "source": "/manifest.webmanifest",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/apple-touch-icon.png",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/favicon.png",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/icons/:path*",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
+      ]
     }
   ],
   "rewrites": [
     {
       "source": "/",
       "destination": "/index.html"
+    },
+    {
+      "source": "/manifest.webmanifest",
+      "destination": "/api/worker/branding?mode=manifest"
+    },
+    {
+      "source": "/apple-touch-icon.png",
+      "destination": "/api/worker/branding?mode=asset&kind=pwa_180"
+    },
+    {
+      "source": "/favicon.png",
+      "destination": "/api/worker/branding?mode=asset&kind=favicon"
+    },
+    {
+      "source": "/icons/icon-192.png",
+      "destination": "/api/worker/branding?mode=asset&kind=pwa_192"
+    },
+    {
+      "source": "/icons/icon-512.png",
+      "destination": "/api/worker/branding?mode=asset&kind=pwa_512"
     },
     {
       "source": "/health",
