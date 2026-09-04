@@ -1,7 +1,7 @@
 import { controlPlaneConfigured, loginWithPassword, loginWithPhonePassword, recoverPassword, signupWithPassword } from '../../../lib/control-plane.js';
 
 const SUPABASE_URL = 'https://pribndywguacekafhuyk.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_8oyE5F7QZCjwnZyDJg2G7Q_WdD8Qo0J';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InByaWJuZHl3Z3VhY2VrYWZodXlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4OTY0OTQsImV4cCI6MjEwMjQ3MjQ5NH0.xHIYFkWzymWQl4iJYBOSGc5SVB0ce44Eh72m5c0C7bM';
 
 function normalizePhone(v='') {
   let digits = String(v).replace(/\D/g, '');
@@ -21,8 +21,28 @@ async function jsonFetch(url, init = {}) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
   res.setHeader('cache-control', 'no-store');
+
+  if (req.method === 'GET' && String(req.query?.health || '') === '1') {
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
+        headers: { apikey: SUPABASE_ANON_KEY },
+        cache: 'no-store',
+      });
+      const body = await r.json().catch(() => ({}));
+      return res.status(r.ok ? 200 : 502).json({
+        ok: r.ok,
+        supabase_status: r.status,
+        project_ref: 'pribndywguacekafhuyk',
+        key_type: 'legacy_anon',
+        error: r.ok ? null : (body?.message || body?.msg || body?.error || 'supabase_health_failed'),
+      });
+    } catch (error) {
+      return res.status(502).json({ ok: false, error: error.message || 'supabase_health_failed' });
+    }
+  }
+
+  if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
   if (!controlPlaneConfigured()) return res.status(503).json({ error: 'control_plane_not_configured' });
   const action = String(req.body?.action || 'login');
   try {
