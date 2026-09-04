@@ -1,1 +1,149 @@
-const $=id=>document.getElementById(id);const SUPABASE_URL='https://pribndywguacekafhuyk.supabase.co';const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InByaWJuZHl3Z3VhY2VrYWZodXlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4OTY0OTQsImV4cCI6MjEwMjQ3MjQ5NH0.xHIYFkWzymWQl4iJYBOSGc5SVB0ce44Eh72m5c0C7bM';const companyId=(new URLSearchParams(location.search).get('companyId')||localStorage.getItem('bg-company-id')||'').toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,42);if(companyId)localStorage.setItem('bg-company-id',companyId);function show(msg,bad=true){$('notice').style.display='block';$('notice').className='notice section '+(bad?'bad':'good');$('notice').textContent=msg}async function finishSession(accessToken){localStorage.setItem('bg-access-token',accessToken);const me=await fetch('/api/control/me',{headers:{authorization:`Bearer ${accessToken}`},cache:'no-store'});const m=await me.json().catch(()=>({}));if(!me.ok)throw new Error(m.error||'session_failed');const master=!!m.master;const allowed=master||(m.memberships||[]).some(x=>x.companies?.slug===companyId);if(!allowed){localStorage.removeItem('bg-access-token');throw new Error('forbidden')}location.replace('/?companyId='+encodeURIComponent(companyId))}async function login(){try{$('login').disabled=true;const r=await fetch('/api/control/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'login_failed');await finishSession(d.access_token)}catch(e){show(e.message==='forbidden'?'Seu usuário não possui acesso a esta empresa.':'Não foi possível entrar. Confira e-mail e senha.')}finally{$('login').disabled=false}}async function firstAccess(){const email=String($('email').value||'').toLowerCase().trim(),password=String($('password').value||'');if(!email.includes('@'))return show('Informe o e-mail que recebeu o acesso.');if(password.length<8)return show('Escolha uma senha com pelo menos 8 caracteres.');try{$('firstAccess').disabled=true;const r=await fetch(`${SUPABASE_URL}/auth/v1/signup`,{method:'POST',headers:{apikey:SUPABASE_ANON_KEY,'content-type':'application/json'},body:JSON.stringify({email,password})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.msg||d.message||d.error_description||'signup_failed');if(d.access_token){show('Acesso criado. Entrando...',false);await finishSession(d.access_token);return}show('Conta criada. Se o Supabase pedir confirmação, confirme pelo e-mail e depois clique em Entrar.',false)}catch(e){const msg=String(e.message||'');if(/already|registered|exists|user_already_exists/i.test(msg))show('Este e-mail já possui conta. Use o botão Entrar com a senha cadastrada.');else show(`Não foi possível criar o acesso: ${msg}`)}finally{$('firstAccess').disabled=false}}async function forgotPassword(){const email=String($('email').value||'').toLowerCase().trim();if(!email.includes('@'))return show('Informe seu e-mail para recuperar a senha.');try{$('forgotPassword').disabled=true;const redirectTo=location.origin+'/login.html'+(companyId?'?companyId='+encodeURIComponent(companyId):'');const r=await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`,{method:'POST',headers:{apikey:SUPABASE_ANON_KEY,'content-type':'application/json'},body:JSON.stringify({email})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.msg||d.message||d.error_description||'recover_failed');show('Se este e-mail estiver cadastrado, você receberá o link para criar uma nova senha.',false)}catch(e){show('Não foi possível solicitar a recuperação agora. Tente novamente em instantes.')}finally{$('forgotPassword').disabled=false}}async function handleRecovery(){const hash=new URLSearchParams(location.hash.replace(/^#/,''));if(hash.get('type')!=='recovery'||!hash.get('access_token'))return;const token=hash.get('access_token');$('login').style.display='none';$('firstAccess').style.display='none';$('forgotPassword').textContent='Salvar nova senha';$('loginHint').textContent='Digite a nova senha acima e clique em “Salvar nova senha”.';$('forgotPassword').onclick=async()=>{const password=String($('password').value||'');if(password.length<8)return show('Escolha uma senha com pelo menos 8 caracteres.');try{$('forgotPassword').disabled=true;const r=await fetch(`${SUPABASE_URL}/auth/v1/user`,{method:'PUT',headers:{apikey:SUPABASE_ANON_KEY,authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({password})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.msg||d.message||d.error_description||'update_failed');history.replaceState(null,'',location.pathname+location.search);show('Senha atualizada. Você já pode entrar com a nova senha.',false);$('login').style.display='';$('firstAccess').style.display='';$('forgotPassword').textContent='Esqueci minha senha';$('forgotPassword').onclick=forgotPassword}catch(e){show('Não foi possível salvar a nova senha. Solicite outro link de recuperação.')}finally{$('forgotPassword').disabled=false}}}$('login').onclick=login;$('firstAccess').onclick=firstAccess;$('forgotPassword').onclick=forgotPassword;$('password').addEventListener('keydown',e=>{if(e.key==='Enter')login()});handleRecovery();
+const SUPABASE_URL='https://pribndywguacekafhuyk.supabase.co';
+const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InByaWJuZHl3Z3VhY2VrYWZodXlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4OTY0OTQsImV4cCI6MjEwMjQ3MjQ5NH0.xHIYFkWzymWQl4iJYBOSGc5SVB0ce44Eh72m5c0C7bM';
+const $=id=>document.getElementById(id);
+const qs=new URLSearchParams(location.search);
+const requestedCompany=(qs.get('companyId')||'').toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,42);
+let mode='login',method='email',otpSent=false,recoveryToken='';
+
+function show(id,msg,type='bad'){
+  const el=$(id); if(!el)return;
+  el.style.display='block'; el.className=`notice ${type}`; el.textContent=msg;
+}
+function hide(id){const el=$(id);if(el)el.style.display='none'}
+function friendly(error=''){
+  const s=String(error||'').toLowerCase();
+  if(s.includes('invalid login')||s.includes('invalid_credentials'))return'E-mail ou senha incorretos.';
+  if(s.includes('email not confirmed'))return'Confirme seu e-mail antes de entrar.';
+  if(s.includes('user already registered')||s.includes('already been registered'))return'Este e-mail já possui uma conta. Use Entrar.';
+  if(s.includes('password')&&s.includes('short'))return'A senha precisa ter pelo menos 8 caracteres.';
+  if(s.includes('phone provider')||s.includes('sms provider')||s.includes('unsupported phone'))return'O login por telefone ainda não está habilitado. Use e-mail por enquanto.';
+  if(s.includes('rate limit')||s.includes('too many'))return'Muitas tentativas seguidas. Aguarde alguns minutos e tente novamente.';
+  if(s.includes('token')||s.includes('otp'))return'Código inválido ou expirado. Solicite um novo código.';
+  if(s.includes('network')||s.includes('fetch'))return'Não foi possível conectar agora. Tente novamente.';
+  return error||'Não foi possível concluir a operação.';
+}
+function authHeaders(token=''){return{apikey:SUPABASE_ANON_KEY,'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})}}
+async function supabase(path,opt={}){
+  const r=await fetch(`${SUPABASE_URL}${path}`,{...opt,headers:{...authHeaders(opt.token||''),...(opt.headers||{})},cache:'no-store'});
+  let d={};try{d=await r.json()}catch{}
+  if(!r.ok)throw new Error(d?.msg||d?.message||d?.error_description||d?.error||`HTTP ${r.status}`);
+  return d;
+}
+function storeSession(d){
+  if(d?.access_token)localStorage.setItem('bg-access-token',d.access_token);
+  if(d?.refresh_token)localStorage.setItem('bg-refresh-token',d.refresh_token);
+  if(d?.expires_at)localStorage.setItem('bg-access-expires-at',String(d.expires_at));
+}
+function clearSession(){
+  ['bg-access-token','bg-refresh-token','bg-access-expires-at','bg-company-id'].forEach(k=>localStorage.removeItem(k));
+}
+function normalizePhone(v=''){
+  let digits=String(v).replace(/\D/g,'');
+  if((digits.length===10||digits.length===11))digits='55'+digits;
+  return digits?`+${digits}`:'';
+}
+function slugCompany(m){return m?.companies?.slug||''}
+function openCompany(slug){
+  if(!slug)return;
+  localStorage.setItem('bg-company-id',slug);
+  location.replace(`/?companyId=${encodeURIComponent(slug)}`);
+}
+function renderChooser(memberships){
+  $('authForm').classList.add('hidden');$('recoveryForm').classList.add('hidden');$('chooser').style.display='block';
+  $('companyList').innerHTML=memberships.map(m=>`<button type="button" class="company-option" data-company="${slugCompany(m)}"><span><b>${m.companies?.name||'Empresa'}</b><small>${m.role==='owner'?'Proprietário':'Operador'} · ${slugCompany(m)}</small></span><span>→</span></button>`).join('');
+  document.querySelectorAll('[data-company]').forEach(b=>b.onclick=()=>openCompany(b.dataset.company));
+}
+async function me(token){
+  const r=await fetch('/api/control/me',{headers:{authorization:`Bearer ${token}`},cache:'no-store'});
+  let d={};try{d=await r.json()}catch{}
+  if(!r.ok)throw new Error(d.error||'Sessão inválida');
+  return d;
+}
+async function routeAfterAuth(token){
+  try{
+    const d=await me(token);
+    const memberships=(d.memberships||[]).filter(m=>m?.companies?.slug&&m?.companies?.status!=='suspended');
+    if(requestedCompany){
+      const match=memberships.find(m=>slugCompany(m)===requestedCompany);
+      if(match||d.master)return openCompany(requestedCompany);
+    }
+    const last=localStorage.getItem('bg-company-id');
+    if(last&&(d.master||memberships.some(m=>slugCompany(m)===last)))return openCompany(last);
+    if(!memberships.length){
+      if(d.master)return location.replace('/master.html');
+      return location.replace('/onboarding.html?self=1');
+    }
+    if(memberships.length===1)return openCompany(slugCompany(memberships[0]));
+    renderChooser(memberships);
+  }catch(e){clearSession();show('notice',friendly(e.message),'bad')}
+}
+async function updateProfile(token,fullName,phone=''){
+  if(!fullName&&!phone)return;
+  await supabase('/rest/v1/rpc/update_my_profile',{method:'POST',token,body:JSON.stringify({p_full_name:fullName||null,p_phone:phone||null})}).catch(()=>{});
+}
+function setMode(next){
+  mode=next;otpSent=false;$('otpField').classList.add('hidden');
+  $('modeLogin').classList.toggle('active',mode==='login');$('modeSignup').classList.toggle('active',mode==='signup');
+  $('nameField').classList.toggle('hidden',mode!=='signup');
+  $('authTitle').textContent=mode==='signup'?'Crie sua conta':'Acesse sua conta';
+  $('authSubtitle').textContent=mode==='signup'?'Depois você cadastra sua empresa e conecta o WhatsApp.':'Entre para acessar somente a sua empresa.';
+  $('forgotPassword').style.visibility=mode==='login'&&method==='email'?'visible':'hidden';
+  updateSubmit();hide('notice');
+}
+function setMethod(next){
+  method=next;otpSent=false;
+  $('methodEmail').classList.toggle('active',method==='email');$('methodPhone').classList.toggle('active',method==='phone');
+  $('emailFields').classList.toggle('hidden',method!=='email');$('phoneFields').classList.toggle('hidden',method!=='phone');$('otpField').classList.add('hidden');
+  $('forgotPassword').style.visibility=mode==='login'&&method==='email'?'visible':'hidden';
+  updateSubmit();hide('notice');
+}
+function updateSubmit(){
+  $('submitAuth').textContent=method==='phone'?(otpSent?'Confirmar código':mode==='signup'?'Criar conta por SMS':'Receber código por SMS'):(mode==='signup'?'Criar conta':'Entrar');
+}
+async function emailSubmit(){
+  const email=$('email').value.trim().toLowerCase(),password=$('password').value,fullName=$('fullName').value.trim();
+  if(!email.includes('@'))throw new Error('Informe um e-mail válido.');
+  if(password.length<8)throw new Error('A senha precisa ter pelo menos 8 caracteres.');
+  if(mode==='signup'&&!fullName)throw new Error('Informe seu nome.');
+  if(mode==='login'){
+    const d=await supabase('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});storeSession(d);return routeAfterAuth(d.access_token);
+  }
+  const d=await supabase('/auth/v1/signup',{method:'POST',body:JSON.stringify({email,password,data:{full_name:fullName},options:{email_redirect_to:`${location.origin}/login.html`}})});
+  if(d.access_token){storeSession(d);await updateProfile(d.access_token,fullName);return routeAfterAuth(d.access_token)}
+  setMode('login');show('notice','Conta criada. Confira seu e-mail para confirmar o cadastro e depois entre normalmente.','good');
+}
+async function phoneSubmit(){
+  const phone=normalizePhone($('phone').value),fullName=$('fullName').value.trim();
+  if(phone.length<12)throw new Error('Informe um celular válido com DDD.');
+  if(mode==='signup'&&!fullName)throw new Error('Informe seu nome.');
+  if(!otpSent){
+    await supabase('/auth/v1/otp',{method:'POST',body:JSON.stringify({phone,create_user:mode==='signup',data:mode==='signup'?{full_name:fullName}:{}})});
+    otpSent=true;$('otpField').classList.remove('hidden');updateSubmit();show('notice','Código enviado por SMS. Digite o código para continuar.','good');return;
+  }
+  const token=$('otp').value.replace(/\D/g,'');if(token.length<4)throw new Error('Digite o código recebido por SMS.');
+  const d=await supabase('/auth/v1/verify',{method:'POST',body:JSON.stringify({type:'sms',phone,token})});storeSession(d);if(mode==='signup')await updateProfile(d.access_token,fullName,phone);return routeAfterAuth(d.access_token);
+}
+async function submit(){
+  hide('notice');const btn=$('submitAuth');btn.disabled=true;const old=btn.textContent;btn.textContent='Aguarde...';
+  try{if(method==='email')await emailSubmit();else await phoneSubmit()}catch(e){show('notice',friendly(e.message),'bad')}finally{btn.disabled=false;if(!otpSent||method==='email')updateSubmit();else btn.textContent='Confirmar código';if(!btn.textContent)btn.textContent=old}
+}
+async function forgot(){
+  const email=$('email').value.trim().toLowerCase();if(!email.includes('@'))return show('notice','Informe seu e-mail primeiro.','bad');
+  try{await supabase('/auth/v1/recover',{method:'POST',body:JSON.stringify({email,redirect_to:`${location.origin}/login.html?recovery=1`})});show('notice','Enviamos um link de recuperação para seu e-mail.','good')}catch(e){show('notice',friendly(e.message),'bad')}
+}
+async function saveNewPassword(){
+  const password=$('newPassword').value;if(password.length<8)return show('recoveryNotice','A senha precisa ter pelo menos 8 caracteres.','bad');
+  try{await supabase('/auth/v1/user',{method:'PUT',token:recoveryToken,body:JSON.stringify({password})});localStorage.setItem('bg-access-token',recoveryToken);show('recoveryNotice','Senha atualizada. Entrando...','good');setTimeout(()=>routeAfterAuth(recoveryToken),500)}catch(e){show('recoveryNotice',friendly(e.message),'bad')}
+}
+function consumeHash(){
+  const raw=location.hash.replace(/^#/,'');if(!raw)return false;const p=new URLSearchParams(raw),access=p.get('access_token'),refresh=p.get('refresh_token'),type=p.get('type');
+  if(!access)return false;storeSession({access_token:access,refresh_token:refresh,expires_at:p.get('expires_at')});history.replaceState({},'',location.pathname+location.search);
+  if(type==='recovery'||qs.get('recovery')==='1'){recoveryToken=access;$('authForm').classList.add('hidden');$('recoveryForm').classList.remove('hidden');return true}
+  routeAfterAuth(access);return true;
+}
+$('modeLogin').onclick=()=>setMode('login');$('modeSignup').onclick=()=>setMode('signup');$('methodEmail').onclick=()=>setMethod('email');$('methodPhone').onclick=()=>setMethod('phone');$('submitAuth').onclick=submit;$('forgotPassword').onclick=forgot;$('saveNewPassword').onclick=saveNewPassword;$('logoutChooser').onclick=()=>{clearSession();location.reload()};
+['email','password','phone','otp','fullName'].forEach(id=>$(id)?.addEventListener('keydown',e=>{if(e.key==='Enter')submit()}));
+if(!consumeHash()){
+  const existing=localStorage.getItem('bg-access-token');if(existing)routeAfterAuth(existing);
+}
+setMode('login');setMethod('email');
