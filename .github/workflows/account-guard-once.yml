@@ -1,0 +1,43 @@
+name: Account guard once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/account-guard-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Require authenticated account before dashboard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('public/index.html')
+          s=p.read_text()
+          marker='<title>Acionador.ai</title><link rel="stylesheet" href="/owner-dashboard.css">'
+          guard='''<title>Acionador.ai</title><style id="accountAuthGuard">body{visibility:hidden}</style><script>(()=>{const t=localStorage.getItem('bg-access-token')||localStorage.getItem('bg-master-token');if(!t){const c=new URLSearchParams(location.search).get('companyId')||localStorage.getItem('bg-company-id')||'';location.replace('/login.html'+(c?'?companyId='+encodeURIComponent(c):''));}})();</script><link rel="stylesheet" href="/owner-dashboard.css">'''
+          if 'accountAuthGuard' not in s:
+            if marker not in s: raise SystemExit('head marker not found')
+            s=s.replace(marker,guard,1)
+          scripts='<script src="/app.js" defer></script>'
+          if '/account-session.js' not in s:
+            if scripts not in s: raise SystemExit('app script marker not found')
+            s=s.replace(scripts,'<script src="/account-session.js" defer></script>'+scripts,1)
+          p.write_text(s)
+          PY
+      - name: Commit account guard
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/index.html
+          git commit -m "Protege painel por conta e empresa"
+          git push origin HEAD:main
