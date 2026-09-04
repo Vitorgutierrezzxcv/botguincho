@@ -1,0 +1,37 @@
+name: Apply operational base roundtrip once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-operational-base-roundtrip.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply operational base patch
+        run: python tools/apply-operational-base-roundtrip.py
+      - name: Validate worker
+        run: node --check tools/vercel-whatsapp-worker.mjs
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/vercel-whatsapp-worker.mjs public/index.html public/app.js index.html app.js
+          git commit -m "Adiciona base operacional e corrige KM comercial ida e volta"
+          git push origin main
