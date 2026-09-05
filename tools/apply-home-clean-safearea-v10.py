@@ -120,3 +120,4 @@ i=i.replace('/acionador-tratto-v2.css?v=9','/acionador-tratto-v2.css?v=10')
 i=i.replace('/acionador-contrast-v5.css?v=8','/acionador-contrast-v5.css?v=10')
 i=i.replace('/acionador-tratto-v2.js?v=9','/acionador-tratto-v2.js?v=10')
 idx.write_text(i)
+# trigger workflow v10
