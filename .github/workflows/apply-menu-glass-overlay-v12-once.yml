@@ -1,0 +1,32 @@
+name: Apply menu glass overlay V12 once
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/apply-menu-glass-overlay-v12.py
+      - .github/workflows/apply-menu-glass-overlay-v12-once.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Apply patch
+        run: python tools/apply-menu-glass-overlay-v12.py
+      - name: Check JS syntax
+        run: node --check public/acionador-tratto-v2.js
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/acionador-tratto-v2.js public/acionador-contrast-v5.css public/index.html
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Corrige efeito glass do menu no iPhone"
+          git push origin main
