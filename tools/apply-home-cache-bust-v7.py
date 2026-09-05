@@ -1,0 +1,10 @@
+from pathlib import Path
+p=Path('public/index.html')
+s=p.read_text()
+s=s.replace('/acionador-tratto-v2.css?v=4','/acionador-tratto-v2.css?v=7')
+s=s.replace('/acionador-contrast-v5.css?v=5','/acionador-contrast-v5.css?v=7')
+s=s.replace('/acionador-tratto-v2.js?v=4','/acionador-tratto-v2.js?v=7')
+s=s.replace('/acionador-tratto-v2.js?v=3','/acionador-tratto-v2.js?v=7')
+s=s.replace('/acionador-tratto-v2.js?v=2','/acionador-tratto-v2.js?v=7')
+s=s.replace('/acionador-tratto-v2.js"','/acionador-tratto-v2.js?v=7"')
+p.write_text(s)
