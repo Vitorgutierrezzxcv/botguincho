@@ -1,0 +1,153 @@
+/* Acionador.ai — Polish V5: contraste global + cards de corridas */
+
+/* Nunca permitir texto escuro sobre superfícies escuras. */
+html body.tratto-ui .ax-welcome,
+html body.tratto-ui .ax-driver-summary,
+html body.tratto-ui .hero,
+html body.tratto-ui .dark-card,
+html body.tratto-ui [data-theme="dark"]{
+  color:#fff!important;
+}
+html body.tratto-ui .ax-welcome h1,
+html body.tratto-ui .ax-welcome h2,
+html body.tratto-ui .ax-welcome h3,
+html body.tratto-ui .ax-welcome h4,
+html body.tratto-ui .ax-welcome b,
+html body.tratto-ui .ax-welcome strong,
+html body.tratto-ui .ax-welcome span,
+html body.tratto-ui .ax-welcome small,
+html body.tratto-ui .ax-welcome p,
+html body.tratto-ui .ax-welcome .eyebrow,
+html body.tratto-ui .ax-driver-summary h1,
+html body.tratto-ui .ax-driver-summary h2,
+html body.tratto-ui .ax-driver-summary h3,
+html body.tratto-ui .ax-driver-summary h4,
+html body.tratto-ui .ax-driver-summary b,
+html body.tratto-ui .ax-driver-summary strong,
+html body.tratto-ui .ax-driver-summary span,
+html body.tratto-ui .ax-driver-summary small,
+html body.tratto-ui .ax-driver-summary p,
+html body.tratto-ui .hero h1,
+html body.tratto-ui .hero h2,
+html body.tratto-ui .hero h3,
+html body.tratto-ui .hero b,
+html body.tratto-ui .hero strong,
+html body.tratto-ui .hero span,
+html body.tratto-ui .hero small,
+html body.tratto-ui .hero p{
+  color:#fff!important;
+}
+html body.tratto-ui .ax-welcome small,
+html body.tratto-ui .ax-welcome p{color:rgba(255,255,255,.82)!important}
+html body.tratto-ui .ax-driver-summary .label,
+html body.tratto-ui .ax-driver-summary small{color:#b9c4d8!important}
+
+/* Texto escuro consistente sobre superfícies claras. */
+html body.tratto-ui .card,
+html body.tratto-ui .metric-card,
+html body.tratto-ui .owner-kpi,
+html body.tratto-ui .op-card,
+html body.tratto-ui .op-summary-card,
+html body.tratto-ui .ax-run-card,
+html body.tratto-ui .ax-metric,
+html body.tratto-ui .more-card{
+  color:#172033!important;
+}
+html body.tratto-ui .card h1,
+html body.tratto-ui .card h2,
+html body.tratto-ui .card h3,
+html body.tratto-ui .owner-kpi strong,
+html body.tratto-ui .op-card h1,
+html body.tratto-ui .op-card h2,
+html body.tratto-ui .op-card h3,
+html body.tratto-ui .ax-run-card h1,
+html body.tratto-ui .ax-run-card h2,
+html body.tratto-ui .ax-run-card h3,
+html body.tratto-ui .ax-run-title{
+  color:#172033!important;
+}
+
+/* Home: card principal mais refinado. */
+html body.tratto-ui .ax-welcome{
+  background:linear-gradient(145deg,#155fe2 0%,#3d79ef 62%,#4f86f5 100%)!important;
+  border:1px solid rgba(255,255,255,.15)!important;
+  box-shadow:0 18px 46px rgba(28,93,220,.23)!important;
+  position:relative!important;
+  overflow:hidden!important;
+}
+html body.tratto-ui .ax-welcome:after{
+  content:"";position:absolute;right:-70px;top:-85px;width:230px;height:230px;border-radius:50%;
+  background:rgba(255,255,255,.07);pointer-events:none;
+}
+html body.tratto-ui .ax-welcome> *{position:relative;z-index:1}
+html body.tratto-ui .ax-welcome small{
+  font-size:12px!important;font-weight:850!important;letter-spacing:.105em!important;text-transform:uppercase!important;
+}
+
+/* Corridas em andamento — card premium e fácil de escanear. */
+html body.tratto-ui .ax-run-list{gap:14px!important}
+html body.tratto-ui .ax-run-card{
+  background:#fff!important;
+  border:1px solid #e2e8f1!important;
+  border-radius:24px!important;
+  padding:20px!important;
+  box-shadow:0 9px 28px rgba(30,55,92,.075)!important;
+  overflow:hidden!important;
+}
+html body.tratto-ui .ax-run-card:before{
+  width:4px!important;
+  background:linear-gradient(180deg,#2469ee,#73a0ff)!important;
+}
+html body.tratto-ui .ax-run-card.await:before{background:linear-gradient(180deg,#e5a019,#f2c45e)!important}
+html body.tratto-ui .ax-run-card-head{gap:14px!important}
+html body.tratto-ui .ax-run-title{
+  font-size:20px!important;font-weight:900!important;line-height:1.22!important;letter-spacing:-.025em!important;
+}
+html body.tratto-ui .ax-run-sub{color:#7c879a!important;font-size:12.5px!important;line-height:1.45!important}
+html body.tratto-ui .ax-pill{
+  background:#edf4ff!important;color:#235fc7!important;border:1px solid #d7e5ff!important;
+  padding:7px 11px!important;box-shadow:none!important;
+}
+html body.tratto-ui .ax-pill.await{background:#fff6dd!important;color:#9a6a08!important;border-color:#f2dfa6!important}
+html body.tratto-ui .ax-route{
+  background:linear-gradient(180deg,#f8faff,#f5f7fb)!important;
+  border:1px solid #edf0f5!important;
+  color:#40506a!important;
+  border-radius:18px!important;
+  padding:15px!important;
+  line-height:1.6!important;
+}
+html body.tratto-ui .ax-route b{color:#263752!important}
+html body.tratto-ui .ax-run-meta{gap:9px!important}
+html body.tratto-ui .ax-run-meta div{
+  background:#f8faff!important;border:1px solid #eef2f7!important;border-radius:16px!important;padding:12px!important;
+}
+html body.tratto-ui .ax-run-meta span{color:#8490a2!important;font-size:10.5px!important;text-transform:uppercase!important;letter-spacing:.04em!important;font-weight:750!important}
+html body.tratto-ui .ax-run-meta b{color:#1b2b45!important;font-size:15px!important}
+html body.tratto-ui .ax-run-actions{gap:9px!important;margin-top:14px!important}
+html body.tratto-ui .ax-run-actions button{
+  min-height:48px!important;border-radius:15px!important;font-weight:850!important;border:1px solid #dfe5ee!important;background:#fff!important;color:#34435b!important;
+}
+html body.tratto-ui .ax-run-actions button.primary{
+  background:linear-gradient(135deg,#2566e8,#376feb)!important;color:#fff!important;border-color:transparent!important;
+  box-shadow:0 8px 18px rgba(37,102,232,.20)!important;
+}
+
+/* Centro de operação também recebe o mesmo padrão visual. */
+html body.tratto-ui .op-card{
+  background:#fff!important;border:1px solid #e2e8f1!important;border-radius:24px!important;box-shadow:0 8px 25px rgba(31,57,95,.065)!important;
+}
+html body.tratto-ui .op-title{color:#172033!important;font-weight:900!important;letter-spacing:-.02em!important}
+html body.tratto-ui .op-sub{color:#7c879a!important}
+html body.tratto-ui .op-route{background:#f7f9fc!important;color:#40506a!important;border:1px solid #edf1f6!important}
+html body.tratto-ui .op-meta div{background:#f8faff!important;border:1px solid #eef2f7!important}
+html body.tratto-ui .op-meta span{color:#8792a4!important}
+html body.tratto-ui .op-meta b{color:#1b2b45!important}
+
+@media(max-width:860px){
+  html body.tratto-ui .ax-welcome{padding:21px!important;border-radius:24px!important}
+  html body.tratto-ui .ax-run-card{padding:17px!important;border-radius:21px!important}
+  html body.tratto-ui .ax-run-title{font-size:18px!important}
+  html body.tratto-ui .ax-route{padding:13px!important;border-radius:16px!important}
+  html body.tratto-ui .ax-run-meta div{padding:11px!important;border-radius:14px!important}
+}
