@@ -73,17 +73,33 @@ body.tratto-ui .ax-driver-summary{
 }
 body.tratto-ui .ax-driver-total{color:#fff!important}
 
-/* Corridas em andamento — card premium, leitura mais rápida. */
+/* Corridas em andamento — card premium, leitura mais rápida e destaque real. */
+body.tratto-ui .ax-run-list{
+  position:relative!important;
+  padding:10px!important;
+  border:1px solid #dce8ff!important;
+  border-radius:26px!important;
+  background:linear-gradient(180deg,#f8fbff 0%,#f4f8ff 100%)!important;
+  box-shadow:inset 0 0 0 1px rgba(47,107,234,.03),0 8px 24px rgba(47,107,234,.05)!important;
+}
 body.tratto-ui .ax-run-card,
 body.tratto-ui .op-card{
   background:#fff!important;
-  border:1px solid #dfe6f0!important;
-  box-shadow:0 10px 28px rgba(31,57,95,.075)!important;
+  border:1.5px solid #9fc0ff!important;
+  box-shadow:0 0 0 3px rgba(47,107,234,.055),0 12px 30px rgba(31,57,95,.09)!important;
   overflow:hidden!important;
 }
+body.tratto-ui .ax-run-card{
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease!important;
+}
+body.tratto-ui .ax-run-card:hover{
+  transform:translateY(-1px)!important;
+  border-color:#6f9ff7!important;
+  box-shadow:0 0 0 4px rgba(47,107,234,.07),0 15px 34px rgba(31,57,95,.11)!important;
+}
 body.tratto-ui .ax-run-card:before{
-  width:6px!important;
-  background:linear-gradient(180deg,#2f6fec,#5f8ff5)!important;
+  width:7px!important;
+  background:linear-gradient(180deg,#2465e8,#6a98f7)!important;
 }
 body.tratto-ui .ax-run-card.await:before{background:linear-gradient(180deg,#e6a520,#f3c560)!important}
 body.tratto-ui .ax-run-card-head,
@@ -107,7 +123,7 @@ body.tratto-ui .op-status{
 body.tratto-ui .ax-route,
 body.tratto-ui .op-route{
   background:linear-gradient(180deg,#f9fbfe,#f5f8fc)!important;
-  border:1px solid #edf1f6!important;
+  border:1px solid #e3ebf8!important;
   color:#415069!important;
   border-radius:16px!important;
   padding:14px!important;
@@ -164,6 +180,7 @@ body.tratto-ui [data-theme="dark"],
 body.tratto-ui [data-theme="dark"] *{color:#fff!important}
 
 @media(max-width:860px){
+  body.tratto-ui .ax-run-list{padding:8px!important;border-radius:22px!important}
   body.tratto-ui .ax-run-card,
   body.tratto-ui .op-card{border-radius:22px!important;padding:17px!important}
   body.tratto-ui .ax-run-title,
