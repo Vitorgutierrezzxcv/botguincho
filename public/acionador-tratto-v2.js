@@ -78,7 +78,7 @@
     const state=getMgmt();
     const finance=Array.isArray(state.finance)?state.finance:[];
     const finalCalls=(state.calls||[]).filter(c=>!c.deletedAt&&finalized(c));
-    const billed=finalCalls.reduce((s,c)=>s+n(c.value),0);
+    const billed=finalCalls.reduce((s,c)=>s+n(c.value||c.calculatedValue||c.quoteCalculatedValue),0);
     const receivable=finance.filter(f=>f.type==='receita'&&f.isFinal===true&&f.status!=='pago'&&!f.deletedAt).reduce((s,f)=>s+n(f.amount),0);
     const received=finance.filter(f=>f.type==='receita'&&f.isFinal===true&&f.status==='pago'&&!f.deletedAt).reduce((s,f)=>s+n(f.amount),0);
     const payroll=currentPayroll();
@@ -100,14 +100,21 @@
     document.querySelectorAll('.ax-menu-item').forEach(b=>b.classList.toggle('active',b.dataset.axPage===active));
   }
 
-  function init(){
-    document.body.classList.add('tratto-ui');
-    buildMenu();
+  async function refreshHomeData(){
+    if(typeof loadManagement==='function'){
+      try{await loadManagement()}catch{}
+    }
     renderHome();
     highlightMenu();
     updateGreeting();
-    document.querySelectorAll('[data-page]').forEach((button)=>button.addEventListener('click',()=>setTimeout(()=>{renderHome();highlightMenu();updateGreeting()},80)));
-    setInterval(()=>{renderHome();highlightMenu();updateGreeting()},5000);
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,350));else setTimeout(init,350);
+
+  async function init(){
+    document.body.classList.add('tratto-ui');
+    buildMenu();
+    await refreshHomeData();
+    document.querySelectorAll('[data-page]').forEach((button)=>button.addEventListener('click',()=>setTimeout(()=>{void refreshHomeData()},80)));
+    setInterval(()=>{void refreshHomeData()},10000);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{void init()},350));else setTimeout(()=>{void init()},350);
 })();

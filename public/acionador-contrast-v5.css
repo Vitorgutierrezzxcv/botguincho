@@ -304,3 +304,21 @@ body.tratto-ui .ax-finance-card.profit.negative{background:linear-gradient(145de
   body.tratto-ui .ax-finance-card b{font-size:21px!important}
 }
 @media(max-width:430px){body.tratto-ui .ax-finance-overview{grid-template-columns:1fr 1fr!important}}
+
+
+/* HOME V8 — remove moldura interna duplicada */
+body.tratto-ui .ax-active-section > .ax-section-head{
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  padding:2px 2px 12px 6px!important;
+}
+body.tratto-ui .ax-active-section > .ax-section-head::before{display:none!important;content:none!important}
+body.tratto-ui .ax-active-section > .ax-run-list{
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  padding:0!important;
+}
