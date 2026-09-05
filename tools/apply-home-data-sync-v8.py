@@ -48,3 +48,4 @@ i=idx.read_text()
 i=i.replace('/acionador-contrast-v5.css?v=7','/acionador-contrast-v5.css?v=8')
 i=i.replace('/acionador-tratto-v2.js?v=7','/acionador-tratto-v2.js?v=8')
 idx.write_text(i)
+# trigger v8
