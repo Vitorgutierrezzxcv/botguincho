@@ -1,0 +1,34 @@
+name: Apply home clean safearea v10 once
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/apply-home-clean-safearea-v10.py
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Apply patch
+        run: python tools/apply-home-clean-safearea-v10.py
+      - name: Validate JS
+        run: node --check public/acionador-tratto-v2.js
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/acionador-tratto-v2.js public/acionador-contrast-v5.css public/index.html
+          git commit -m "Limpa home, corrige safe area e destaca cotações recentes"
+          git push origin main
