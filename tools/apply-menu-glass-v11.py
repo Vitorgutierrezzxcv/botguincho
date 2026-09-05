@@ -34,3 +34,4 @@ idx=Path('public/index.html')
 i=idx.read_text()
 i=i.replace('/acionador-contrast-v5.css?v=10','/acionador-contrast-v5.css?v=11')
 idx.write_text(i)
+# trigger v11
