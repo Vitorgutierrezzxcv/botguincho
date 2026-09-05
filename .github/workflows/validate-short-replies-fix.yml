@@ -1,0 +1,26 @@
+name: Validate Short Replies Fix
+on:
+  push:
+    paths:
+      - 'tools/apply-short-replies-fix.mjs'
+      - 'Dockerfile.vps'
+      - '.github/workflows/validate-short-replies-fix.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar patcher e worker resultante
+        run: |
+          set -e
+          node --check tools/apply-short-replies-fix.mjs
+          node tools/apply-short-replies-fix.mjs
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -q "function asksValue" tools/vercel-whatsapp-worker.mjs
+          grep -q "async function handleValueQuestion" tools/vercel-whatsapp-worker.mjs
+          grep -q "distance-summary" tools/vercel-whatsapp-worker.mjs
+          grep -q "handleDistanceQuestion(msg, groupName, readableText, quotedText, operationalContext)" tools/vercel-whatsapp-worker.mjs
+          echo 'Correção de respostas curtas validada.'
