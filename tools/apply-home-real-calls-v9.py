@@ -34,3 +34,4 @@ i=idx.read_text()
 i=i.replace('/acionador-tratto-v2.js?v=8','/acionador-tratto-v2.js?v=9')
 i=i.replace('/acionador-tratto-v2.css?v=7','/acionador-tratto-v2.css?v=9')
 idx.write_text(i)
+# trigger v9
