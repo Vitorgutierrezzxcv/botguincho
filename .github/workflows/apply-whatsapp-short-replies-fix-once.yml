@@ -1,0 +1,192 @@
+name: Apply WhatsApp Short Replies Fix Once
+on:
+  push:
+    paths: ['.github/workflows/apply-whatsapp-short-replies-fix-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Corrigir atalhos de KM, valor e previa
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+
+          old = """function asksDistance(text = '') {
+  const value = normalizeForIntent(text);
+  if (/^kms?\\s*\\?+$/.test(value)) return true;
+  return /\\b(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente)|km totais?|quilometragem(?: total)?)\\b/.test(value);
+}
+"""
+          new = """function asksDistance(text = '') {
+  const value = normalizeForIntent(text);
+  if (/^kms?\\s*\\?+$/.test(value)) return true;
+  return /\\b(qual (?:a )?distancia|quanto(?:s)? km|quantos quilometros|distancia (?:ate|para|pro|do guincho|do local|do cliente)|km totais?|quilometragem(?: total)?)\\b/.test(value);
+}
+
+function asksValue(text = '') {
+  const value = normalizeForIntent(text).replace(/[!.,;:]+/g, ' ').replace(/\\s+/g, ' ').trim();
+  return /^(?:valor|preco|preco do atendimento|valor do atendimento|quanto fica|quanto deu)\\s*\\?*$/.test(value)
+    || /^(?:qual|q)\\s+(?:o\\s+)?valor\\s*\\?*$/.test(value);
+}
+
+function isShortKmQuestion(text = '') {
+  const value = normalizeForIntent(text).replace(/[!.,;:]+/g, ' ').replace(/\\s+/g, ' ').trim();
+  return /^(?:km|kms|quilometragem|km total|kms total|km totais|kms totais)\\s*\\?*$/.test(value);
+}
+"""
+          if old not in s:
+            raise SystemExit('Bloco asksDistance nao encontrado; abortando para nao alterar arquivo errado.')
+          s = s.replace(old, new, 1)
+
+          needle = """  if (/\\b(?:ta|esta|estao)\\s+(?:chegando|a caminho|proximo|perto)\\b/.test(value)
+"""
+          if needle not in s:
+            raise SystemExit('Bloco asksEta nao encontrado.')
+          replacement = """  if (/\\b(?:no\\s+)?aguard(?:o|ando)\\s+(?:da|de)\\s+(?:previa|previsao)\\b/.test(value)) return true;
+  if (/\\b(?:ta|esta|estao)\\s+(?:chegando|a caminho|proximo|perto)\\b/.test(value)
+"""
+          s = s.replace(needle, replacement, 1)
+
+          old = """async function handleDistanceQuestion(msg, groupName, readableText, quotedText = '') {
+  const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);
+"""
+          new = """async function handleDistanceQuestion(msg, groupName, readableText, quotedText = '', context = null) {
+  const call = context?.recentCall || null;
+  if (isShortKmQuestion(readableText)) {
+    const totalKm = call?.billableKm ?? call?.estimatedTotalKm ?? call?.totalKm ?? call?.routeBreakdown?.totalKm ?? null;
+    if (Number.isFinite(Number(totalKm))) {
+      const label = ['autorizado','a_caminho','em_atendimento','aguardando_fechamento','finalizado'].includes(String(call?.status || '').toLowerCase())
+        ? 'Quilometragem total'
+        : 'Percurso estimado do atendimento';
+      await replyAndRemember(msg, groupName, readableText, `${label}: ${formatKm(totalKm)} km.`, {
+        intent: 'distance-summary', callId: call?.id || null, totalKm: Number(totalKm),
+      });
+      return;
+    }
+  }
+  const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);
+"""
+          if old not in s:
+            raise SystemExit('Assinatura handleDistanceQuestion nao encontrada.')
+          s = s.replace(old, new, 1)
+
+          marker = """async function handleTrackerLocationQuestion(msg, groupName, readableText) {
+"""
+          handler = """async function handleValueQuestion(msg, groupName, readableText, context = null) {
+  const call = context?.recentCall || null;
+  if (!call) {
+    await replyAndRemember(msg, groupName, readableText, 'Não encontrei atendimento recente para consultar o valor.', { intent: 'value-short-without-call' });
+    return;
+  }
+
+  const amountCandidates = [call.value, call.calculatedValue, call.estimatedValue, call.calculatedAmount, call.commercial?.calculatedAmount]
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const amount = amountCandidates[0] || 0;
+  if (amount > 0) {
+    const finalStatuses = new Set(['aguardando_fechamento', 'finalizado', 'concluido']);
+    const label = finalStatuses.has(String(call.status || '').toLowerCase()) ? 'Valor do atendimento' : 'Valor estimado';
+    await replyAndRemember(msg, groupName, readableText, `${label}: ${formatCurrency(amount)}.`, {
+      intent: 'value-short', callId: call.id, amount,
+    });
+    return;
+  }
+
+  await replyAndRemember(msg, groupName, readableText, 'Valor ainda não calculado para este atendimento.', {
+    intent: 'value-short-unavailable', callId: call.id,
+  });
+}
+
+async function handleTrackerLocationQuestion(msg, groupName, readableText) {
+"""
+          if marker not in s:
+            raise SystemExit('Ponto de insercao do handler de valor nao encontrado.')
+          s = s.replace(marker, handler, 1)
+
+          marker = """    const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
+    const runtimeIntent = operationalContext.intent;
+
+    // Comunicados internos nunca devem receber resposta automática, inclusive
+"""
+          inserted = """    const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
+    const runtimeIntent = operationalContext.intent;
+
+    // Atalhos determinísticos têm prioridade sobre a classificação genérica quando
+    // a mensagem atual é apenas uma pergunta curta. Isso impede `KMS ?`, `VALOR ?`
+    // e `no aguardo da prévia` de reabrirem o fluxo inteiro de cotação.
+    if (!looksLikeDispatch(readableText)) {
+      if (asksEta(readableText)) {
+        await handleEtaQuestion(msg, groupName, readableText, quotedText, operationalContext);
+        return;
+      }
+      if (asksDistance(readableText)) {
+        await handleDistanceQuestion(msg, groupName, readableText, quotedText, operationalContext);
+        return;
+      }
+      if (asksValue(readableText)) {
+        await handleValueQuestion(msg, groupName, readableText, operationalContext);
+        return;
+      }
+    }
+
+    // Comunicados internos nunca devem receber resposta automática, inclusive
+"""
+          if marker not in s:
+            raise SystemExit('Ponto de prioridade dos atalhos nao encontrado.')
+          s = s.replace(marker, inserted, 1)
+
+          old = """    if (asksDistance(readableText)) {
+      await handleDistanceQuestion(msg, groupName, readableText, quotedText);
+      return;
+    }
+"""
+          new = """    if (asksDistance(readableText)) {
+      await handleDistanceQuestion(msg, groupName, readableText, quotedText, operationalContext);
+      return;
+    }
+
+    if (asksValue(readableText)) {
+      await handleValueQuestion(msg, groupName, readableText, operationalContext);
+      return;
+    }
+"""
+          if old not in s:
+            raise SystemExit('Chamada final de handleDistanceQuestion nao encontrada.')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+          node --check tools/vercel-whatsapp-worker.mjs
+          grep -n "function asksValue\|handleValueQuestion\|distance-summary\|aguard.*previa" tools/vercel-whatsapp-worker.mjs
+      - name: Commitar correcao
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Corrige respostas de KM valor e previa no WhatsApp'
+          git push
+      - name: Recarregar worker na VPS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          REF=$(git rev-parse HEAD)
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 180 \
+            -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Content-Type: application/json' \
+            -H "x-botguincho-source-ref: $REF" \
+            -d '{"companyId":"cliente-teste"}' \
+            'https://botguincho.vercel.app/api/worker/reload?companyId=cliente-teste' -o /tmp/reload.json
+          cat /tmp/reload.json
+          sleep 20
+      - name: Validar saude do worker
+        run: |
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 4 \
+            'https://botguincho.vercel.app/api/worker/health?companyId=cliente-teste'
