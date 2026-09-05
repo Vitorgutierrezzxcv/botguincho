@@ -50,15 +50,23 @@
     if (document.getElementById('axMenuFab')) return;
     const fab = document.createElement('button'); fab.id='axMenuFab'; fab.className='ax-menu-fab'; fab.type='button'; fab.setAttribute('aria-label','Abrir menu'); fab.innerHTML='☰';
     const drawer = document.createElement('div'); drawer.id='axMenuDrawer'; drawer.className='ax-menu-drawer';
+    const overlay = document.createElement('div'); overlay.id='axMenuOverlay'; overlay.className='ax-menu-overlay';
     const items = [
       ['dashboard','⌂','Início'],['operations','◉','Operação'],['calls','▣','Corridas'],['finance','$','Financeiro'],['clients','◌','Clientes'],['fleet','▰','Motoristas e frota'],
       ['pricing','≡','Tabelas de valores'],['groups','◎','Grupos'],['whatsapp','◍','WhatsApp'],['tracker','⌖','Rastreador'],['automations','⚡','Configurações'],['help','?','Ajuda']
     ];
     drawer.innerHTML = `<div class="ax-menu-head"><div class="ax-menu-logo"><img src="/icon.svg" alt=""></div><div><b>Acionador.ai</b><small>${esc2(document.getElementById('companyNameDisplay')?.textContent || 'Central operacional')}</small></div></div><div class="ax-menu-section">NAVEGAÇÃO</div>${items.map(([p,i,t])=>`<button class="ax-menu-item" data-ax-page="${p}"><span class="ax-menu-icon">${i}</span><span>${t}</span></button>`).join('')}`;
-    drawer.querySelectorAll('[data-ax-page]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.axPage)));
-    fab.addEventListener('click',()=>drawer.classList.toggle('open'));
-    document.addEventListener('click',(e)=>{if(!drawer.contains(e.target)&&e.target!==fab)drawer.classList.remove('open')});
-    document.body.append(drawer,fab);
+    const setMenuOpen=(open)=>{
+      drawer.classList.toggle('open',open);
+      overlay.classList.toggle('open',open);
+      document.body.classList.toggle('ax-menu-open',open);
+      fab.setAttribute('aria-expanded',open?'true':'false');
+    };
+    drawer.querySelectorAll('[data-ax-page]').forEach(b=>b.addEventListener('click',()=>{go(b.dataset.axPage);setMenuOpen(false)}));
+    fab.addEventListener('click',(e)=>{e.stopPropagation();setMenuOpen(!drawer.classList.contains('open'))});
+    overlay.addEventListener('click',()=>setMenuOpen(false));
+    document.addEventListener('keydown',(e)=>{if(e.key==='Escape')setMenuOpen(false)});
+    document.body.append(overlay,drawer,fab);
   }
 
   function currentPayroll(){
