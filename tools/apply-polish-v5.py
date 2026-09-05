@@ -8,3 +8,4 @@ if link not in s:
         raise SystemExit('mobile v4 stylesheet marker not found')
     s=s.replace(needle, needle+link)
 p.write_text(s)
+# trigger v5
