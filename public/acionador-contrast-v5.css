@@ -401,3 +401,26 @@ body.tratto-ui .ax-quote-foot b{display:block;color:#172033!important;font-size:
   body.tratto-ui .ax-quote-foot{grid-template-columns:1fr 1fr!important}
   body.tratto-ui .ax-quote-foot button{grid-column:1/-1;width:100%!important}
 }
+
+
+/* MENU V11 — backdrop glass/desfoque atrás do popup */
+html body.tratto-ui:has(.ax-menu-drawer.open)::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:9980;
+  background:rgba(233,239,249,.34);
+  backdrop-filter:blur(12px) saturate(118%);
+  -webkit-backdrop-filter:blur(12px) saturate(118%);
+  pointer-events:none;
+  opacity:1;
+}
+html body.tratto-ui .ax-menu-drawer{
+  z-index:9990!important;
+  background:rgba(255,255,255,.84)!important;
+  backdrop-filter:blur(24px) saturate(145%)!important;
+  -webkit-backdrop-filter:blur(24px) saturate(145%)!important;
+  border:1px solid rgba(255,255,255,.72)!important;
+  box-shadow:0 24px 70px rgba(31,45,72,.24),inset 0 1px 0 rgba(255,255,255,.72)!important;
+}
+html body.tratto-ui .ax-menu-fab{z-index:9995!important}
