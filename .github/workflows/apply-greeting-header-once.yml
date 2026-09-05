@@ -1,0 +1,34 @@
+name: Apply greeting header once
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-greeting-header.py'
+      - '.github/workflows/apply-greeting-header-once.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply patch
+        run: python tools/apply-greeting-header.py
+      - name: Check JS syntax
+        run: node --check public/acionador-tratto-v2.js && node --check public/account-session.js
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/account-session.js public/acionador-tratto-v2.js public/acionador-mobile-v4.css public/index.html
+          if git diff --cached --quiet; then
+            echo 'No changes'
+            exit 0
+          fi
+          git commit -m 'Troca barra superior por saudação personalizada'
+          git push origin main
