@@ -1,0 +1,30 @@
+name: Apply operation mobile V13 once
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/apply-operation-mobile-v13.py
+      - .github/workflows/apply-operation-mobile-v13-once.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Apply patch
+        run: python tools/apply-operation-mobile-v13.py
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/index.html
+          git commit -m "Ativa layout V13 da página de operação"
+          git push origin main
