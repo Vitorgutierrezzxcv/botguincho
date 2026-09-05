@@ -8,3 +8,4 @@ s=s.replace('/acionador-tratto-v2.js?v=3','/acionador-tratto-v2.js?v=7')
 s=s.replace('/acionador-tratto-v2.js?v=2','/acionador-tratto-v2.js?v=7')
 s=s.replace('/acionador-tratto-v2.js"','/acionador-tratto-v2.js?v=7"')
 p.write_text(s)
+# trigger cache bust v7
