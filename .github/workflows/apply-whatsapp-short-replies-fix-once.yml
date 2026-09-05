@@ -1,3 +1,4 @@
+# trigger: 2026-09-05T10:40-03:00
 name: Apply WhatsApp Short Replies Fix Once
 on:
   push:
