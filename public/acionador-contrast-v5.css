@@ -1,0 +1,176 @@
+/* Acionador.ai — contraste global e cards premium V5 */
+
+/* Contraste: superfícies escuras sempre usam texto claro. */
+body.tratto-ui .ax-welcome,
+body.tratto-ui .ax-welcome *,
+body.tratto-ui .ax-driver-summary,
+body.tratto-ui .ax-driver-summary *,
+body.tratto-ui .topbar.is-dark,
+body.tratto-ui .topbar.is-dark *{
+  color:#fff!important;
+}
+body.tratto-ui .ax-welcome small,
+body.tratto-ui .ax-welcome .eyebrow,
+body.tratto-ui .ax-driver-summary .label,
+body.tratto-ui .ax-driver-summary small,
+body.tratto-ui .ax-driver-summary .ax-driver-foot{
+  color:rgba(255,255,255,.78)!important;
+}
+body.tratto-ui .ax-welcome .ax-btn.light{color:#155fda!important;background:#fff!important}
+body.tratto-ui .ax-welcome .ax-btn.glass{color:#fff!important}
+body.tratto-ui .ax-driver-summary .ax-link-btn{color:#fff!important}
+
+/* Superfícies claras sempre usam texto escuro e subtítulos legíveis. */
+body.tratto-ui .card,
+body.tratto-ui .metric-card,
+body.tratto-ui .owner-kpi,
+body.tratto-ui .owner-mini-kpis>div,
+body.tratto-ui .owner-driver-grid>div,
+body.tratto-ui .more-card,
+body.tratto-ui .op-card,
+body.tratto-ui .op-summary-card,
+body.tratto-ui .ax-run-card,
+body.tratto-ui .ax-metric{
+  color:#172033!important;
+}
+body.tratto-ui .card h1,body.tratto-ui .card h2,body.tratto-ui .card h3,body.tratto-ui .card h4,
+body.tratto-ui .metric-card strong,
+body.tratto-ui .owner-kpi strong,
+body.tratto-ui .owner-mini-kpis b,
+body.tratto-ui .owner-driver-grid b,
+body.tratto-ui .op-card b,
+body.tratto-ui .op-summary-card b,
+body.tratto-ui .ax-run-card b,
+body.tratto-ui .ax-run-title,
+body.tratto-ui .ax-metric b{color:#172033!important}
+body.tratto-ui .card p,body.tratto-ui .card small,
+body.tratto-ui .metric-card span,body.tratto-ui .metric-card small,
+body.tratto-ui .owner-kpi span,body.tratto-ui .owner-kpi small,
+body.tratto-ui .op-sub,
+body.tratto-ui .ax-run-sub,
+body.tratto-ui .ax-metric span,body.tratto-ui .ax-metric small{color:#78859a!important}
+
+/* Hero da home: hierarquia melhor e contraste garantido. */
+body.tratto-ui .ax-welcome{
+  background:linear-gradient(135deg,#1f66ea 0%,#3f79f2 58%,#5c8df5 100%)!important;
+  border:1px solid rgba(255,255,255,.16)!important;
+  box-shadow:0 18px 45px rgba(41,103,226,.22)!important;
+}
+body.tratto-ui .ax-welcome small{
+  font-size:12px!important;
+  font-weight:900!important;
+  letter-spacing:.12em!important;
+  text-transform:uppercase!important;
+}
+body.tratto-ui .ax-welcome h2{color:#fff!important;text-shadow:0 1px 0 rgba(0,0,0,.05)}
+body.tratto-ui .ax-welcome p{color:rgba(255,255,255,.88)!important}
+
+/* Card de repasse escuro mais polido. */
+body.tratto-ui .ax-driver-summary{
+  background:linear-gradient(145deg,#182033,#111827)!important;
+  border:1px solid rgba(255,255,255,.06)!important;
+  box-shadow:0 16px 38px rgba(17,24,39,.18)!important;
+}
+body.tratto-ui .ax-driver-total{color:#fff!important}
+
+/* Corridas em andamento — card premium, leitura mais rápida. */
+body.tratto-ui .ax-run-card,
+body.tratto-ui .op-card{
+  background:#fff!important;
+  border:1px solid #dfe6f0!important;
+  box-shadow:0 10px 28px rgba(31,57,95,.075)!important;
+  overflow:hidden!important;
+}
+body.tratto-ui .ax-run-card:before{
+  width:6px!important;
+  background:linear-gradient(180deg,#2f6fec,#5f8ff5)!important;
+}
+body.tratto-ui .ax-run-card.await:before{background:linear-gradient(180deg,#e6a520,#f3c560)!important}
+body.tratto-ui .ax-run-card-head,
+body.tratto-ui .op-card-head{margin-bottom:10px!important}
+body.tratto-ui .ax-run-title,
+body.tratto-ui .op-title{
+  font-size:20px!important;
+  line-height:1.22!important;
+  font-weight:900!important;
+  letter-spacing:-.025em!important;
+}
+body.tratto-ui .ax-run-sub,
+body.tratto-ui .op-sub{font-size:12.5px!important;line-height:1.4!important}
+body.tratto-ui .ax-pill,
+body.tratto-ui .op-status{
+  border:1px solid #cfe0ff!important;
+  background:#eef4ff!important;
+  color:#245fc9!important;
+  font-weight:850!important;
+}
+body.tratto-ui .ax-route,
+body.tratto-ui .op-route{
+  background:linear-gradient(180deg,#f9fbfe,#f5f8fc)!important;
+  border:1px solid #edf1f6!important;
+  color:#415069!important;
+  border-radius:16px!important;
+  padding:14px!important;
+}
+body.tratto-ui .ax-route b,
+body.tratto-ui .op-route b{color:#1d2b42!important}
+body.tratto-ui .ax-run-meta div,
+body.tratto-ui .op-meta div{
+  background:#f8fafd!important;
+  border:1px solid #edf1f6!important;
+  border-radius:14px!important;
+}
+body.tratto-ui .ax-run-meta span,
+body.tratto-ui .op-meta span{color:#8490a3!important}
+body.tratto-ui .ax-run-meta b,
+body.tratto-ui .op-meta b{color:#182238!important}
+body.tratto-ui .ax-run-actions button,
+body.tratto-ui .op-actions .btn{
+  min-height:48px!important;
+  border-radius:14px!important;
+  font-weight:850!important;
+}
+body.tratto-ui .ax-run-actions button:not(.primary){
+  background:#fff!important;
+  color:#34435b!important;
+  border:1px solid #dfe6ef!important;
+}
+body.tratto-ui .ax-run-actions button.primary,
+body.tratto-ui .op-actions .btn:not(.secondary){
+  background:linear-gradient(135deg,#2f6bea,#3f7af2)!important;
+  color:#fff!important;
+  border-color:transparent!important;
+  box-shadow:0 7px 18px rgba(47,107,234,.18)!important;
+}
+
+/* Cards de corridas aceitas no dashboard/financeiro: mais compactos e bonitos. */
+body.tratto-ui .owner-row{
+  border:1px solid #e5ebf2!important;
+  background:#fff!important;
+  border-radius:16px!important;
+  padding:14px!important;
+  margin-bottom:10px!important;
+  box-shadow:0 4px 14px rgba(31,57,95,.04)!important;
+}
+body.tratto-ui .owner-list{gap:0!important}
+body.tratto-ui .owner-row-title b,
+body.tratto-ui .owner-row-title strong{color:#172033!important}
+body.tratto-ui .owner-route{color:#748196!important}
+
+/* Segurança extra para componentes que recebam classe dark no futuro. */
+body.tratto-ui [class*="dark-card"],
+body.tratto-ui [class*="dark-card"] *,
+body.tratto-ui [data-theme="dark"],
+body.tratto-ui [data-theme="dark"] *{color:#fff!important}
+
+@media(max-width:860px){
+  body.tratto-ui .ax-run-card,
+  body.tratto-ui .op-card{border-radius:22px!important;padding:17px!important}
+  body.tratto-ui .ax-run-title,
+  body.tratto-ui .op-title{font-size:18px!important}
+  body.tratto-ui .ax-route,
+  body.tratto-ui .op-route{font-size:13px!important;line-height:1.5!important}
+  body.tratto-ui .ax-run-meta,
+  body.tratto-ui .op-meta{gap:8px!important}
+  body.tratto-ui .owner-row{padding:14px!important;border-radius:16px!important}
+}
