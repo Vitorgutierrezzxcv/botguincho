@@ -27,6 +27,25 @@
   }
   window.axGo = go;
 
+  function greetingName(){
+    const state=getMgmt();
+    const raw=window.__acionadorUserName || state?.user?.name || state?.company?.ownerName || state?.company?.contactName || '';
+    const clean=String(raw||'').trim();
+    if(!clean || /^(usuário|usuario|acionador\.ai|central operacional)$/i.test(clean)) return '';
+    return clean.split(/\s+/)[0];
+  }
+
+  function updateGreeting(){
+    const title=document.getElementById('title');
+    if(!title) return;
+    const hour=new Date().getHours();
+    const greeting=hour<12?'Bom dia':hour<18?'Boa tarde':'Boa noite';
+    const name=greetingName();
+    title.textContent=name?`${greeting}, ${name}`:greeting;
+    const subtitle=document.getElementById('subtitle');
+    if(subtitle){subtitle.textContent='';subtitle.style.display='none'}
+  }
+
   function buildMenu(){
     if (document.getElementById('axMenuFab')) return;
     const fab = document.createElement('button'); fab.id='axMenuFab'; fab.className='ax-menu-fab'; fab.type='button'; fab.setAttribute('aria-label','Abrir menu'); fab.innerHTML='☰';
@@ -66,7 +85,7 @@
     const driverDue = n(payroll?.totalAmount || payroll?.projectedAmount) || (state.calls||[]).filter(c=>!c.deletedAt&&accepted(c)&&!finalized(c)).reduce((s,c)=>s+driverPay(c),0);
     const driver=(state.fleet||[]).find(x=>x.driver)?.driver || payroll?.driverName || 'Mauro';
     const runHtml = calls.length ? calls.slice(0,6).map(c=>`<article class="ax-run-card ${c.status==='aguardando_fechamento'?'await':''}"><div class="ax-run-card-head"><div><div class="ax-run-title">${esc2(c.vehicle||c.plate||'Veículo não informado')}</div><div class="ax-run-sub">${esc2(c.groupName||c.insurer||c.client||'Atendimento')} · ${c.authorizedAt?new Date(c.authorizedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'agora'}</div></div><span class="ax-pill ${c.status==='aguardando_fechamento'?'await':''}">${c.status==='aguardando_fechamento'?'Aguardando fechamento':'Em andamento'}</span></div><div class="ax-route"><b>Origem</b>: ${esc2(c.origin||'Não informada')}<br><b>Destino</b>: ${esc2(c.destination||'Não informado')}</div><div class="ax-run-meta"><div><span>KM</span><b>${km(c).toLocaleString('pt-BR',{maximumFractionDigits:1})} km</b></div><div><span>Valor previsto</span><b>${money(value(c))}</b></div><div><span>Motorista</span><b>${esc2(c.driverName||driver)}</b></div></div><div class="ax-run-actions"><button onclick="operationEditCall('${esc2(c.id)}')">Editar comanda</button><button class="primary" onclick="operationCloseCall('${esc2(c.id)}')">Concluir corrida</button></div></article>`).join('') : `<div class="ax-empty-home"><b>Nenhuma corrida em andamento</b>As corridas aceitas pelo WhatsApp aparecem aqui automaticamente.</div>`;
-    root.innerHTML=`<div class="ax-home-hero"><section class="ax-welcome"><div><small>CENTRAL OPERACIONAL</small><h2>${calls.length?`${calls.length} corrida${calls.length>1?'s':''} acontecendo agora`:'Operação pronta para receber chamadas'}</h2><p>${awaiting.length?`${awaiting.length} corrida${awaiting.length>1?'s':''} aguardando fechamento.`:'Acompanhe, edite e conclua os atendimentos sem sair da tela inicial.'}</p></div><div class="ax-welcome-actions"><button class="ax-btn light" onclick="axGo('operations')">Abrir operação</button><button class="ax-btn glass" onclick="ownerEditCall(null,'quote')">+ Corrida manual</button></div></section><aside class="ax-driver-summary"><div><span class="label">REPASSE DO MOTORISTA</span><div class="ax-driver-name">${esc2(driver)}</div></div><div><div class="ax-driver-total">${money(driverDue)}</div><div class="ax-driver-foot"><span>${payroll?.periodStart&&payroll?.periodEnd?`${payroll.periodStart} → ${payroll.periodEnd}`:'Período atual'}</span><button class="ax-link-btn" style="color:#fff" onclick="axGo('fleet')">Ver repasse</button></div></div></aside></div><div class="ax-section-head"><div><h3>Corridas em andamento</h3><p>Prioridade da operação: acompanhar e concluir atendimentos.</p></div><button class="ax-link-btn" onclick="axGo('operations')">Ver operação</button></div><div class="ax-run-list">${runHtml}</div><div class="ax-section-head"><div><h3>Resumo da empresa</h3><p>Financeiro e operação no período atual.</p></div></div><div class="ax-metrics-grid"><div class="ax-metric blue"><span>Em andamento</span><b>${calls.length}</b><small>${awaiting.length} aguardando fechamento</small></div><div class="ax-metric green"><span>Faturado definitivo</span><b>${money(billed)}</b><small>Somente corridas concluídas</small></div><div class="ax-metric amber"><span>A receber</span><b>${money(receivable)}</b><small>Receitas pendentes</small></div><div class="ax-metric purple"><span>Recebido</span><b>${money(received)}</b><small>Entradas confirmadas</small></div></div>`;
+    root.innerHTML=`<div class="ax-home-hero"><section class="ax-welcome"><div><small>ACOMPANHAMENTO EM TEMPO REAL</small><h2>${calls.length?`${calls.length} corrida${calls.length>1?'s':''} acontecendo agora`:'Operação pronta para receber chamadas'}</h2><p>${awaiting.length?`${awaiting.length} corrida${awaiting.length>1?'s':''} aguardando fechamento.`:'Acompanhe, edite e conclua os atendimentos sem sair da tela inicial.'}</p></div><div class="ax-welcome-actions"><button class="ax-btn light" onclick="axGo('operations')">Abrir operação</button><button class="ax-btn glass" onclick="ownerEditCall(null,'quote')">+ Corrida manual</button></div></section><aside class="ax-driver-summary"><div><span class="label">REPASSE DO MOTORISTA</span><div class="ax-driver-name">${esc2(driver)}</div></div><div><div class="ax-driver-total">${money(driverDue)}</div><div class="ax-driver-foot"><span>${payroll?.periodStart&&payroll?.periodEnd?`${payroll.periodStart} → ${payroll.periodEnd}`:'Período atual'}</span><button class="ax-link-btn" style="color:#fff" onclick="axGo('fleet')">Ver repasse</button></div></div></aside></div><div class="ax-section-head"><div><h3>Corridas em andamento</h3><p>Prioridade da operação: acompanhar e concluir atendimentos.</p></div><button class="ax-link-btn" onclick="axGo('operations')">Ver operação</button></div><div class="ax-run-list">${runHtml}</div><div class="ax-section-head"><div><h3>Resumo da empresa</h3><p>Financeiro e operação no período atual.</p></div></div><div class="ax-metrics-grid"><div class="ax-metric blue"><span>Em andamento</span><b>${calls.length}</b><small>${awaiting.length} aguardando fechamento</small></div><div class="ax-metric green"><span>Faturado definitivo</span><b>${money(billed)}</b><small>Somente corridas concluídas</small></div><div class="ax-metric amber"><span>A receber</span><b>${money(receivable)}</b><small>Receitas pendentes</small></div><div class="ax-metric purple"><span>Recebido</span><b>${money(received)}</b><small>Entradas confirmadas</small></div></div>`;
   }
 
   function highlightMenu(){
@@ -79,8 +98,9 @@
     buildMenu();
     renderHome();
     highlightMenu();
-    document.querySelectorAll('[data-page]').forEach((button)=>button.addEventListener('click',()=>setTimeout(()=>{renderHome();highlightMenu()},60)));
-    setInterval(()=>{renderHome();highlightMenu()},5000);
+    updateGreeting();
+    document.querySelectorAll('[data-page]').forEach((button)=>button.addEventListener('click',()=>setTimeout(()=>{renderHome();highlightMenu();updateGreeting()},80)));
+    setInterval(()=>{renderHome();highlightMenu();updateGreeting()},5000);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,350));else setTimeout(init,350);
 })();

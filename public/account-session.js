@@ -44,6 +44,8 @@
     const display=me.user?.name||me.user?.email?.split('@')[0]||'Usuário';
     const role=me.master?'Master':membership?.role==='owner'?'Proprietário':'Operador';
     const companyName=membership?.companies?.name||'Acionador.ai';
+    window.__acionadorUserName=display;
+    window.__acionadorCompanyName=companyName;
     const canManage=membership?.role==='owner'&&membership?.companies?.id;
     box.innerHTML=`<div style="display:flex;align-items:center;gap:9px"><div style="width:34px;height:34px;border-radius:10px;background:#eef5ff;color:#0877F9;display:grid;place-items:center;font-weight:800">${esc(display.slice(0,1).toUpperCase())}</div><div style="min-width:0;flex:1"><b style="display:block;color:#263249;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(display)}</b><span>${esc(role)} · ${esc(companyName)}</span></div></div><div id="accountCompanies" style="margin-top:9px"></div>${canManage?'<button id="accountUsers" type="button" style="width:100%;margin-top:8px;border:1px solid #dce6f4;background:#f8fbff;border-radius:9px;padding:8px;color:#2460a5;font:inherit;font-weight:700;cursor:pointer">Usuários e acessos</button>':''}<button id="accountLogout" type="button" style="width:100%;margin-top:8px;border:1px solid #e1e7ef;background:white;border-radius:9px;padding:8px;color:#536177;font:inherit;font-weight:700;cursor:pointer">Sair</button>`;
     sidebar.appendChild(box);
