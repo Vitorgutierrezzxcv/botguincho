@@ -18,6 +18,27 @@ function clean(value = '', max = 120) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, max);
 }
 
+function isThiagoProfile() {
+  const identity = [
+    process.env.WHATSAPP_CLIENT_ID,
+    process.env.BOTGUINCHO_COMPANY_ID,
+    process.env.BOTGUINCHO_PROFILE_NAME,
+    process.env.BOTGUINCHO_OWNER_NAME,
+    process.env.BOTGUINCHO_DRIVER_NAME,
+    process.env.BOTGUINCHO_COMPANY_NAME,
+  ].map(norm).join(' ');
+  return identity.includes('thiago');
+}
+
+function applyProfileExcludedAreas(areas = []) {
+  if (!isThiagoProfile()) return areas;
+  const withoutJaboticatubas = areas.filter((area) => !(area.type === 'city' && norm(area.name) === 'jaboticatubas'));
+  return [
+    ...withoutJaboticatubas,
+    { type: 'city', name: 'Jaboticatubas', city: '', scope: 'both' },
+  ];
+}
+
 export function extractLabeledAddressBlock(text = '', label = '') {
   const lines = String(text || '').replace(/\r/g, '').split('\n');
   const target = norm(label);
@@ -65,8 +86,6 @@ export function extractLabeledAddressBlock(text = '', label = '') {
   }
 
   return parts.join(', ')
-    // Algumas centrais colam a referencia sem espaco depois da UF: "CONTAGEM - MGref. Mateus".
-    // Referencia, telefone e instrucoes nao fazem parte do endereco enviado ao geocoder.
     .replace(/\b([A-Z]{2})\s*ref\.?\s*:?.*$/i, '$1')
     .replace(/\bref\.?\s*:?.*$/i, '')
     .replace(/\b(?:refer[eê]ncia|telefone|contato)\s*:.*$/i, '')
@@ -75,7 +94,7 @@ export function extractLabeledAddressBlock(text = '', label = '') {
 }
 
 export function sanitizeExcludedAreas(input = []) {
-  if (!Array.isArray(input)) return [];
+  if (!Array.isArray(input)) return applyProfileExcludedAreas([]);
   const seen = new Set();
   const out = [];
 
@@ -92,7 +111,7 @@ export function sanitizeExcludedAreas(input = []) {
     out.push({ type, name, city, scope });
   }
 
-  return out;
+  return applyProfileExcludedAreas(out);
 }
 
 function exactSegmentMatches(address, expected) {
@@ -111,10 +130,6 @@ function phraseMatches(address, expected) {
   if (!key) return false;
   const haystack = norm(address);
   if (!haystack) return false;
-  // Casa o nome como sequencia inteira de palavras: "icaivera betim" casa
-  // "icaivera"; "icaiverapolis" nao casa.
-  // Um nome logo depois de um tipo de logradouro e nome de rua, nao de local:
-  // "Rua Juatuba, Centro, Betim" nao pode bloquear a cidade de Juatuba.
   const words = haystack.split(' ');
   const target = key.split(' ');
   for (let i = 0; i + target.length <= words.length; i += 1) {
@@ -158,7 +173,6 @@ export function matchExcludedArea({ address = '', parsedAddress = null, region =
     if (area.scope !== 'both' && area.scope !== scope) continue;
 
     if (area.type === 'city') {
-      // SEMPRE_TENTA_FRASE: nao depende do parser acertar cidade/bairro.
       const matched = (cityKey && cityKey === norm(area.name))
         || exactSegmentMatches(address, area.name)
         || phraseMatches(address, area.name);
