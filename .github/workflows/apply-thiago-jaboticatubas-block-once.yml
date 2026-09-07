@@ -1,0 +1,89 @@
+name: Apply Thiago Jaboticatubas Block Once
+on:
+  push:
+    paths: ['.github/workflows/apply-thiago-jaboticatubas-block-once.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bloquear Jaboticatubas para perfil Thiago
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('tools/vercel-whatsapp-worker.mjs')
+          s = p.read_text()
+          old = """async function getSettings() {
+  const saved = await readJson(settingsFile, {});
+  const next = { ...DEFAULT_SETTINGS, ...saved };
+  if (clientId === 'cliente-teste' && !String(next.operationalBaseAddress || '').trim()) {
+    next.operationalBaseAddress = LEGACY_AMERICA_BASE_ADDRESS;
+    await writeJson(settingsFile, next).catch(() => undefined);
+  }
+  return next;
+}
+"""
+          new = """async function getSettings() {
+  const saved = await readJson(settingsFile, {});
+  const next = { ...DEFAULT_SETTINGS, ...saved };
+
+  // Regra operacional específica do perfil Thiago: Jaboticatubas/MG é área proibida
+  // tanto para origem quanto para destino. A detecção aceita o nome do perfil em
+  // campos usuais de configuração ou no identificador do tenant, sem afetar outros perfis.
+  const profileIdentity = [
+    clientId,
+    next.profileName,
+    next.ownerName,
+    next.companyName,
+    next.driverName,
+  ].map((value) => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase()).join(' ');
+  if (profileIdentity.includes('thiago')) {
+    const areas = sanitizeExcludedAreas(next.excludedAreas || []);
+    const hasJaboticatubasBoth = areas.some((area) =>
+      area.type === 'city'
+      && String(area.name || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase() === 'jaboticatubas'
+      && area.scope === 'both'
+    );
+    if (!hasJaboticatubasBoth) {
+      next.excludedAreas = sanitizeExcludedAreas([
+        ...areas.filter((area) => !(area.type === 'city' && String(area.name || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase() === 'jaboticatubas')),
+        { type: 'city', name: 'Jaboticatubas', scope: 'both' },
+      ]);
+      await writeJson(settingsFile, next).catch(() => undefined);
+    }
+  }
+
+  if (clientId === 'cliente-teste' && !String(next.operationalBaseAddress || '').trim()) {
+    next.operationalBaseAddress = LEGACY_AMERICA_BASE_ADDRESS;
+    await writeJson(settingsFile, next).catch(() => undefined);
+  }
+  return next;
+}
+"""
+          if old not in s:
+            raise SystemExit('Bloco getSettings nao encontrado')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          node --check tools/vercel-whatsapp-worker.mjs
+      - name: Testar regra de areas excluidas
+        run: |
+          node --input-type=module <<'NODE'
+          import { matchExcludedArea } from './tools/excluded-areas.mjs';
+          const areas=[{type:'city',name:'Jaboticatubas',scope:'both'}];
+          const origem=matchExcludedArea({address:'Al. Jandaias, 66 - Horto do Jaguara, Jaboticatubas - MG, 35830-000',areas,scope:'origin'});
+          const destino=matchExcludedArea({address:'Jaboticatubas - MG',areas,scope:'destination'});
+          if(!origem || !destino) throw new Error('Bloqueio de Jaboticatubas falhou');
+          console.log('Jaboticatubas bloqueada em origem e destino: OK');
+          NODE
+      - name: Commitar correcao
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          git commit -m 'Bloqueia Jaboticatubas no perfil Thiago'
+          git push origin HEAD:main
