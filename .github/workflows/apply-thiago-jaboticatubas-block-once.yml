@@ -87,3 +87,4 @@ jobs:
           git add tools/vercel-whatsapp-worker.mjs
           git commit -m 'Bloqueia Jaboticatubas no perfil Thiago'
           git push origin HEAD:main
+# trigger: 2026-09-07
