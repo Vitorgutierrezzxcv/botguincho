@@ -30,7 +30,10 @@ COPY training ./training
 RUN node tools/apply-short-replies-fix.mjs \
   && node tools/apply-queue-progress-fix.mjs \
   && node tools/apply-closure-reported-values-fix.mjs \
+  && node tools/apply-human-refusal-guard.mjs \
   && node tools/test-closure-reported-values.mjs \
+  && node tools/test-human-refusal-guard.mjs \
+  && node --check tools/human-intervention.mjs \
   && node --check tools/operational-knowledge.mjs \
   && node --check tools/vercel-whatsapp-worker.mjs \
   && node --check tools/business-orchestration.mjs \
