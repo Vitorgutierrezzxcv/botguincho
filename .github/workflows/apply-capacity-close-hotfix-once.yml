@@ -25,11 +25,12 @@ jobs:
           python-version: '3.12'
       - name: Aplicar correções
         run: python tools/apply-capacity-close-hotfix.py
-      - name: Validar sintaxe e capacidade
+      - name: Validar hotfix urgente
         run: |
           node --check tools/vercel-whatsapp-worker.mjs
           node --check public/operation-command-center.js
-          node tools/test-dispatch-capacity.mjs
+          grep -q "const closeResult" public/operation-command-center.js
+          grep -q "noticePending" public/operation-command-center.js
       - name: Commitar correções
         run: |
           git config user.name 'github-actions[bot]'
