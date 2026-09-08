@@ -1,0 +1,43 @@
+name: Apply capacity and close hotfix once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-capacity-close-hotfix.py'
+      - '.github/workflows/apply-capacity-close-hotfix-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Aplicar correções
+        run: python tools/apply-capacity-close-hotfix.py
+      - name: Validar sintaxe e capacidade
+        run: |
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check public/operation-command-center.js
+          node tools/test-dispatch-capacity.mjs
+      - name: Commitar correções
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs public/operation-command-center.js
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Distingue lotação e corrige conclusão de corrida'
+          git push origin main
