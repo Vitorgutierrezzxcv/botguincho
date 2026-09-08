@@ -111,3 +111,5 @@ if 'src="/operation-command-center.js?v=20260908-1"' not in html:
     index.write_text(html)
 
 print(f'Capacidade e fechamento corrigidos com sucesso. Respostas de capacidade alteradas: {count}.')
+
+# trigger 2026-09-08: aplicar hotfix urgente de conclusão em produção
