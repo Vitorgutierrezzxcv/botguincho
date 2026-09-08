@@ -34,4 +34,4 @@ RUN node tools/apply-short-replies-fix.mjs \
 EXPOSE 3001
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "tools/vercel-whatsapp-worker.mjs"]
+CMD ["sh", "-c", "node tools/rollback-jaboticatubas-persisted.mjs && exec node tools/vercel-whatsapp-worker.mjs"]
