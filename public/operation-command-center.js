@@ -148,23 +148,33 @@
       }) });
       const closedState = response?.data && typeof response.data === 'object' ? response.data : response;
       if (closedState && Array.isArray(closedState.calls)) mgmt = { ...mgmt, ...closedState };
-      // Sempre refaz a leitura completa após concluir; não deixa a tela presa em snapshot antigo.
+      const closeResult = response?.data?.closeResult ?? response?.closeResult ?? null;
+      const closedCall = closeResult?.call || null;
+      // O servidor persiste o fechamento antes de liberar fila/enviar WhatsApp.
+      // Usa essa confirmação imediatamente para não depender de um segundo GET instantâneo.
+      if (closedCall?.id) {
+        const index = (mgmt.calls || []).findIndex((entry) => entry.id === closedCall.id);
+        if (index >= 0) mgmt.calls[index] = { ...mgmt.calls[index], ...closedCall };
+      }
       await loadManagement();
       if (typeof window.refreshBillingOnly === 'function') await window.refreshBillingOnly();
       if (typeof window.refreshOwner === 'function') await window.refreshOwner();
       renderManagement();
       const persisted = (mgmt.calls || []).find((entry) => entry.id === id);
-      if (persisted && persisted.status !== 'concluido' && persisted.status !== 'cancelado') {
+      const confirmedStatus = String(closedCall?.status || persisted?.status || '').toLowerCase();
+      if (!['concluido','cancelado'].includes(confirmedStatus)) {
         throw new Error('O servidor não confirmou o fechamento da corrida.');
       }
-      const sent = response?.data?.closeResult?.noticeSent ?? response?.closeResult?.noticeSent;
+      const sent = closeResult?.noticeSent;
+      const noticePending = closeResult?.noticePending === true;
         closeModal();
         alert(isTestCall(call)
-          ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : 'Corrida de teste concluída, mas o WhatsApp não confirmou o envio do resumo. Confira o grupo.')
-          : (sent ? 'Corrida concluída ✅ Financeiro atualizado e resumo enviado ao grupo.' : 'Corrida concluída e financeiro atualizado. O WhatsApp não confirmou o resumo; confira o grupo.'));
+          ? (sent ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado e resumo enviado ao grupo.' : noticePending ? 'Corrida de teste concluída ✅ Financeiro de teste atualizado. O resumo do WhatsApp está sendo enviado.' : 'Corrida de teste concluída ✅ Financeiro de teste atualizado. Confira o grupo se o resumo não aparecer.')
+          : (sent ? 'Corrida concluída ✅ Financeiro atualizado e resumo enviado ao grupo.' : noticePending ? 'Corrida concluída ✅ Financeiro atualizado. O resumo do WhatsApp está sendo enviado.' : 'Corrida concluída ✅ Financeiro atualizado. Confira o grupo se o resumo não aparecer.'));
       } catch (error) {
+        console.error('Falha ao concluir corrida', error);
         if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }
-        throw error;
+        alert(`Não foi possível concluir a corrida: ${error?.message || error}`);
       }
     });
     const save = document.getElementById('modalSave'); if (save) save.textContent = 'Concluir corrida';
