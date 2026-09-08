@@ -29,6 +29,9 @@ COPY tools ./tools
 COPY training ./training
 RUN node tools/apply-short-replies-fix.mjs \
   && node tools/apply-queue-progress-fix.mjs \
+  && node tools/apply-closure-reported-values-fix.mjs \
+  && node tools/test-closure-reported-values.mjs \
+  && node --check tools/operational-knowledge.mjs \
   && node --check tools/vercel-whatsapp-worker.mjs \
   && node --check tools/business-orchestration.mjs \
   && patch --batch --forward -p1 < tools/patches/wwebjs-201850.diff
