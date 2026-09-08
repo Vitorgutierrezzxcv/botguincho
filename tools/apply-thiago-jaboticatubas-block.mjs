@@ -3,11 +3,6 @@ import fs from 'node:fs';
 const file = 'tools/vercel-whatsapp-worker.mjs';
 let source = fs.readFileSync(file, 'utf8');
 
-if (source.includes("Regra operacional específica do perfil Thiago: Jaboticatubas/MG")) {
-  console.log('Bloqueio de Jaboticatubas para Thiago já aplicado.');
-  process.exit(0);
-}
-
 const oldBlock = `async function getSettings() {
   const saved = await readJson(settingsFile, {});
   const next = { ...DEFAULT_SETTINGS, ...saved };
@@ -58,10 +53,22 @@ const newBlock = `async function getSettings() {
   return next;
 }`;
 
-if (!source.includes(oldBlock)) {
-  throw new Error('Bloco getSettings esperado não foi encontrado; patch de Jaboticatubas não aplicado.');
+if (source.includes(oldBlock)) {
+  source = source.replace(oldBlock, newBlock);
 }
 
-source = source.replace(oldBlock, newBlock);
+// Correção emergencial: a checagem de área excluída não pode usar dados antigos da
+// corrida anterior para mensagens curtas como "Bora", "Ok" ou "Pode seguir".
+// Só bloqueamos por área quando a própria mensagem atual traz Origem/Destino
+// explicitamente (ou uma localização compartilhada), evitando falso "fora de rota".
+const oldGate = `    const canBeRejectedByArea = ['availability','quote','dispatch_details','incomplete_dispatch','protocol_received','authorization','formal_dispatch','scheduled_dispatch'].includes(runtimeIntent);`;
+const newGate = `    const hasExplicitAreaAddress = /\\b(origem|destino)\\b\\s*[:=\\-]?/i.test(String(readableText || '')) || Boolean(incomingLocation);\n    const canBeRejectedByArea = hasExplicitAreaAddress && ['availability','quote','dispatch_details','incomplete_dispatch','protocol_received','authorization','formal_dispatch','scheduled_dispatch'].includes(runtimeIntent);`;
+
+if (source.includes(oldGate)) {
+  source = source.replace(oldGate, newGate);
+} else if (!source.includes('const hasExplicitAreaAddress =')) {
+  throw new Error('Gate de area excluida nao encontrado; patch de seguranca nao aplicado.');
+}
+
 fs.writeFileSync(file, source);
-console.log('Bloqueio de Jaboticatubas para Thiago aplicado com sucesso.');
+console.log('Bloqueio de Jaboticatubas aplicado e falso fora de rota corrigido.');
