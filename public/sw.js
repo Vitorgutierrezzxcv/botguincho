@@ -1,4 +1,4 @@
-const CACHE='acionador-pwa-v26';
+const CACHE='acionador-pwa-v27';
 const ASSETS=['/','/index.html','/app.css','/app.js','/owner-dashboard.css','/owner-dashboard.js','/quote-actions-v1.js','/test-mode-visibility.js','/operation-command-center.js','/tratto-ui.css','/branding.js'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).catch(()=>{}))});
 self.addEventListener('activate',e=>{e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))]))});
@@ -12,13 +12,7 @@ async function composeOwnerDashboard(request){
     if(!baseResponse.ok)throw new Error('owner dashboard unavailable');
     const base=await baseResponse.text();
     const actions=actionsResponse.ok?await actionsResponse.text():'';
-    const headers=new Headers(baseResponse.headers);
-    headers.set('content-type','application/javascript; charset=utf-8');
-    headers.set('cache-control','no-store, max-age=0, must-revalidate');
-    const response=new Response(`${base}\n;\n${actions}`,{status:200,headers});
-    const copy=response.clone();
-    caches.open(CACHE).then(c=>c.put(request,copy)).catch(()=>{});
-    return response;
+    return new Response(`${base}\n;\n${actions}`,{status:200,headers:{'content-type':'application/javascript; charset=utf-8','cache-control':'no-store, max-age=0, must-revalidate'}});
   }catch(error){
     const [baseCached,actionsCached]=await Promise.all([caches.match('/owner-dashboard.js'),caches.match('/quote-actions-v1.js')]);
     if(baseCached){
