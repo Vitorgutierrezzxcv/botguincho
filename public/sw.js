@@ -1,4 +1,4 @@
-const CACHE='acionador-pwa-v24';
+const CACHE='acionador-pwa-v25';
 const ASSETS=['/','/index.html','/app.css','/app.js','/owner-dashboard.css','/owner-dashboard.js','/test-mode-visibility.js','/operation-command-center.js','/tratto-ui.css','/branding.js'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).catch(()=>{}))});
 self.addEventListener('activate',e=>{e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))]))});
