@@ -1110,6 +1110,24 @@ async function closeCallFromOwner(state, body = {}) {
   if (call.ownerClosedAt) {
     return { call, noticeSent: false, driverPay: driverPayForCall(call), alreadyClosed: true };
   }
+  // Uma correção manual significa que o dono confirmou que esta entrada realmente virou corrida.
+  // Fazemos a conversão somente no clique final de fechamento para não deixar a cotação como ganha
+  // caso o usuário apenas abra o modal e desista.
+  const manualCompletion = body.manualCompletion === true;
+  const acceptedBeforeClose = call.authorizedAt || isConfirmedCall(call) || ['autorizado','a_caminho','em_atendimento','aguardando_fechamento'].includes(String(call.status || '')) || call.cancellationChargeRequired === true;
+  if (manualCompletion && !acceptedBeforeClose && call.status !== 'cancelado' && call.quoteOutcome !== 'lost') {
+    const manualAt = new Date().toISOString();
+    call = {
+      ...call,
+      status: 'autorizado',
+      authorizedAt: call.authorizedAt || manualAt,
+      quoteOutcome: 'won',
+      quoteTracked: true,
+      ownerCloseRequired: true,
+      updatedAt: manualAt,
+    };
+    state.calls[index] = call;
+  }
   // Corridas do grupo de testes também podem ser fechadas pelo dono para validar o fluxo completo.
   // A proteção de envio ao WhatsApp continua abaixo com !isTestCall(next).
   if (!(call.authorizedAt || isConfirmedCall(call) || ['autorizado','a_caminho','em_atendimento','aguardando_fechamento'].includes(String(call.status || '')) || call.cancellationChargeRequired === true)) throw new Error('call_not_authorized');
@@ -1155,6 +1173,9 @@ async function closeCallFromOwner(state, body = {}) {
     financeReviewResolvedAt: now,
     testMode: Boolean(call.testRunId),
     ownerClosedBy: String(body.ownerName || final.ownerName || 'Thiago').trim().slice(0, 120) || 'Thiago',
+    manualCompletion: manualCompletion || call.manualCompletion === true,
+    manualCompletionAt: manualCompletion ? now : (call.manualCompletionAt || null),
+    manualCompletionBy: manualCompletion ? (String(body.ownerName || final.ownerName || 'Thiago').trim().slice(0, 120) || 'Thiago') : (call.manualCompletionBy || null),
     ownerClosingNotes: String(final.notes || '').trim().slice(0, 1200),
     completedAt: call.status === 'cancelado' ? (call.completedAt || null) : now,
     billableKm: Number(billableKm), totalKm: Number(billableKm),
@@ -1194,7 +1215,7 @@ async function closeCallFromOwner(state, body = {}) {
   // (liberar fila e enviar WhatsApp) não podem bloquear a resposta do painel.
   // Em produção o whatsapp-web.js pode ficar pendurado por vários segundos e fazia
   // o botão "Concluir corrida" parecer travado mesmo com os dados já salvos.
-  const allowCloseNotice = !isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || '');
+  const allowCloseNotice = body.suppressNotice !== true && (!isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || ''));
   void (async () => {
     try {
       await Promise.race([
@@ -1222,7 +1243,7 @@ async function closeCallFromOwner(state, body = {}) {
     }
   })();
 
-  return { call: next, noticeSent: null, noticePending: true, driverPay: driverPayForCall(next) };
+  return { call: next, noticeSent: null, noticePending: allowCloseNotice, driverPay: driverPayForCall(next) };
 }
 
 async function deleteCallFromOwner(state, body = {}) {

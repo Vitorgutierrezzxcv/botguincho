@@ -263,7 +263,7 @@
     set('callsQuoteOpen', open.length); set('callsQuoteWon', won.length); set('callsQuoteLost', lost.length); set('callsConversion', pct(conv));
     const target = document.getElementById('ownerQuoteFullList'); if (!target) return;
     const items = sortRecent(quotes);
-    target.innerHTML = items.length ? `<table class="table owner-table"><thead><tr><th>Seguradora</th><th>Rota / última mensagem</th><th>Resultado</th><th>Valor</th><th>Origem</th><th></th></tr></thead><tbody>${items.map((call) => `<tr><td><b>${esc(call.insurer || call.client || 'Seguradora')}</b><br><span class="muted">${esc(call.vehicle || call.plate || 'Veículo')}</span></td><td><span>${esc(call.origin || '—')} → ${esc(call.destination || '—')}</span>${call.lastOperationalText ? `<br><span class="owner-message-inline">“${esc(call.lastOperationalText).slice(0, 130)}”</span>` : ''}</td><td>${outcomeTag(call)}</td><td>${n(call.value) > 0 ? money(call.value) : '—'}</td><td>${ownerTag(sourceText(call), call.source === 'whatsapp' ? 'source' : '')}</td><td><button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Nenhuma cotação encontrada.</div>';
+    target.innerHTML = items.length ? `<table class="table owner-table"><thead><tr><th>Seguradora</th><th>Rota / última mensagem</th><th>Resultado</th><th>Valor</th><th>Origem</th><th></th></tr></thead><tbody>${items.map((call) => `<tr><td><b>${esc(call.insurer || call.client || 'Seguradora')}</b><br><span class="muted">${esc(call.vehicle || call.plate || 'Veículo')}</span></td><td><span>${esc(call.origin || '—')} → ${esc(call.destination || '—')}</span>${call.lastOperationalText ? `<br><span class="owner-message-inline">“${esc(call.lastOperationalText).slice(0, 130)}”</span>` : ''}</td><td>${ownerFinalized(call) ? ownerTag('Feita','won') : outcomeTag(call)}</td><td>${n(call.value) > 0 ? money(call.value) : '—'}</td><td>${ownerTag(sourceText(call), call.source === 'whatsapp' ? 'source' : '')}</td><td>${!ownerFinalized(call) && quoteOutcome(call) !== 'lost' && call.status !== 'cancelado' ? `<button class="btn small" onclick="ownerCloseCall('${esc(call.id)}',{manualCorrection:true})">Marcar como feita</button>` : ''}<button class="btn ghost small" onclick="ownerEditCall('${esc(call.id)}')">Editar</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Nenhuma cotação encontrada.</div>';
   }
 
   function ensureFinanceOverview() {
@@ -385,25 +385,32 @@
     alert('Corrida removida do painel. O histórico interno foi preservado.');
   };
 
-  window.ownerCloseCall = (id) => {
+  window.ownerCloseCall = (id, options = {}) => {
     const call = (mgmt.calls || []).find((x) => x.id === id); if (!call) return;
     const testClosure = call?.testMode === true;
-    openModal('Conferir e fechar corrida', `<div class="notice warn">Confira os dados antes de fechar. Depois deste botão o valor vira definitivo no Financeiro, entra no repasse do motorista e o resumo é enviado ao grupo do WhatsApp.</div><div class="form-grid section"><div class="field"><label>Protocolo</label><input value="${esc(call.protocol||'Aguardando')}" disabled></div><div class="field"><label>Motorista</label><input value="${esc(call.driverName||driverName())}" disabled></div><div class="field"><label>KM cobrados</label><input name="billableKm" type="number" step="0.1" value="${n(call.billableKm??call.totalKm??call.estimatedTotalKm)||''}"></div><div class="field"><label>Valor final</label><input name="value" type="number" step="0.01" value="${n(call.value||call.calculatedValue)||''}"></div><div class="field"><label>Horas trabalhadas</label><input name="workedTimeChargedHours" type="number" step="1" min="0" value="${n(call.workedTimeChargedHours)||0}"></div><div class="field"><label>Valor hora trabalhada</label><input name="workedTimeAmount" type="number" step="0.01" min="0" value="${n(call.workedTimeAmount)||0}"></div><div class="field"><label>KM estrada de terra</label><input name="dirtRoadBillableKm" type="number" step="0.1" min="0" value="${n(call.dirtRoadBillableKm)||0}"></div><div class="field"><label>Pedágio</label><input name="toll" type="number" step="0.01" min="0" value="${n(call.finalTollAmount)||0}"></div><div class="field"><label>Outros adicionais</label><input name="otherExtras" type="number" step="0.01" min="0" value="${n(call.finalOtherExtras)||0}"></div><div class="field"><label>Fechado por</label><input name="ownerName" value="Thiago"></div></div><div class="field section"><label>Observações do fechamento</label><textarea name="notes">${esc(call.ownerClosingNotes||'')}</textarea></div>`, async () => {
+    const manualCorrection = options?.manualCorrection === true;
+    const closeTitle = manualCorrection ? 'Marcar corrida como feita' : 'Conferir e fechar corrida';
+    const closeNotice = manualCorrection
+      ? 'Confira os dados e confirme a realização da corrida. O fechamento entra no Financeiro e no repasse do motorista. Como esta é uma correção manual, nenhuma mensagem será enviada ao grupo do WhatsApp.'
+      : 'Confira os dados antes de fechar. Depois deste botão o valor vira definitivo no Financeiro, entra no repasse do motorista e o resumo é enviado ao grupo do WhatsApp.';
+    openModal(closeTitle, `<div class="notice warn">${closeNotice}</div><div class="form-grid section"><div class="field"><label>Protocolo</label><input value="${esc(call.protocol||'Aguardando')}" disabled></div><div class="field"><label>Motorista</label><input value="${esc(call.driverName||driverName())}" disabled></div><div class="field"><label>KM cobrados</label><input name="billableKm" type="number" step="0.1" value="${n(call.billableKm??call.totalKm??call.estimatedTotalKm)||''}"></div><div class="field"><label>Valor final</label><input name="value" type="number" step="0.01" value="${n(call.value||call.calculatedValue)||''}"></div><div class="field"><label>Horas trabalhadas</label><input name="workedTimeChargedHours" type="number" step="1" min="0" value="${n(call.workedTimeChargedHours)||0}"></div><div class="field"><label>Valor hora trabalhada</label><input name="workedTimeAmount" type="number" step="0.01" min="0" value="${n(call.workedTimeAmount)||0}"></div><div class="field"><label>KM estrada de terra</label><input name="dirtRoadBillableKm" type="number" step="0.1" min="0" value="${n(call.dirtRoadBillableKm)||0}"></div><div class="field"><label>Pedágio</label><input name="toll" type="number" step="0.01" min="0" value="${n(call.finalTollAmount)||0}"></div><div class="field"><label>Outros adicionais</label><input name="otherExtras" type="number" step="0.01" min="0" value="${n(call.finalOtherExtras)||0}"></div><div class="field"><label>Fechado por</label><input name="ownerName" value="Thiago"></div></div><div class="field section"><label>Observações do fechamento</label><textarea name="notes">${esc(call.ownerClosingNotes||'')}</textarea></div>`, async () => {
       const data = Object.fromEntries(new FormData(document.getElementById('modalForm')).entries());
       for (const key of ['billableKm','value','workedTimeChargedHours','workedTimeAmount','dirtRoadBillableKm','toll','otherExtras']) data[key] = data[key] === '' ? null : Number(data[key]);
       const saveButton = document.getElementById('modalSave');
       if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Concluindo...'; }
       try {
-        const d = await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'close_call', callId: id, ownerName: data.ownerName || 'Thiago', final: data }) });
+        const d = await api('/api/worker/management', { method: 'POST', body: JSON.stringify({ action: 'close_call', callId: id, ownerName: data.ownerName || 'Thiago', final: data, manualCompletion: manualCorrection, suppressNotice: manualCorrection }) });
         const sent = d.data?.closeResult?.noticeSent;
         const pending = d.data?.closeResult?.noticePending === true;
         await refreshOwner();
         closeModal();
-        alert(pending
-          ? 'Corrida concluída ✅ Financeiro e repasse atualizados. O resumo do WhatsApp será enviado em segundo plano.'
-          : testClosure
-            ? (sent ? 'Corrida de teste concluída ✅ Resumo enviado ao grupo.' : 'Corrida de teste concluída ✅')
-            : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅'));
+        alert(manualCorrection
+          ? 'Corrida marcada como feita ✅ Financeiro e repasse atualizados. Nenhuma mensagem foi enviada ao WhatsApp.'
+          : pending
+            ? 'Corrida concluída ✅ Financeiro e repasse atualizados. O resumo do WhatsApp será enviado em segundo plano.'
+            : testClosure
+              ? (sent ? 'Corrida de teste concluída ✅ Resumo enviado ao grupo.' : 'Corrida de teste concluída ✅')
+              : (sent ? 'Corrida concluída ✅ Resumo enviado ao grupo.' : 'Corrida concluída ✅'));
       } catch (error) {
         if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Concluir corrida'; }
         throw error;
