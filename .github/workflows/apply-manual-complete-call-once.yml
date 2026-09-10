@@ -1,0 +1,39 @@
+name: Apply manual call completion once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-manual-complete-call.py'
+      - '.github/workflows/apply-manual-complete-call-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply patch
+        run: python tools/apply-manual-complete-call.py
+      - name: Validate syntax
+        run: node --check public/owner-dashboard.js && node --check tools/vercel-whatsapp-worker.mjs
+      - name: Commit applied feature
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/owner-dashboard.js tools/vercel-whatsapp-worker.mjs
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Permite marcar corrida como feita manualmente'
+          git push origin main
