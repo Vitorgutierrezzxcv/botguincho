@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'tools/apply-post-acceptance-quiet.py'
+      - 'tools/apply-runtime-policy-marker.py'
       - 'tools/test-post-acceptance-quiet-policy.mjs'
       - '.github/workflows/apply-post-acceptance-quiet-once.yml'
   workflow_dispatch:
@@ -29,7 +30,9 @@ jobs:
           python-version: '3.12'
 
       - name: Apply patch
-        run: python tools/apply-post-acceptance-quiet.py
+        run: |
+          python tools/apply-post-acceptance-quiet.py
+          python tools/apply-runtime-policy-marker.py
 
       - name: Validate runtime and regressions
         run: |
@@ -39,6 +42,7 @@ jobs:
           node tools/test-post-acceptance-quiet-policy.mjs
           node tools/test-close-summary-and-protocol-policy.mjs
           node tools/test-runtime-regressions.mjs
+          grep -q 'post-acceptance-quiet-v1' tools/vercel-whatsapp-worker.mjs
 
       - name: Commit runtime fix
         run: |
@@ -49,12 +53,12 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No runtime changes to commit'
           else
-            git commit -m 'Evita repetição de KM valor e ETA após aceite'
+            git commit -m 'Marca política silenciosa pós aceite no runtime'
             git push origin main
           fi
           echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      - name: Reload production worker safely
+      - name: Request safe runtime refresh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -70,36 +74,28 @@ jobs:
           import json
           d=json.load(open('/tmp/reload.json'))
           assert d.get('ok') is True, d
-          assert d.get('whatsappStatus') == 'pronto', d
-          assert d.get('workerProcessCount') == 1, d
-          assert d.get('sessionPreserved') is True, d
-          print('RELOAD_OK')
+          if d.get('skipped') is True and d.get('infrastructure') == 'hostinger-vps':
+              print('EXTERNAL_VPS_REFRESH_REQUIRED')
+          else:
+              assert d.get('whatsappStatus') == 'pronto', d
+              assert d.get('workerProcessCount') == 1, d
+              assert d.get('sessionPreserved') is True, d
+              print('RELOAD_OK')
           PY
 
-      - name: Verify production health
+      - name: Verify current production health
         run: |
           set -euo pipefail
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 15 "$BASE/api/worker/health?companyId=$COMPANY" -o /tmp/health.json && \
-               curl -fsS --max-time 15 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json; then
-              if python3 - <<'PY'
-          import json,sys
+          curl -fsS --max-time 15 "$BASE/api/worker/health?companyId=$COMPANY" -o /tmp/health.json
+          curl -fsS --max-time 15 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json
+          python3 - <<'PY'
+          import json
           h=json.load(open('/tmp/health.json'))
           s=json.load(open('/tmp/status.json'))
           checks=h.get('checks',{})
-          ok=(checks.get('whatsapp',{}).get('ok') is True and
-              checks.get('routes',{}).get('ok') is True and
-              s.get('whatsapp',{}).get('status') == 'pronto' and
-              not s.get('whatsapp',{}).get('qrDataUrl'))
-          sys.exit(0 if ok else 1)
+          assert checks.get('whatsapp',{}).get('ok') is True, checks.get('whatsapp')
+          assert checks.get('routes',{}).get('ok') is True, checks.get('routes')
+          assert s.get('whatsapp',{}).get('status') == 'pronto', s.get('whatsapp')
+          assert not s.get('whatsapp',{}).get('qrDataUrl'), s.get('whatsapp')
+          print('PRODUCTION_HEALTH_OK')
           PY
-              then
-                echo 'PRODUCTION_HEALTH_OK'
-                exit 0
-              fi
-            fi
-            sleep 3
-          done
-          cat /tmp/health.json 2>/dev/null || true
-          cat /tmp/status.json 2>/dev/null || true
-          exit 1
