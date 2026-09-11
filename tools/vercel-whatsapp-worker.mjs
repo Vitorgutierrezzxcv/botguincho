@@ -120,6 +120,7 @@ REGRAS PRIORITÁRIAS DO BOT GUINCHO:
 - É proibido responder "Disponível", "Confirmado" ou equivalentes sem uma pergunta de disponibilidade ou uma autorização expressa vinculada a uma corrida registrada.
 - Uma ficha completa, um protocolo, uma cotação ou a frase "confirmado" da própria central não equivalem, sozinhos, a "pode seguir".
 - Consulta, cotação, dados recebidos, aguardando autorização, autorização, saída, chegada, ocorrência, evidência e fechamento são estados diferentes. Nunca reinicie o fluxo por causa de uma atualização.
+- Depois que uma corrida estiver autorizada, nunca reapresente valor, quilometragem ou previsão sem pergunta explícita. Protocolo e fotos/evidências são apenas anexos da corrida existente.
 - Acionamentos, disponibilidade, localização, ETA, cancelamento, hora trabalhada, estrada de terra e fechamento são tratados pelo código antes de chegar até você. Não tente refazer esses fluxos.
 - Só peça dados quando o código indicar que faltam origem/localização, destino ou veículo. Não invente outras perguntas de triagem.
 - Não faça listas ou checklists.
@@ -166,6 +167,33 @@ const DEFAULT_TEST_COMMERCIAL_RULES = {
 
 function isFlowActiveCall(call = {}) {
   return FLOW_ACTIVE_STATUSES.has(String(call?.status || '').toLowerCase());
+}
+
+
+function isAcceptedOperationalCall(call = {}) {
+  return ['autorizado', 'a_caminho', 'em_atendimento', 'aguardando_fechamento'].includes(String(call?.status || '').toLowerCase());
+}
+
+function looksLikeDistinctNewServiceRequest(text = '', activeCall = null) {
+  const value = normalizeForIntent(text);
+  if (/\b(?:novo|nova|outro|outra)\s+(?:atendimento|corrida|chamado|acionamento|cotacao|solicitacao)\b/.test(value)) return true;
+
+  const facts = extractOperationalFacts(text);
+  const hasCompleteRequest = Boolean(facts?.origin && facts?.destination && (facts?.vehicle || facts?.vehicleType || facts?.plate));
+  if (!hasCompleteRequest || !activeCall) return false;
+
+  const compact = (item = '') => normalizeForIntent(String(item || '')).replace(/[^a-z0-9]+/g, ' ').trim();
+  const token = (item = '') => String(item || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  const incomingProtocol = token(facts.protocol);
+  const activeProtocol = token(activeCall.protocol);
+  const incomingPlate = token(facts.plate);
+  const activePlate = token(activeCall.plate);
+
+  if (incomingProtocol && activeProtocol && incomingProtocol !== activeProtocol) return true;
+  if (incomingPlate && activePlate && incomingPlate !== activePlate) return true;
+  if (activeCall.origin && compact(facts.origin) !== compact(activeCall.origin)) return true;
+  if (activeCall.destination && compact(facts.destination) !== compact(activeCall.destination)) return true;
+  return false;
 }
 
 function commercialRulesForGroup(knowledge = null, groupName = '', association = '') {
@@ -3126,6 +3154,17 @@ async function replyAndRemember(msg, groupName, incomingText, reply, meta = {}) 
   logEvent('reply', `${groupName}: ${reply}`, { groupId: msg.from, ...meta });
 }
 
+
+async function persistCallReplyMarker(callId, patch = {}) {
+  if (!callId || !patch || typeof patch !== 'object') return null;
+  const state = await getManagement();
+  const call = (state.calls || []).find((item) => item.id === callId && !item?.deletedAt);
+  if (!call) return null;
+  Object.assign(call, patch, { updatedAt: new Date().toISOString() });
+  await saveManagement(state);
+  return call;
+}
+
 function formatEtaReply(eta, withConfirmation = false) {
   const minutes = publicEtaMinutes(eta?.rawMinutes ?? eta?.minutes);
   if (!minutes) return withConfirmation ? 'Confirmado ✅\nGuincho em deslocamento.' : null;
@@ -4182,57 +4221,60 @@ async function handleProtocolRuntime(msg, groupName, readableText, context) {
     });
     return;
   }
-  // Se o protocolo corresponde a uma oportunidade ainda nao autorizada, atualiza
-  // aquela mesma cotacao e devolve a previa completa. Nunca transforma protocolo em autorizacao.
-  if (call && ['cotacao','aguardando_dados','aguardando_aprovacao'].includes(call.status)) {
-    await handleQuoteRuntime(msg, groupName, readableText, null, {
-      ...context,
-      recentCall: call,
-      intent: 'quote',
-    });
-    return;
-  }
   const status = call?.status || 'aguardando_aprovacao';
   const flowActive = isFlowActiveCall(call);
   const nextOrigin = context.facts.origin || call?.origin || null;
   const nextOriginCoordinates = context.facts.origin ? null : (call?.originCoordinates || null);
   const nextDestination = context.facts.destination || call?.destination || null;
-  // PREVISAO_NO_PROTOCOLO: calcula a previsao sempre que houver origem, e nao so
-  // quando ja existe atendimento em andamento. Ficha nova tambem merece previsao.
-  const etaAnterior = call?.etaMinutes ? { minutes: call.etaMinutes, distanceKm: call.distanceKm } : null;
-  const nextEta = nextOrigin
-    ? (await computeEtaWithRetry({ targetAddress: nextOrigin, targetCoordinates: nextOriginCoordinates }).catch(() => null)) || etaAnterior
-    : etaAnterior;
-  const nextRouteSnapshot = flowActive && nextOrigin && nextDestination
-    ? await computeFullServiceRoute({
-        originAddress: nextOrigin, originCoordinates: nextOriginCoordinates,
-        destinationAddress: nextDestination, baseAddressOverride: context.billingProfile?.baseAddress || '',
-      }).catch(() => null)
-    : null;
+
+  // PROTOCOLO_E_SOMENTE_VINCULO: uma corrida já conhecida conserva a cotação,
+  // a rota e a previsão existentes. Receber/anexar protocolo não é um novo pedido
+  // de preço e não autoriza reexibir ETA, km ou valor.
   const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText,
     originAddress: nextOrigin,
     originCoordinates: nextOriginCoordinates,
     destinationAddress: nextDestination,
-    eta: nextEta,
-    routeSnapshotOverride: nextRouteSnapshot,
+    eta: null,
     status, facts: context.facts, existingCallId: call?.id || null,
     evidenceChecklist: buildEvidenceChecklist(groupName, readableText),
     eventType: call ? 'protocolo_atualizado' : 'protocolo_recebido',
     phase: call?.operationalPhase || 'aguardando_autorizacao',
   });
-  const km = formatKm(saved?.billableKm ?? saved?.routeBreakdown?.totalKm ?? saved?.estimatedTotalKm);
-  const amount = formatCurrency(saved?.calculatedValue);
-  const calculation = flowActive && (km || amount)
-    ? `\n${km ? `Quilometragem total: ${km} km.` : ''}${km && amount ? ' ' : ''}${amount ? `Valor estimado: ${amount}.` : ''}`
-    : '';
-  const reply = flowActive
-    ? `Protocolo vinculado ao atendimento em andamento ✅${calculation}`
-    : call?.status === 'concluido'
-      ? 'Protocolo vinculado ao atendimento concluído ✅'
-      : `Protocolo recebido e registrado ✅${nextEta?.minutes ? ` Previsão até a origem: ${nextEta.minutes} min.` : ''} Aguardando autorização expressa para seguir.`;
-  if (saved && flowActive && saved.protocol) await notifyDriverOfConfirmedCall(saved, { force: saved.protocol !== call?.protocol });
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: context.intent, authorizationRequired: !call || (!flowActive && call?.status !== 'concluido'), callId: saved?.id || call?.id || null, billableKm: saved?.billableKm ?? null, calculatedValue: saved?.calculatedValue ?? null });
+
+  if (saved && flowActive && saved.protocol) {
+    await notifyDriverOfConfirmedCall(saved, { force: saved.protocol !== call?.protocol });
+  }
+
+  const protocolValue = String(protocolIdentity.protocol || saved?.protocol || '').trim();
+  const protocolFingerprint = normalizeForIntent(protocolValue || readableText);
+  const alreadyAcknowledged = Boolean(
+    call?.protocolAckFingerprint
+    && protocolFingerprint
+    && call.protocolAckFingerprint === protocolFingerprint
+  );
+  if (alreadyAcknowledged) {
+    logEvent('dedupe', `${groupName}: protocolo já confirmado; ACK repetido suprimido.`, {
+      groupId: msg.from, callId: saved?.id || call?.id || null, protocol: protocolValue || null,
+    });
+    return;
+  }
+
+  const reply = call
+    ? `${protocolValue ? `Protocolo ${protocolValue} ` : 'Protocolo '}recebido e vinculado ao atendimento ✅`
+    : `${protocolValue ? `Protocolo ${protocolValue} ` : 'Protocolo '}recebido e registrado ✅`;
+  await replyAndRemember(msg, groupName, readableText, reply, {
+    intent: context.intent,
+    authorizationRequired: !call || (!flowActive && call?.status !== 'concluido'),
+    callId: saved?.id || call?.id || null,
+    protocolOnlyAck: true,
+  });
+  if (saved?.id) {
+    await persistCallReplyMarker(saved.id, {
+      protocolAckFingerprint: protocolFingerprint,
+      protocolAckSentAt: new Date().toISOString(),
+    });
+  }
 }
 
 async function handleAuthorizationRuntime(msg, groupName, readableText, incomingLocation, context) {
@@ -4420,21 +4462,38 @@ async function handleDestinationArrivalRuntime(msg, groupName, readableText, con
 
 async function handleEvidenceRuntime(msg, groupName, readableText, context, hasMedia = false) {
   const call = context.recentCall;
+  const alreadyAcknowledged = Boolean(call?.evidenceAckSentAt);
   const baseChecklist = Array.isArray(call?.evidenceChecklist) && call.evidenceChecklist.length
     ? call.evidenceChecklist
     : buildEvidenceChecklist(groupName, readableText);
   const checklist = markEvidenceChecklist(baseChecklist, readableText, hasMedia);
-  await recordDispatchInManagement({
+  const saved = await recordDispatchInManagement({
     groupId: msg.from, groupName, text: readableText, originAddress: call?.origin || null,
     destinationAddress: call?.destination || null, eta: null, status: call?.status || 'em_atendimento', facts: context.facts,
     existingCallId: call?.id || null, evidenceChecklist: checklist,
     eventType: 'evidencia_recebida', phase: call?.status === 'concluido' ? 'concluido' : 'evidencias',
   });
-  const pending = checklist.filter((item) => item?.done !== true).map((item) => item.label);
-  const reply = pending.length
-    ? `Evidência registrada ✅ Ainda pendente: ${pending.join('; ')}.`
-    : 'Evidências obrigatórias concluídas ✅';
-  await replyAndRemember(msg, groupName, readableText, reply, { intent: 'evidence', evidenceComplete: pending.length === 0, pendingEvidence: pending });
+
+  // Todas as mídias continuam sendo anexadas ao atendimento. Só o texto de
+  // confirmação é idempotente para não responder a cada uma das quatro fotos.
+  if (alreadyAcknowledged) {
+    logEvent('dedupe', `${groupName}: evidência adicional registrada sem repetir confirmação.`, {
+      groupId: msg.from, callId: saved?.id || call?.id || null, hasMedia,
+    });
+    return;
+  }
+
+  const reply = hasMedia
+    ? 'Fotos recebidas e vinculadas ao atendimento ✅'
+    : 'Evidências recebidas e vinculadas ao atendimento ✅';
+  await replyAndRemember(msg, groupName, readableText, reply, {
+    intent: 'evidence', callId: saved?.id || call?.id || null, evidenceOnlyAck: true,
+  });
+  if (saved?.id) {
+    await persistCallReplyMarker(saved.id, {
+      evidenceAckSentAt: new Date().toISOString(),
+    });
+  }
 }
 
 async function handleAddressUpdateRuntime(msg, groupName, readableText, context) {
@@ -4792,6 +4851,39 @@ async function processIncomingMessage(msg) {
 
     const operationalContext = await currentOperationalContext(msg.from, groupName, readableText);
     const runtimeIntent = operationalContext.intent;
+
+
+    const acceptedContextCall = isAcceptedOperationalCall(operationalContext.recentCall)
+      ? operationalContext.recentCall
+      : null;
+
+    // FOTO_NAO_REABRE_COTACAO: fotos chegam em mensagens separadas e podem ter
+    // legenda/quoted message suficiente para confundir o classificador. Depois do
+    // aceite elas são evidência, salvo quando a legenda é uma pergunta operacional
+    // explícita que precisa de resposta.
+    const mediaQuestionIntent = new Set([
+      'eta', 'value_summary', 'closure', 'cancellation', 'address_update',
+      'dirt_road_start', 'dirt_road_end', 'arrival_without_tow',
+    ]);
+    if (imageDataUrl && acceptedContextCall && !mediaQuestionIntent.has(runtimeIntent)) {
+      await handleEvidenceRuntime(msg, groupName, readableText, operationalContext, true);
+      return;
+    }
+
+    // POS_ACEITE_SEM_REPETICAO: após autorização, atualizações da mesma corrida
+    // não podem voltar aos handlers que anunciam cotação, ETA, km e valor. Só
+    // liberamos esse caminho quando o texto identifica claramente uma nova corrida.
+    const postAcceptanceNoiseIntents = new Set([
+      'quote', 'dispatch', 'dispatch_details', 'incomplete_dispatch', 'formal_dispatch',
+    ]);
+    if (acceptedContextCall
+      && postAcceptanceNoiseIntents.has(runtimeIntent)
+      && !looksLikeDistinctNewServiceRequest(readableText, acceptedContextCall)) {
+      logEvent('ignored', `${groupName}: atualização pós-aceite não reabriu cotação nem repetiu ETA/KM/valor.`, {
+        groupId: msg.from, callId: acceptedContextCall.id, intent: runtimeIntent,
+      });
+      return;
+    }
 
     // Comunicados internos nunca devem receber resposta automática, inclusive
     // fora do expediente. Eles continuam registrados no histórico de aprendizado.
