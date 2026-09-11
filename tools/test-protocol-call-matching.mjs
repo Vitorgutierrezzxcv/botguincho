@@ -68,4 +68,44 @@ assert.equal(
   'mesmo numero de protocolo ainda pode atualizar registro concluido',
 );
 
+const socorrePending = {
+  id: 'socorre-quote',
+  sourceGroupId: groupId,
+  status: 'cotacao',
+  groupName: 'AMERICA GUINCHO/ SOCORRE ASSISTÊNCIA',
+  vehicle: 'CORSA SED.WIND 1.0/MILLENIUM/CLASSIC VHC',
+  origin: 'Rua A, 10, Betim - MG',
+  destination: 'Rua B, 20, Igarape - MG',
+  updatedAt: '2026-09-09T19:50:00.000Z',
+};
+const socorreProtocol = {
+  protocol: '12436620260909145319',
+  vehicle: 'CORSA SED.WIND 1.0/MILLENIUM/CLASSIC VHC',
+  origin: 'Rua A, 10, Betim - MG',
+  destination: 'Rua B, 20, Igarape - MG',
+};
+const promotedSocorre = selectProtocolTargetCall({
+  calls: [socorrePending], groupId, identity: socorreProtocol, fallbackCall: socorrePending,
+});
+assert.equal(promotedSocorre?.id, 'socorre-quote');
+assert.equal(promotedSocorre?.status, 'autorizado', 'protocolo formal da Socorre deve promover cotacao correspondente');
+assert.equal(promotedSocorre?.protocolAutoAuthorization, true);
+assert.equal(promotedSocorre?.operationalPhase, 'autorizado_por_protocolo');
+
+const genericPending = {
+  ...socorrePending,
+  id: 'generic-quote',
+  groupName: 'AMERICA GUINCHO X OUTRA ASSISTENCIA',
+};
+const genericMatch = selectProtocolTargetCall({
+  calls: [genericPending], groupId, identity: socorreProtocol, fallbackCall: genericPending,
+});
+assert.equal(genericMatch?.status, 'cotacao', 'outras assistencias continuam exigindo autorizacao expressa');
+assert.equal(genericMatch?.protocolAutoAuthorization, undefined);
+
+const socorreSparseProtocol = selectProtocolTargetCall({
+  calls: [socorrePending], groupId, identity: { protocol: '12436620260909145319' }, fallbackCall: socorrePending,
+});
+assert.equal(socorreSparseProtocol?.status, 'cotacao', 'protocolo solto da Socorre nao pode autorizar sem origem e destino');
+
 console.log('protocol-call-matching regression: ok');
