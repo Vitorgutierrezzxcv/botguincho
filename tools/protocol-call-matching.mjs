@@ -79,6 +79,41 @@ export function protocolIdentityMatchesCall(call = {}, identity = {}) {
   return false;
 }
 
+function shouldAuthorizeSocorreProtocol(call = {}, identity = {}) {
+  const status = norm(call.status);
+  const pending = new Set(['cotacao', 'aguardando_aprovacao', 'aguardando_dados']);
+  if (!pending.has(status)) return false;
+
+  const groupContext = norm([
+    call.groupName,
+    call.insurerName,
+    call.insurer,
+    call.client,
+    call.association,
+  ].filter(Boolean).join(' '));
+  if (!/\bsocorre\b/.test(groupContext)) return false;
+
+  // Na Socorre o protocolo formal chega depois do aceite comercial. Só promove
+  // quando ele está suficientemente completo para provar que pertence à mesma
+  // cotação: número de protocolo + origem + destino. Isso evita autorizar uma
+  // mensagem solta ou um protocolo de outra corrida no mesmo grupo.
+  return Boolean(
+    norm(identity.protocol)
+    && norm(identity.origin)
+    && norm(identity.destination)
+  );
+}
+
+function withProtocolAuthorization(call = {}, identity = {}) {
+  if (!shouldAuthorizeSocorreProtocol(call, identity)) return call;
+  return {
+    ...call,
+    status: 'autorizado',
+    operationalPhase: 'autorizado_por_protocolo',
+    protocolAutoAuthorization: true,
+  };
+}
+
 export function selectProtocolTargetCall({ calls = [], groupId = '', identity = {}, fallbackCall = null } = {}) {
   if (!protocolHasStrongIdentity(identity)) return fallbackCall || null;
 
@@ -95,5 +130,6 @@ export function selectProtocolTargetCall({ calls = [], groupId = '', identity = 
     })
     .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
 
-  return candidates.find((call) => protocolIdentityMatchesCall(call, identity)) || null;
+  const matched = candidates.find((call) => protocolIdentityMatchesCall(call, identity)) || null;
+  return matched ? withProtocolAuthorization(matched, identity) : null;
 }
