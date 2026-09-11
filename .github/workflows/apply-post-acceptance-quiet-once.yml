@@ -1,0 +1,105 @@
+name: Apply post acceptance quiet policy once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-post-acceptance-quiet.py'
+      - 'tools/test-post-acceptance-quiet-policy.mjs'
+      - '.github/workflows/apply-post-acceptance-quiet-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      BASE: https://botguincho.vercel.app
+      COMPANY: cliente-teste
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply patch
+        run: python tools/apply-post-acceptance-quiet.py
+
+      - name: Validate runtime and regressions
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/operational-knowledge.mjs
+          node tools/test-post-acceptance-quiet-policy.mjs
+          node tools/test-close-summary-and-protocol-policy.mjs
+          node tools/test-runtime-regressions.mjs
+
+      - name: Commit runtime fix
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs
+          if git diff --cached --quiet; then
+            echo 'No runtime changes to commit'
+          else
+            git commit -m 'Evita repetição de KM valor e ETA após aceite'
+            git push origin main
+          fi
+          echo "SOURCE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Reload production worker safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 180 --retry 2 --retry-delay 3 \
+            -X POST "$BASE/api/worker/reload?companyId=$COMPANY" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "x-botguincho-company-id: $COMPANY" \
+            -H "x-botguincho-source-ref: $SOURCE_REF" \
+            -H 'content-type: application/json' \
+            -d '{}' -o /tmp/reload.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/reload.json'))
+          assert d.get('ok') is True, d
+          assert d.get('whatsappStatus') == 'pronto', d
+          assert d.get('workerProcessCount') == 1, d
+          assert d.get('sessionPreserved') is True, d
+          print('RELOAD_OK')
+          PY
+
+      - name: Verify production health
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 15 "$BASE/api/worker/health?companyId=$COMPANY" -o /tmp/health.json && \
+               curl -fsS --max-time 15 "$BASE/api/worker/status?companyId=$COMPANY" -o /tmp/status.json; then
+              if python3 - <<'PY'
+          import json,sys
+          h=json.load(open('/tmp/health.json'))
+          s=json.load(open('/tmp/status.json'))
+          checks=h.get('checks',{})
+          ok=(checks.get('whatsapp',{}).get('ok') is True and
+              checks.get('routes',{}).get('ok') is True and
+              s.get('whatsapp',{}).get('status') == 'pronto' and
+              not s.get('whatsapp',{}).get('qrDataUrl'))
+          sys.exit(0 if ok else 1)
+          PY
+              then
+                echo 'PRODUCTION_HEALTH_OK'
+                exit 0
+              fi
+            fi
+            sleep 3
+          done
+          cat /tmp/health.json 2>/dev/null || true
+          cat /tmp/status.json 2>/dev/null || true
+          exit 1
