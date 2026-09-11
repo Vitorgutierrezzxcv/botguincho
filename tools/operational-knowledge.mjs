@@ -187,7 +187,8 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
     || /\b(?:pode\s+)?(?:desconsidera|desconsiderar|retira|retirar)\b/.test(value)
     || /\bcliente\s+(?:resolveu|solucionou|desistiu)\b/.test(value)
     || /\bsem\s+(?:necessidade|atendimento|saida)\b/.test(value)
-    || /\bpode\s+deixar\b/.test(value);
+    || /\bpode\s+deixar\b/.test(value)
+    || /\batendimento\s+(?:foi\s+)?cancelad[oa]\b/.test(value);
   if (dropSignal && !administrativeContext) return 'cancellation';
 
   const dirtRoadEndSignal = /\b(saiu|saimos|saindo|fim|terminou|acabou)\b.{0,28}\b(estrada|rua|trecho)\s+de\s+terra\b|\bvoltou\s+(o\s+)?asfalto\b/.test(value);

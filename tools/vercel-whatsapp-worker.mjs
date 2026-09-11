@@ -3422,6 +3422,7 @@ async function resolveRouteQuestionTarget(groupId, readableText, quotedText = ''
 }
 
 async function handleEtaQuestion(msg, groupName, readableText, quotedText = '', context = null) {
+  // PREVIA_RESILIENTE_V2: falha transitória usa a última previsão da própria corrida.
   const target = await resolveRouteQuestionTarget(msg.from, readableText, quotedText);
   if (!target.targetAddress && !target.targetCoordinates) {
     logEvent('ignored', `${groupName}: pergunta de ETA sem destino identificável ignorada.`, { groupId: msg.from });
@@ -3447,6 +3448,30 @@ async function handleEtaQuestion(msg, groupName, readableText, quotedText = '', 
   }
 
   if (!eta) {
+    const fallbackCall = context?.recentCall || target.recentCall || null;
+    const callEtaMinutes = Number(fallbackCall?.etaMinutes);
+    const stateEtaMinutes = Number(target.state?.lastEta?.minutes);
+    const fallbackMinutes = Number.isFinite(callEtaMinutes) && callEtaMinutes > 0
+      ? Math.round(callEtaMinutes)
+      : (Number.isFinite(stateEtaMinutes) && stateEtaMinutes > 0 ? Math.round(stateEtaMinutes) : null);
+
+    if (fallbackMinutes) {
+      await replyAndRemember(
+        msg,
+        groupName,
+        readableText,
+        `Última previsão calculada: ${fallbackMinutes} min.\nEstou atualizando a localização do guincho.`,
+        {
+          intent: 'eta-fallback',
+          etaMinutes: fallbackMinutes,
+          targetSource: target.source,
+          targetAddress: target.targetAddress,
+          fallbackSource: Number.isFinite(callEtaMinutes) && callEtaMinutes > 0 ? 'management-call' : 'dispatch-state',
+        },
+      );
+      return;
+    }
+
     await replyAndRemember(msg, groupName, readableText, 'Estou atualizando a localização para calcular a previsão. Tente novamente em alguns segundos.', { intent: 'eta-unavailable', targetSource: target.source });
     return;
   }
@@ -3638,7 +3663,7 @@ async function handleDistanceQuestion(msg, groupName, readableText, quotedText =
       : {}),
   });
   const distance = Number.isFinite(Number(eta.distanceKm)) ? `${eta.distanceKm} km` : 'indisponível';
-  const activeCall = context?.recentCall && ['autorizado','a_caminho','em_atendimento'].includes(context.recentCall.status);
+  const activeCall = target.recentCall && ['autorizado','a_caminho','em_atendimento'].includes(target.recentCall.status);
   const reply = activeCall
     ? `Guincho em deslocamento ✅\nPrevisão atual de chegada: ${eta.minutes} min.\nDistância até o cliente: ${distance}.`
     : `Distância até o cliente: ${distance}.\nPrevisão de chegada: ${eta.minutes} min.`;
@@ -4340,23 +4365,20 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
     eventType: 'autorizacao', phase: eta?.queued ? 'autorizado_em_fila' : 'autorizado',
   });
   const driverNotification = saved ? await notifyDriverOfConfirmedCall(saved) : { sent: false, reason: 'call_not_saved' };
-  const km = formatKm(saved?.billableKm ?? saved?.routeBreakdown?.totalKm ?? saved?.estimatedTotalKm);
-  const amount = formatCurrency(saved?.calculatedValue);
-  const calculationLines = [
-    km ? `Quilometragem total calculada: ${km} km.` : null,
-    amount ? `Valor estimado: ${amount}.` : null,
-    amount ? 'O valor poderá ter acréscimos conforme a execução, como hora trabalhada após 15 min, pedágio e estrada de terra, quando aplicáveis.' : null,
-    'Cancelamento sem custo em até 15 minutos após a confirmação. Após esse prazo, a saída e o deslocamento são cobrados conforme a regra vigente.',
-  ].filter(Boolean);
+
+  // ACEITE_CURTO_V2: a cotação já mostrou ETA/KM/valor. No aceite, só confirma a
+  // operação. Quando a corrida entra em fila, não publica um ETA que pode ficar
+  // obsoleto conforme o atendimento anterior evolui.
   const confirmation = eta?.queued
-    ? `Confirmado ✅\nCorrida em fila após o atendimento atual.\nPrevisão informada: ${eta.minutes || 60} min.`
-    : (eta ? formatEtaReply(eta, true) : 'Confirmado ✅\nGuincho em deslocamento.');
-  await replyAndRemember(msg, groupName, readableText, [confirmation, ...calculationLines].join('\n'), {
+    ? 'Confirmado ✅\nCorrida em fila após o atendimento atual.\nA previsão será atualizada conforme o andamento da corrida anterior.'
+    : 'Confirmado ✅\nGuincho em deslocamento.';
+  await replyAndRemember(msg, groupName, readableText, confirmation, {
     intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true,
     rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null,
     callId: saved?.id || null, billableKm: saved?.billableKm ?? null,
     calculatedValue: saved?.calculatedValue ?? null,
     driverNotification: driverNotification.sent ? 'sent' : driverNotification.reason,
+    shortConfirmation: true,
   });
 }
 
