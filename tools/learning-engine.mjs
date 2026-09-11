@@ -37,6 +37,14 @@ export function inferLearningIntent(text = '') {
   const hasOperationalContext = /\b(origem|destino|veiculo|placa|protocolo|reboque|guincho|pane|sinistro|servico|acionamento|associado|associacao|remocao)\b/.test(value);
   const administrativeSignal = /\b(reuniao|comunicado(?: interno)?|aviso(?: geral)?|treinamento|rotina financeira|financeiro|atualizacao de cadastro|documentos|tabelas de valores|pagamentos? dia|contas)\b/.test(value);
 
+  // Protocolo formal precisa chegar ao handler de protocolo antes das regras de
+  // cotação. Muitas centrais incluem "prévia" e "valor fechado" dentro da ficha;
+  // isso é dado do atendimento já emitido, não uma nova solicitação de preço.
+  const formalProtocol = /\bprotocolo\s*[:=\-]/.test(value)
+    && /\b(?:endereco\s+)?origem\s*[:=\-]/.test(value)
+    && /\b(?:endereco\s+)?destino\s*[:=\-]/.test(value);
+  if (formalProtocol) return 'protocol_received';
+
   // Horário em um comunicado (por exemplo, uma reunião amanhã às 9h) não é
   // agendamento de guincho. Exige também contexto operacional do atendimento.
   if (administrativeSignal && !hasOperationalContext) return 'administrative_notice';
