@@ -151,7 +151,7 @@ w = w.replace(w[w.find(protocol_function_start):w.find(protocol_function_end, w.
 
 # 4) Evidências/fotos: registra todas, mas responde no máximo uma vez por corrida.
 evidence_start = "async function handleEvidenceRuntime(msg, groupName, readableText, context, hasMedia = false) {"
-evidence_end = "\n}\n\nasync function handleAddressUpdateRuntime"
+evidence_end = "\n\nasync function handleAddressUpdateRuntime"
 evidence_new = """async function handleEvidenceRuntime(msg, groupName, readableText, context, hasMedia = false) {
   const call = context.recentCall;
   const alreadyAcknowledged = Boolean(call?.evidenceAckSentAt);
