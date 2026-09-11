@@ -6092,6 +6092,10 @@ app.post('/api/tracker-bridge', async (req, res) => {
   }
 });
 
+app.get('/api/runtime-policy', (_req, res) => {
+  res.json({ ok: true, policy: 'post-acceptance-quiet-v1' });
+});
+
 app.get('/api/activity', (_req, res) => {
   res.json({ activity: activity.slice(0, 50) });
 });
