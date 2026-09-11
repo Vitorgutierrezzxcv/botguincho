@@ -1,0 +1,57 @@
+name: Apply authorization ETA cancellation hotfix once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-authorization-eta-cancel-hotfix.py'
+      - 'tools/test-authorization-eta-cancel-hotfix.mjs'
+      - '.github/workflows/apply-authorization-eta-cancel-hotfix-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply hotfix
+        run: python tools/apply-authorization-eta-cancel-hotfix.py
+
+      - name: Validate syntax and regressions
+        run: |
+          set -euo pipefail
+          node --check tools/vercel-whatsapp-worker.mjs
+          node --check tools/operational-knowledge.mjs
+          node tools/test-authorization-eta-cancel-hotfix.mjs
+          node tools/test-post-acceptance-quiet-policy.mjs
+          node tools/test-cancellation-policy.mjs
+          node tools/test-runtime-regressions.mjs
+          node tools/test-preview-consistency.mjs
+
+      - name: Commit runtime hotfix
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/vercel-whatsapp-worker.mjs tools/operational-knowledge.mjs
+          if git diff --cached --quiet; then
+            echo 'No runtime changes to commit'
+          else
+            git commit -m 'fix: encurta aceite e torna previa resiliente'
+            git push origin main
+          fi
+
+      - name: Keep production disabled
+        run: |
+          echo 'Hotfix validado e versionado. Este workflow não altera disponibilidade nem força reload da VPS.'
