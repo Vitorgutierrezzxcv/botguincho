@@ -43,8 +43,11 @@ const distance = section(
   'async function handleDistanceQuestion',
   'async function handleTrackerLocationQuestion',
 );
+// É válido usar context.recentCall para responder um "km?" curto com o valor já salvo.
+// O bug real era usar context.recentCall para decidir o estado da rota recalculada,
+// em vez da corrida resolvida pelo próprio alvo da pergunta.
 assert.match(distance, /const activeCall = target\.recentCall/);
-assert.doesNotMatch(distance, /context\?\.recentCall/);
+assert.doesNotMatch(distance, /const activeCall = context\?\.recentCall/);
 
 assert.match(ops, /pode\\s\+deixar/);
 assert.match(ops, /atendimento\\s\+\(\?:foi\\s\+\)\?cancelad\[oa\]/);
