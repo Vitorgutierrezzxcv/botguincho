@@ -1,0 +1,110 @@
+name: Fix Socorre protocol and recover calls once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-socorre-protocol-and-recover-calls-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      BASE: https://botguincho.vercel.app
+      COMPANY: cliente-teste
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Socorre protocol regressions
+        run: |
+          set -euo pipefail
+          node --check tools/protocol-call-matching.mjs
+          node --check tools/learning-engine.mjs
+          node tools/test-protocol-call-matching.mjs
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { inferLearningIntent } from './tools/learning-engine.mjs';
+          const formal = `*Protocolo:* #12436620260909145319
+          *Associação:* AUTO CARE - SOCORRE ASSISTÊNCIA 24H
+          *Modelo:* CORSA SED.WIND 1.0/MILLENIUM/CLASSIC VHC
+          *Endereço origem:* 2Q2R+H3R Betim, MG
+          *Endereço destino:* Rua Professora Balbina Penido, 28 - São Sebastião, Igarapé - MG
+          *Prévia até:* 60 minutos
+          *Valor fechado:* 49.2KM no valor de R$162,60`;
+          assert.equal(inferLearningIntent(formal), 'protocol_received');
+          console.log('formal Socorre protocol routing: ok');
+          NODE
+
+      - name: Preflight production management
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 4 --retry-delay 2 --max-time 30 \
+            "$BASE/api/worker/management?companyId=$COMPANY&cb=$RANDOM" -o /tmp/before.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/before.json'))
+          assert d.get('ok') is True, d
+          calls=d.get('data',{}).get('calls',[])
+          ids={c.get('id') for c in calls}
+          wanted={
+            'bd9826e0-9eb9-45d2-935e-3fda4e962f93',
+            '894b8b83-5cb3-4e98-9042-b16abb1a8290',
+            '851ec044-6ff1-434e-b4b7-f48431fa989e',
+          }
+          missing=wanted-ids
+          assert not missing, f'Corridas alvo ausentes: {missing}'
+          print('PRECHECK_OK')
+          PY
+
+      - name: Recover performed Socorre calls into owner closing flow
+        run: |
+          set -euo pipefail
+          recover() {
+            local id="$1"
+            curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
+              -X POST "$BASE/api/worker/management?companyId=$COMPANY" \
+              -H 'content-type: application/json' \
+              --data "{\"action\":\"upsert\",\"collection\":\"calls\",\"item\":{\"id\":\"$id\",\"status\":\"concluido\",\"quoteOutcome\":\"won\",\"quoteTracked\":true,\"ownerCloseRequired\":true,\"ownerReviewRequired\":true}}" \
+              -o "/tmp/recover-$id.json"
+            python3 - "$id" <<'PY'
+          import json,sys
+          call_id=sys.argv[1]
+          d=json.load(open('/tmp/recover-'+call_id+'.json'))
+          assert d.get('ok') is True, d
+          print('RECOVERED', call_id)
+          PY
+          }
+          recover bd9826e0-9eb9-45d2-935e-3fda4e962f93
+          recover 894b8b83-5cb3-4e98-9042-b16abb1a8290
+          recover 851ec044-6ff1-434e-b4b7-f48431fa989e
+
+      - name: Verify recovered calls
+        run: |
+          set -euo pipefail
+          sleep 2
+          curl -fsS --retry 4 --retry-delay 2 --max-time 30 \
+            "$BASE/api/worker/management?companyId=$COMPANY&cb=$RANDOM" -o /tmp/after.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/after.json'))
+          assert d.get('ok') is True, d
+          calls={c.get('id'):c for c in d.get('data',{}).get('calls',[])}
+          wanted=[
+            'bd9826e0-9eb9-45d2-935e-3fda4e962f93',
+            '894b8b83-5cb3-4e98-9042-b16abb1a8290',
+            '851ec044-6ff1-434e-b4b7-f48431fa989e',
+          ]
+          for call_id in wanted:
+            c=calls.get(call_id)
+            assert c, call_id
+            assert c.get('status') == 'aguardando_fechamento', (call_id,c.get('status'))
+            assert c.get('ownerCloseRequired') is True, call_id
+            assert c.get('ownerReviewRequired') is True, call_id
+            assert c.get('quoteOutcome') == 'won', call_id
+          print('SOCORRE_RECOVERY_OK')
+          PY
