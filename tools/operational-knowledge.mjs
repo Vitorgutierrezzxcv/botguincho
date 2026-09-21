@@ -244,6 +244,17 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
     /\?/.test(String(text || ''));
   if (base === 'availability' || explicitAvailabilityQuestion) return 'availability';
 
+  // Algumas centrais (ex.: Horizonte) usam a ficha formal completa como autorização
+  // após uma cotação. Só promovemos quando o perfil permite E a ficha tem
+  // origem + destino + veículo; protocolo incompleto continua aguardando aprovação.
+  if (
+    profile.formalProtocolCanAuthorize === true &&
+    recentCall?.status === 'cotacao' &&
+    hasFormalProtocol(text) &&
+    hasStructuredServiceRequest(text) &&
+    !hasIncompleteDispatch(value)
+  ) return 'formal_dispatch';
+
   if (hasFormalProtocol(text)) {
     if (activeService) return 'protocol_update';
     // Protocolo, ficha ou WebPrestador nunca autorizam sozinhos. Mesmo quando uma
