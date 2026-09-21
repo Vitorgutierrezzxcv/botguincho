@@ -207,7 +207,7 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   if (activeService && /\b(chegou|chegamos|entregue|entregamos)\b.{0,28}\b(destino|oficina|patio)\b/.test(value)) return 'destination_arrival';
   if (activeService && /\b(saindo|saiu|a caminho|em deslocamento|iniciando deslocamento)\b/.test(value)) return 'departure';
   if (evidenceContext && (/\b(fotos?|checklist|video|evidencias?)\b.{0,30}\b(enviad\w*|anexad\w*|realizad\w*|concluid\w*|feito|pronto)\b/.test(value) || value === '[imagem recebida]')) return 'evidence';
-  const protocolLinkContext = evidenceContext || ['cotacao','aguardando_aprovacao','aguardando_dados','agendado'].includes(recentCall?.status);
+  const protocolLinkContext = evidenceContext || ['aguardando_aprovacao','aguardando_dados','agendado'].includes(recentCall?.status);
   if (protocolLinkContext && /\bprotocolo\b/.test(value) && !hasQuoteSignals(text)) return 'protocol_update';
 
   if (base === 'cancellation') return 'cancellation';
