@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics, workerJson, refreshWorkerRuntime, runWorkerValidation } from '../../lib/sandbox-runtime.js';
-import { authorizeTenantRequest, requireMaster } from '../../lib/control-plane.js';
+import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics, workerJson, refreshWorkerRuntime, runWorkerValidation, trackerPairingCode } from '../../lib/sandbox-runtime.js';
+import { authorizeTenantRequest, requireMaster, requireSession, isMaster } from '../../lib/control-plane.js';
 import { assetDataUrl, getPlatformBranding, publicBrandingPayload, updatePlatformBranding } from '../../lib/platform-branding.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
@@ -345,6 +345,26 @@ export default async function handler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
     const result = await sandboxDiagnostics(requestCredential(req), requestTenant(req));
     return res.status(result.ok ? 200 : 503).json(result);
+  }
+
+
+  if (path === 'tracker-pairing') {
+    if (!['GET', 'POST'].includes(req.method)) return res.status(405).json({ error: 'method_not_allowed' });
+    const companyId = sanitizeTenant(req.query?.companyId || req.body?.companyId || 'cliente-teste');
+    try {
+      const session = await requireSession(req);
+      const allowed = isMaster(session) || session.memberships.some((m) =>
+        m.companies?.slug === companyId && ['owner','operator'].includes(m.role)
+      );
+      if (!allowed) return res.status(403).json({ error: 'forbidden' });
+      const result = await trackerPairingCode(companyId, { rotate: req.method === 'POST' && req.body?.action === 'rotate' });
+      return res.status(200).json(result);
+    } catch (error) {
+      const status = Number(error?.status || 0);
+      return res.status(status === 401 || status === 403 ? status : 500).json({
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   if (path === 'worker-refresh') {
