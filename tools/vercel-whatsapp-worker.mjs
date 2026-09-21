@@ -69,17 +69,15 @@ function validAdminToken(value) {
 
 app.use('/api', (req, res, next) => {
   // O rastreador do motorista usa um código de pareamento próprio e não recebe
-  // o segredo administrativo compartilhado entre Vercel e VPS.
+  // o código de pareamento próprio, separado das credenciais internas da plataforma.
   if (req.path === '/tracker-bridge') return next();
   if (validAdminToken(req.headers['x-botguincho-token'])) return next();
   return res.status(401).json({ ok: false, error: 'unauthorized' });
 });
 
 let aiCredential = process.env.OPENAI_API_KEY ?? '';
-// Numa VPS o Chromium e o do sistema e roda com processos separados. Os argumentos
-// do @sparticuz/chromium sao para AWS Lambda e trazem --single-process/--no-zygote:
-// o renderizador passa a morar no mesmo processo do navegador, e qualquer travada
-// do WhatsApp Web derruba tudo com "Target closed".
+// No Sandbox da Vercel usamos o Chromium empacotado para runtime serverless.
+// Mantemos os argumentos compatíveis com esse ambiente para reduzir falhas de renderização.
 const SERVERLESS_ONLY_ARGS = new Set(['--single-process', '--no-zygote', '--in-process-gpu']);
 function browserBaseArgs() {
   if (!process.env.PUPPETEER_EXECUTABLE_PATH) return chromium.args;
