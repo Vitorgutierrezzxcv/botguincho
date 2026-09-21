@@ -141,7 +141,7 @@ export function isTestGroupName(value = '') {
 }
 
 export function isTestCall(call = {}) {
-  return call?.testMode === true;
+  return call?.testMode === true || isTestGroupName(call?.groupName || call?.group || '');
 }
 
 export function responseMatches(response = '', expected = [], forbidden = [], requireAll = false) {
