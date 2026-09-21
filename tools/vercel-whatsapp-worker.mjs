@@ -4368,8 +4368,8 @@ async function handleAuthorizationRuntime(msg, groupName, readableText, incoming
   // operação. Quando a corrida entra em fila, não publica um ETA que pode ficar
   // obsoleto conforme o atendimento anterior evolui.
   const confirmation = eta?.queued
-    ? 'Confirmado ✅\nCorrida em fila após o atendimento atual.\nA previsão será atualizada conforme o andamento da corrida anterior.'
-    : 'Confirmado ✅\nGuincho em deslocamento.';
+    ? 'Confirmado ✅\nCorrida em fila após o atendimento atual.\nA previsão será atualizada conforme o andamento da corrida anterior.\nCancelamento sem custo em até 15 minutos após a saída.'
+    : 'Confirmado ✅\nGuincho em deslocamento.\nCancelamento sem custo em até 15 minutos após a saída.';
   await replyAndRemember(msg, groupName, readableText, confirmation, {
     intent: 'authorization', etaMinutes: eta?.minutes ?? null, queued: eta?.queued === true,
     rawEtaMinutes: eta?.rawMinutes ?? eta?.minutes ?? null, precedingCallId: eta?.precedingCallId ?? null,
