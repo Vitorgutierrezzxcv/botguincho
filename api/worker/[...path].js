@@ -25,7 +25,7 @@ const ROUTES = {
   'route-test': { methods: ['POST'], target: '/api/route-test' },
   settings: { methods: ['GET', 'POST'], target: '/api/settings' },
   'test-center': { methods: ['GET', 'POST'], target: '/api/test-center' },
-  tracker: { methods: ['GET', 'POST'], target: '/api/tracker' },
+  tracker: { methods: ['GET'], target: '/api/tracker' },
   'tracker-bridge': { methods: ['GET', 'POST'], target: '/api/tracker-bridge' },
 };
 
