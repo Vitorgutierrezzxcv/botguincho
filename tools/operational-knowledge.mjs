@@ -237,9 +237,12 @@ export function classifyRuntimeIntent(text = '', groupName = '', recentCall = nu
   if (base === 'closure') return 'closure';
   if (base === 'eta') return 'eta';
 
-  // Uma pergunta de disponibilidade continua sendo consulta mesmo que a ficha
-  // completa/protocolo esteja na mesma mensagem. Nunca autoriza por acidente.
-  if (base === 'availability') return 'availability';
+  // Uma pergunta explícita de disponibilidade continua sendo consulta mesmo
+  // quando a ficha/protocolo vem na mesma mensagem. Nunca autoriza por acidente.
+  const explicitAvailabilityQuestion =
+    /\b(?:disponivel|disponibilidade)\b/.test(value) &&
+    /\?/.test(String(text || ''));
+  if (base === 'availability' || explicitAvailabilityQuestion) return 'availability';
 
   if (hasFormalProtocol(text)) {
     if (activeService) return 'protocol_update';
