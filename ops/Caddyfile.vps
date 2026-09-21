@@ -1,4 +1,0 @@
-{$BOTGUINCHO_DOMAIN} {
-  encode zstd gzip
-  reverse_proxy worker:3001
-}
