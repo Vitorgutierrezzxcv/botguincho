@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics, workerJson, migrateLegacyVpsState } from '../../lib/sandbox-runtime.js';
+import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics, workerJson, migrateLegacyVpsState, refreshWorkerRuntime } from '../../lib/sandbox-runtime.js';
 import { authorizeTenantRequest, requireMaster } from '../../lib/control-plane.js';
 import { assetDataUrl, getPlatformBranding, publicBrandingPayload, updatePlatformBranding } from '../../lib/platform-branding.js';
 
@@ -352,6 +352,16 @@ export default async function handler(req, res) {
     try {
       const result = await migrateLegacyVpsState();
       return res.status(200).json(result);
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (path === 'worker-refresh') {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' });
+    try {
+      const result = await refreshWorkerRuntime(requestCredential(req), requestTenant(req));
+      return res.status(result.ready ? 200 : 503).json(result);
     } catch (error) {
       return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
