@@ -288,7 +288,7 @@ const worker = fs.readFileSync(new URL('./vercel-whatsapp-worker.mjs', import.me
 const owner = fs.readFileSync(new URL('../owner-dashboard.js', import.meta.url), 'utf8');
 const ownerPublic = fs.readFileSync(new URL('../public/owner-dashboard.js', import.meta.url), 'utf8');
 const apiProxy = fs.readFileSync(new URL('../api/worker/[...path].js', import.meta.url), 'utf8');
-const dockerfile = fs.readFileSync(new URL('../Dockerfile.vps', import.meta.url), 'utf8');
+const sandboxRuntime = fs.readFileSync(new URL('../lib/sandbox-runtime.js', import.meta.url), 'utf8');
 
 check('runtime continua em modo simples sem IA paga', () => {
   assert.match(worker, /simpleMode:\s*true/);
@@ -311,6 +311,6 @@ check('painel calcula conversão sobre cotações solicitadas', () => {
   assert.match(owner, /won\.length\s*\/\s*quotes\.length/);
   assert.match(ownerPublic, /won\.length\s*\/\s*quotes\.length/);
 });
-check('imagem Docker leva base de treinamento para a VPS', () => assert.match(dockerfile, /COPY training \.\/training/));
+check('runtime de produção usa Vercel Sandbox persistente sem fallback de VPS', () => { assert.match(sandboxRuntime, /Sandbox\.getOrCreate/); assert.match(sandboxRuntime, /persistent:\s*true/); assert.doesNotMatch(sandboxRuntime, /hostinger-vps|BOTGUINCHO_WORKER_URL/); });
 
 console.log(`FULL_BUSINESS_FLOW_AUDIT_OK · ${checks} verificações`);
