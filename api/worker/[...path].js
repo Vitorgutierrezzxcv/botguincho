@@ -1,11 +1,10 @@
 import crypto from 'node:crypto';
-import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics } from '../../lib/sandbox-runtime.js';
+import { proxyWorker, requestCredential, requestTenant, sandboxDiagnostics, workerJson } from '../../lib/sandbox-runtime.js';
 import { authorizeTenantRequest, requireMaster } from '../../lib/control-plane.js';
 import { assetDataUrl, getPlatformBranding, publicBrandingPayload, updatePlatformBranding } from '../../lib/platform-branding.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
 const MEMORY_URL = 'https://pribndywguacekafhuyk.supabase.co/functions/v1/training-memory';
-const EXTERNAL_WORKER_URL = String(process.env.BOTGUINCHO_WORKER_URL || '').trim().replace(/\/+$/, '');
 const EXTERNAL_WORKER_TOKEN = String(process.env.BOTGUINCHO_ADMIN_TOKEN || '').trim();
 
 const ROUTES = {
@@ -100,24 +99,6 @@ async function authorizeTrainingSync(req, companyId) {
   return authorizeTenantRequest(req, companyId);
 }
 
-async function externalWorkerFetch(path, init = {}) {
-  if (!EXTERNAL_WORKER_URL || !EXTERNAL_WORKER_TOKEN) throw new Error('external_worker_not_configured');
-  const { timeoutMs = 50000, ...fetchInit } = init;
-  const response = await fetch(`${EXTERNAL_WORKER_URL}${path}`, {
-    ...fetchInit,
-    headers: {
-      'content-type': 'application/json',
-      'x-botguincho-token': EXTERNAL_WORKER_TOKEN,
-      ...(fetchInit.headers || {}),
-    },
-    cache: 'no-store',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data?.error || `worker_http_${response.status}`);
-  return data;
-}
-
 async function memoryFetch(payload, timeoutMs = 12000) {
   const oidc = String(process.env.VERCEL_OIDC_TOKEN || '').trim();
   const credential = oidc || EXTERNAL_WORKER_TOKEN;
@@ -163,15 +144,15 @@ function chunkTrainingRows(rows, globalOffset, groupName) {
   return result;
 }
 
-async function syncTrainingGroup(groupId, { importFirst = true } = {}) {
+async function syncTrainingGroup(groupId, { importFirst = true, credential = '', companyId = 'cliente-teste' } = {}) {
   if (!groupId?.endsWith('@g.us')) throw new Error('group_invalid');
   let imported = null;
   if (importFirst) {
-    imported = await externalWorkerFetch('/api/learning/import-history', {
+    imported = await workerJson('/api/learning/import-history', {
       method: 'POST',
       body: JSON.stringify({ groupId, limit: 10000 }),
       timeoutMs: 50000,
-    });
+    }, credential, companyId);
   }
 
   const sourceHash = crypto.createHash('sha256').update(groupId).digest('hex').slice(0, 20);
@@ -185,7 +166,7 @@ async function syncTrainingGroup(groupId, { importFirst = true } = {}) {
   let lastAt = '';
 
   do {
-    const page = await externalWorkerFetch(`/api/learning/export-history?groupId=${encodeURIComponent(groupId)}&offset=${offset}&limit=${pageSize}`, { timeoutMs: 15000 });
+    const page = await workerJson(`/api/learning/export-history?groupId=${encodeURIComponent(groupId)}&offset=${offset}&limit=${pageSize}`, { timeoutMs: 15000 }, credential, companyId);
     const rows = Array.isArray(page.rows) ? page.rows : [];
     total = Number(page.total || rows.length || 0);
     groupName = page.groupName || groupName;
@@ -264,7 +245,7 @@ async function handleTrainingSync(req, res) {
       }));
     }
     if (action !== 'sync') return res.status(400).json({ ok: false, error: 'action_invalid' });
-    const result = await syncTrainingGroup(String(req.body?.groupId || ''), { importFirst: req.body?.importFirst !== false });
+    const result = await syncTrainingGroup(String(req.body?.groupId || ''), { importFirst: req.body?.importFirst !== false, credential: requestCredential(req, companyId), companyId });
     return res.status(200).json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
