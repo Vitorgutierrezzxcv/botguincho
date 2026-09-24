@@ -47,8 +47,8 @@ jobs:
         run: |
           set -e
           curl -fsSL --retry 5 --retry-delay 3 --max-time 30 "$PUBLIC_URL/" -o /tmp/root.html
-          grep -q 'WhatsApp e IA em um só painel' /tmp/root.html
-          echo 'Painel novo: OK'
+          grep -q 'acionador-simple-v1.js' /tmp/root.html
+          echo 'Painel manual simplificado: OK'
 
       - name: Validar status sem bloqueio e aguardar QR
         run: |
@@ -68,8 +68,8 @@ jobs:
             STATUS=$(node -e "const x=require('/tmp/status.json');console.log(x.whatsapp?.status||'')")
             AI=$(node -e "const x=require('/tmp/status.json');console.log(Boolean(x.ai?.configured))")
             echo "whatsapp=$STATUS aiConfigured=$AI"
-            if [ "$STATUS" = "qr" ] || [ "$STATUS" = "autenticado" ] || [ "$STATUS" = "pronto" ]; then
-              echo 'Worker WhatsApp operacional: OK'
+            if [ "$STATUS" = "desativado" ]; then
+              echo 'Modo manual confirmado: WhatsApp/robô desativado.'
               exit 0
             fi
             if [ "$STATUS" = "erro" ]; then
@@ -82,6 +82,6 @@ jobs:
           if [ "$SAW_FAST_RESPONSE" = "0" ]; then
             echo 'API de status continuou bloqueando.' >&2
           else
-            echo 'API responde, mas WhatsApp não chegou ao QR no tempo esperado.' >&2
+            echo 'API responde, mas o worker ainda não confirmou o modo manual.' >&2
           fi
           exit 1

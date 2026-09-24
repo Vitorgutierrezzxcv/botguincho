@@ -183,7 +183,7 @@ export default async function handler(req, res) {
         const response = await fetch(`${sandbox.domain(PORT)}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(3500) });
         if (response.ok) {
           status = await response.json();
-          if (['pronto', 'qr'].includes(status?.whatsapp?.status)) break;
+          if (['pronto', 'qr', 'desativado'].includes(status?.whatsapp?.status)) break;
         }
       } catch {}
     }
@@ -199,7 +199,7 @@ export default async function handler(req, res) {
           const response = await fetch(`${sandbox.domain(PORT)}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(3500) });
           if (response.ok) {
             status = await response.json();
-            if (['pronto', 'qr'].includes(status?.whatsapp?.status)) break;
+            if (['pronto', 'qr', 'desativado'].includes(status?.whatsapp?.status)) break;
           }
         } catch {}
       }
