@@ -1,4 +1,4 @@
-import { applyWwebjsPatch, ensureWorkerSandbox, externalWorkerConfigured, requestCredential, requestTenant } from '../../lib/sandbox-runtime.js';
+import { applyWwebjsPatch, ensureWorkerSandbox, requestCredential, requestTenant } from '../../lib/sandbox-runtime.js';
 
 const REPO = 'Vitorgutierrezzxcv/botguincho';
 const RAW_ROOT = 'https://raw.githubusercontent.com/Vitorgutierrezzxcv/botguincho';
@@ -154,14 +154,6 @@ export default async function handler(req, res) {
   res.setHeader('cache-control', 'no-store');
   if (!(await isGitHubActionsToken(req))) return res.status(401).json({ error: 'unauthorized' });
 
-  if (externalWorkerConfigured()) {
-    return res.status(200).json({
-      ok: true,
-      skipped: true,
-      infrastructure: 'hostinger-vps',
-      message: 'Worker persistente ativo; a atualização é feita pelo deploy Docker da VPS.',
-    });
-  }
 
   try {
     const credential = requestCredential(req);
