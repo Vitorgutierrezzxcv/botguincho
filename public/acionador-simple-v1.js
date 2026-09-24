@@ -130,6 +130,19 @@
     const ops=document.getElementById('operations'),oh=ops?.querySelector(':scope > .head');if(oh){const h=oh.querySelector('h2'),p=oh.querySelector('p'),b=oh.querySelector('.btn');if(h)h.textContent='Corridas';if(p)p.textContent='Quando terminar, toque em “Concluir corrida”.';if(b){b.textContent='+ Nova corrida';b.setAttribute('onclick','simpleNewRun()')}}
   }
 
+  function simplifyClients(){
+    const page=document.getElementById('clients');if(!page)return;
+    const head=page.querySelector(':scope > .head');
+    const h=head?.querySelector('h2'),p=head?.querySelector('p'),b=head?.querySelector('.btn');
+    if(h)h.textContent='Clientes';
+    if(p)p.textContent='Cadastre somente quem pede ou paga as corridas.';
+    if(b){b.textContent='+ Novo cliente';b.setAttribute('onclick',"newItem('clients')")}
+    const regular=document.getElementById('clientsTable')?.closest('.table-wrap');
+    if(regular)regular.style.display='';
+    const advanced=document.getElementById('ownerInsurers');
+    if(advanced)advanced.style.display='none';
+  }
+
   function manualBanner(){
     const root=document.getElementById('axHomeV2');if(!root||document.getElementById('simpleManualBanner'))return;
     const b=document.createElement('div');b.id='simpleManualBanner';b.className='simple-manual-banner';
@@ -175,11 +188,11 @@
       <div class="simple-modal-intro"><b>Confira só dois números.</b><span>Ao concluir, Financeiro e pagamento do motorista serão atualizados.</span></div>
       <div class="form-grid"><div class="field"><label>Valor final da corrida</label><input id="simpleCloseValue" name="value" type="number" inputmode="decimal" step="0.01" value="${value||''}"></div><div class="field"><label>KM cobrados</label><input id="simpleCloseKm" name="billableKm" type="number" inputmode="decimal" step="0.1" value="${km||''}"></div></div>
       <div id="simpleClosePreview" class="simple-close-preview"></div>
-      <details class="simple-details"><summary>Teve adicional? Preencher detalhes</summary><div class="form-grid section"><div class="field"><label>Hora trabalhada</label><input id="simpleWorked" name="workedTimeAmount" type="number" step="0.01" value="${num(call.workedTimeAmount)||0}"></div><div class="field"><label>Pedágio</label><input name="toll" type="number" step="0.01" value="${num(call.finalTollAmount)||0}"></div><div class="field"><label>Outros adicionais</label><input name="otherExtras" type="number" step="0.01" value="${num(call.finalOtherExtras)||0}"></div><div class="field"><label>Observação</label><input name="notes" value="${safe(call.ownerClosingNotes||'')}"></div></div></details>`,async()=>{
-      const data=Object.fromEntries(new FormData(document.getElementById('modalForm')).entries());['value','billableKm','workedTimeAmount','toll','otherExtras'].forEach((k)=>data[k]=num(data[k]));
+      <details class="simple-details"><summary>Teve adicional? Preencher detalhes</summary><div class="form-grid section"><div class="field"><label>Horas trabalhadas</label><input id="simpleWorkedHours" name="workedTimeChargedHours" type="number" step="1" min="0" value="${num(call.workedTimeChargedHours)||0}"></div><div class="field"><label>Valor adicional de hora (R$)</label><input id="simpleWorked" name="workedTimeAmount" type="number" step="0.01" min="0" value="${num(call.workedTimeAmount)||0}"></div><div class="field"><label>Pedágio</label><input name="toll" type="number" step="0.01" value="${num(call.finalTollAmount)||0}"></div><div class="field"><label>Outros adicionais</label><input name="otherExtras" type="number" step="0.01" value="${num(call.finalOtherExtras)||0}"></div><div class="field"><label>Observação</label><input name="notes" value="${safe(call.ownerClosingNotes||'')}"></div></div></details>`,async()=>{
+      const data=Object.fromEntries(new FormData(document.getElementById('modalForm')).entries());['value','billableKm','workedTimeChargedHours','workedTimeAmount','toll','otherExtras'].forEach((k)=>data[k]=num(data[k]));
       const save=document.getElementById('modalSave');if(save){save.disabled=true;save.textContent='Concluindo…'}
       try{
-        await api('/api/worker/management',{method:'POST',body:JSON.stringify({action:'close_call',callId:id,ownerName:'Painel',suppressNotice:true,manualCompletion:true,final:{...data,workedTimeChargedHours:num(call.workedTimeChargedHours),dirtRoadBillableKm:num(call.dirtRoadBillableKm)}})});
+        await api('/api/worker/management',{method:'POST',body:JSON.stringify({action:'close_call',callId:id,ownerName:'Painel',suppressNotice:true,manualCompletion:true,final:{...data,dirtRoadBillableKm:num(call.dirtRoadBillableKm)}})});
         if(typeof loadManagement==='function')await loadManagement();if(typeof refreshBillingOnly==='function')await refreshBillingOnly().catch(()=>{});if(typeof refreshOwner==='function')await refreshOwner().catch(()=>{});if(typeof closeModal==='function')closeModal();
         alert('Corrida concluída. Financeiro e pagamento do motorista foram atualizados.');
       }catch(error){if(save){save.disabled=false;save.textContent='Concluir corrida'}alert(error?.message||'Não foi possível concluir a corrida.')}
@@ -211,7 +224,7 @@
   }
 
   function enhance(){
-    simplifyMenus();setCopy();rebuildMore();rebuildHelp();addHomeActions();simplifyHome();guidePages();manualBanner();enhanceFinanceRows();syncActive();
+    simplifyMenus();setCopy();rebuildMore();rebuildHelp();addHomeActions();simplifyHome();guidePages();simplifyClients();manualBanner();enhanceFinanceRows();syncActive();
     window.ownerCloseCall=window.simpleCloseCall;window.operationCloseCall=window.simpleCloseCall;
   }
   let scheduled=false;
