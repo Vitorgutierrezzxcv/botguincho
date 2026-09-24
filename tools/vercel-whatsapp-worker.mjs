@@ -84,7 +84,8 @@ function browserBaseArgs() {
   return chromium.args.filter((arg) => !SERVERLESS_ONLY_ARGS.has(arg));
 }
 
-const MANUAL_ONLY_MODE = true;\nlet waClient = null;
+const MANUAL_ONLY_MODE = true;
+let waClient = null;
 let waStatus = 'iniciando';
 let qrDataUrl = null;
 let lastError = null;
