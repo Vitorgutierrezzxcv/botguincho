@@ -5128,6 +5128,7 @@ async function processIncomingMessage(msg) {
 }
 
 function scheduleWhatsAppRecovery(reason = 'unknown') {
+  if (MANUAL_ONLY_MODE) return;
   if (whatsappRecoveryTimer) return;
   const sinceLast = Date.now() - lastWhatsappRecoveryAt;
   const delay = Math.max(15000, 60000 - sinceLast);
@@ -5191,6 +5192,12 @@ async function recoverMissedWhatsAppMessages(sinceMs) {
 }
 
 async function startWhatsApp() {
+  if (MANUAL_ONLY_MODE) {
+    waStatus = 'desativado';
+    qrDataUrl = null;
+    lastError = null;
+    return;
+  }
   if (waClient) return;
   waStatus = 'iniciando';
   lastError = null;
