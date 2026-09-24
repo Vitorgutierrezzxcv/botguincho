@@ -214,8 +214,12 @@
     simplifyMenus();setCopy();rebuildMore();rebuildHelp();addHomeActions();simplifyHome();guidePages();manualBanner();enhanceFinanceRows();syncActive();
     window.ownerCloseCall=window.simpleCloseCall;window.operationCloseCall=window.simpleCloseCall;
   }
-  let scheduled=false;const schedule=()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;enhance()})};
-  const obs=new MutationObserver(schedule);
-  function init(){enhance();obs.observe(document.body,{subtree:true,childList:true});document.addEventListener('click',(e)=>{if(e.target.closest?.('[data-page],[data-simple-page]'))setTimeout(enhance,40)});setInterval(enhance,4000)}
+  let scheduled=false;
+  let obs=null;
+  const startObserve=()=>obs?.observe(document.body,{subtree:true,childList:true});
+  const enhanceSafely=()=>{obs?.disconnect();enhance();startObserve()};
+  const schedule=()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;enhanceSafely()})};
+  obs=new MutationObserver(schedule);
+  function init(){enhanceSafely();document.addEventListener('click',(e)=>{if(e.target.closest?.('[data-page],[data-simple-page]'))setTimeout(enhanceSafely,40)});setInterval(enhanceSafely,10000)}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
 })();
