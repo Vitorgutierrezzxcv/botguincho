@@ -1,0 +1,88 @@
+name: Manual Runtime Cutover Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/worker/reload.js'
+      - '.github/workflows/manual-runtime-cutover-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+concurrency:
+  group: acionador-manual-runtime-cutover
+  cancel-in-progress: true
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Aguardar produção Vercel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          REPO="${GITHUB_REPOSITORY}"
+          SHA="${GITHUB_SHA}"
+          for i in $(seq 1 40); do
+            DEPLOYS=$(curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/deployments?sha=$SHA")
+            STATUS_URL=$(printf '%s' "$DEPLOYS" | jq -r '.[0].statuses_url // empty')
+            if [ -n "$STATUS_URL" ]; then
+              STATUSES=$(curl -fsSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "$STATUS_URL")
+              STATE=$(printf '%s' "$STATUSES" | jq -r '.[0].state // empty')
+              echo "Vercel state=$STATE"
+              if [ "$STATE" = "success" ]; then sleep 5; exit 0; fi
+              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then exit 1; fi
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Trocar worker persistente para modo manual
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          CODE=$(curl -sS -L --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-BotGuincho-Source-Ref: $GITHUB_SHA" \
+            -H "Accept: application/json" \
+            -o /tmp/reload.json \
+            -w '%{http_code}' \
+            https://botguincho.vercel.app/api/worker/reload || true)
+          echo "HTTP $CODE"
+          cat /tmp/reload.json
+          echo
+          test "$CODE" = "200"
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/reload.json', 'utf8'));
+          if (!x.ok) throw new Error('reload_not_ok');
+          if (x.workerProcessCount !== 1) throw new Error('unexpected_worker_count_' + x.workerProcessCount);
+          if (x.whatsappStatus !== 'desativado') throw new Error('robot_still_active_' + x.whatsappStatus);
+          console.log('Cutover confirmado: 1 worker de gestão, WhatsApp desativado.');
+          NODE
+
+      - name: Confirmar status final
+        run: |
+          set -e
+          curl -fsSL --max-time 30 https://botguincho.vercel.app/api/worker/status -o /tmp/status.json
+          cat /tmp/status.json
+          echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/status.json', 'utf8'));
+          if (x.whatsapp?.status !== 'desativado') throw new Error('whatsapp_not_disabled');
+          console.log('Status final confirmado: robô desativado.');
+          NODE
