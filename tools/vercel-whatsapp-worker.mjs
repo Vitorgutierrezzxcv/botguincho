@@ -84,7 +84,7 @@ function browserBaseArgs() {
   return chromium.args.filter((arg) => !SERVERLESS_ONLY_ARGS.has(arg));
 }
 
-let waClient = null;
+const MANUAL_ONLY_MODE = true;\nlet waClient = null;
 let waStatus = 'iniciando';
 let qrDataUrl = null;
 let lastError = null;
@@ -1241,7 +1241,7 @@ async function closeCallFromOwner(state, body = {}) {
   // (liberar fila e enviar WhatsApp) não podem bloquear a resposta do painel.
   // Em produção o whatsapp-web.js pode ficar pendurado por vários segundos e fazia
   // o botão "Concluir corrida" parecer travado mesmo com os dados já salvos.
-  const allowCloseNotice = body.suppressNotice !== true && (!isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || ''));
+  const allowCloseNotice = !MANUAL_ONLY_MODE && body.suppressNotice !== true && (!isTestCall(next) || isTestGroupName(next.groupName || next.insurer || next.client || ''));
   void (async () => {
     try {
       await Promise.race([
